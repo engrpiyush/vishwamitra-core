@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Training</h1>
+    <p class="muted">Submit a managed tuning job (1 concurrent). Foundation = new major; continuation = minor bump.</p>
+
+    <form method="post" th:action="@{/training/submit}" class="form"
+          onsubmit="return confirm('Submit a tuning job? This spends credits.');">
+        <label>Base kind
+            <select name="baseKind">
+                <option value="FOUNDATION">Foundation (new family / major)</option>
+                <option value="CONTINUATION">Continuation (minor bump)</option>
+            </select>
+        </label>
+        <label>Foundation base model (for FOUNDATION)
+            <select name="baseModelId">
+                <option value="">—</option>
+                <option th:each="b : ${baseModels}" th:value="${b.id}" th:text="${b.displayName + ' (' + b.family + ')'}">base</option>
+            </select>
+        </label>
+        <label>Continue from version (for CONTINUATION)
+            <select name="parentVersionId">
+                <option value="">—</option>
+                <option th:each="v : ${readyVersions}" th:value="${v.id}" th:selected="${v.id == defaultParent}"
+                        th:text="${v.displayName + ' [' + v.version + ']'}">version</option>
+            </select>
+        </label>
+        <label>Method
+            <select name="method"><option th:each="m : ${methods}" th:value="${m}" th:text="${m}">SFT</option></select>
+        </label>
+        <label>Dataset export
+            <select name="datasetExportId" required>
+                <option value="" disabled selected>pick an export…</option>
+                <option th:each="e : ${exports}" th:value="${e.id}" th:text="${e.kind + ' · ' + e.count + ' · ' + e.gcsUri}">export</option>
+            </select>
+        </label>
+        <label>Epochs <input type="number" name="epochCount" value="3" min="1"/></label>
+        <label>Adapter size
+            <select name="adapterSize"><option th:each="a : ${adapterSizes}" th:value="${a}" th:text="${a}"
+                    th:selected="${a == 'ADAPTER_SIZE_FOUR'}">a</option></select>
+        </label>
+        <label>Learning rate <input type="text" name="learningRate" value="0.0002"/></label>
+        <button type="submit">Submit tune</button>
+    </form>
+
+    <h2>Jobs</h2>
+    <table class="grid">
+        <thead><tr><th>Method</th><th>Kind</th><th>Status</th><th>Output</th><th>Submitted</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="j : ${jobs}">
+            <td th:text="${j.method}">SFT</td>
+            <td th:text="${j.baseKind}">FOUNDATION</td>
+            <td><span class="badge" th:text="${j.status}">PENDING</span></td>
+            <td><code th:text="${j.outputUri}">gs://…</code></td>
+            <td class="muted" th:text="${j.submittedAt}">ts</td>
+            <td>
+                <form method="post" th:action="@{'/training/jobs/' + ${j.id} + '/poll'}"
+                      th:if="${j.vertexJobName != null}">
+                    <button class="link" type="submit">poll</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${jobs.isEmpty()}"><td colspan="6" class="muted">No jobs yet.</td></tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

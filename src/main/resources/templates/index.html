@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+
+<main class="container">
+    <h1>Labelling &amp; Training Console</h1>
+    <p class="muted">Author SFT/DPO data and drive Vertex managed tuning for Vishwakarma AI.</p>
+
+    <section class="tiles">
+        <a class="tile" th:each="t : ${tiles}" th:href="@{${t.href}}">
+            <span class="tile-value" th:text="${t.value}">0</span>
+            <span class="tile-label" th:text="${t.label}">label</span>
+            <span class="muted" th:text="${t.sub}">sub</span>
+        </a>
+    </section>
+
+    <div class="dash-grid">
+        <section class="panel">
+            <h3>Current model</h3>
+            <div th:if="${currentVersion}">
+                <p><code th:text="${currentVersion.displayName}">model</code>
+                    <span class="badge">current</span></p>
+                <p class="muted">Family <span th:text="${currentVersion.family}">fam</span> ·
+                    <a th:href="@{'/models/' + ${currentVersion.id} + '/serve'}">serve</a></p>
+            </div>
+            <p th:unless="${currentVersion}" class="muted">No model promoted to current yet.</p>
+        </section>
+
+        <section class="panel">
+            <h3>Recent exports</h3>
+            <ul class="comments">
+                <li th:each="e : ${recentExports}">
+                    <span class="badge" th:text="${e.kind}">SFT</span>
+                    <span th:text="${e.count}">0</span> ·
+                    <code th:text="${e.gcsUri}">gs://…</code>
+                </li>
+                <li th:if="${recentExports.isEmpty()}" class="muted">No exports yet.</li>
+            </ul>
+        </section>
+    </div>
+</main>
+</body>
+</html>

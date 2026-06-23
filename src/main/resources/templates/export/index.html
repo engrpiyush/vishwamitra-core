@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Export</h1>
+    <p class="muted">Serialize APPROVED examples to JSONL and write a snapshot to the training bucket.</p>
+
+    <form method="post" th:action="@{/export/run}" class="form">
+        <label>Kind
+            <select name="kind">
+                <option th:each="k : ${kinds}" th:value="${k}" th:text="${k}">SFT</option>
+            </select>
+        </label>
+        <label>Skill
+            <select name="skill"><option value="">any</option>
+                <option th:each="s : ${taxonomy.skills}" th:value="${s}" th:text="${s}">s</option>
+            </select>
+        </label>
+        <label>Intent
+            <select name="intent"><option value="">any</option>
+                <option th:each="i : ${taxonomy.intents}" th:value="${i}" th:text="${i}">i</option>
+            </select>
+        </label>
+        <label>Language
+            <select name="language"><option value="">any</option>
+                <option th:each="l : ${taxonomy.languages}" th:value="${l}" th:text="${l}">l</option>
+            </select>
+        </label>
+        <button type="submit">Run export</button>
+    </form>
+
+    <h2>History</h2>
+    <table class="grid">
+        <thead><tr><th>When</th><th>Kind</th><th>Count</th><th>URI</th><th>By</th></tr></thead>
+        <tbody>
+        <tr th:each="e : ${history}">
+            <td class="muted" th:text="${e.createdAt}">ts</td>
+            <td><span class="badge" th:text="${e.kind}">SFT</span></td>
+            <td th:text="${e.count}">0</td>
+            <td><code th:text="${e.gcsUri}">gs://…</code></td>
+            <td class="muted" th:text="${e.createdBy}">by</td>
+        </tr>
+        <tr th:if="${history.isEmpty()}"><td colspan="5" class="muted">No exports yet.</td></tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

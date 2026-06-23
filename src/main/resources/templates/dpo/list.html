@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>DPO preference pairs</h1>
+        <div class="new-dpo">
+            <form method="post" th:action="@{/dpo/new}">
+                <button type="submit">New (manual)</button>
+            </form>
+            <form method="post" th:action="@{/dpo/new-from-sft}" class="seed-form">
+                <select name="sftId" required>
+                    <option value="" disabled selected>seed from approved SFT…</option>
+                    <option th:each="e : ${seedable}" th:value="${e.id}"
+                            th:text="${(e.tags.skill ?: '—') + ' / ' + (e.tags.intent ?: '—') + ' · ' + e.turns.size() + ' turns'}">sft</option>
+                </select>
+                <button type="submit" class="secondary">Seed</button>
+            </form>
+        </div>
+    </div>
+
+    <nav class="subnav">
+        <a th:href="@{/dpo}" th:classappend="${activeStatus == null} ? 'active'">All</a>
+        <a th:each="s : ${statuses}" th:href="@{/dpo(status=${s})}"
+           th:classappend="${activeStatus == s.name()} ? 'active'" th:text="${s}">STATUS</a>
+    </nav>
+
+    <table class="grid">
+        <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Source</th><th>From SFT</th><th>Status</th><th>Updated</th></tr></thead>
+        <tbody>
+        <tr th:each="p : ${pairs}" class="clickable" th:onclick="|window.location='/dpo/${p.id}'|">
+            <td th:text="${p.tags.skill}">skill</td>
+            <td th:text="${p.tags.intent}">intent</td>
+            <td th:text="${p.tags.language}">lang</td>
+            <td th:text="${p.source}">MANUAL</td>
+            <td th:text="${p.fromSftId} ? '✓' : ''"></td>
+            <td><span class="badge" th:text="${p.status}">DRAFT</span></td>
+            <td class="muted" th:text="${p.updatedAt}">ts</td>
+        </tr>
+        <tr th:if="${pairs.isEmpty()}"><td colspan="7" class="muted">No pairs yet.</td></tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('scenarios')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Scenarios</h1>
+    <p class="muted">Seed templates for LLM-assisted SFT generation.</p>
+
+    <table class="grid">
+        <thead><tr><th>Title</th><th>Skill</th><th>Intent</th><th>Prompt template</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="s : ${scenarios}">
+            <td th:text="${s.title}">title</td>
+            <td th:text="${s.skill}">skill</td>
+            <td th:text="${s.intent}">intent</td>
+            <td class="truncate" th:text="${s.promptTemplate}">prompt</td>
+            <td class="actions">
+                <form method="post" th:action="@{'/admin/scenarios/' + ${s.id} + '/delete'}"
+                      onsubmit="return confirm('Delete this scenario?');">
+                    <button class="link danger" type="submit">delete</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${scenarios.isEmpty()}"><td colspan="5" class="muted">No scenarios yet.</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Add scenario</h2>
+    <form method="post" th:action="@{/admin/scenarios}" class="form">
+        <label>Title <input type="text" name="title" required/></label>
+        <label>Description <input type="text" name="description"/></label>
+        <label>Skill
+            <select name="skill">
+                <option value="">—</option>
+                <option th:each="s : ${taxonomy.skills}" th:value="${s}" th:text="${s}">skill</option>
+            </select>
+        </label>
+        <label>Intent
+            <select name="intent">
+                <option value="">—</option>
+                <option th:each="i : ${taxonomy.intents}" th:value="${i}" th:text="${i}">intent</option>
+            </select>
+        </label>
+        <label>Prompt template <textarea name="promptTemplate" rows="3"></textarea></label>
+        <button type="submit">Create scenario</button>
+    </form>
+</main>
+</body>
+</html>

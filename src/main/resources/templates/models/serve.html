@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div class="row-between">
+        <h1>Serve <span th:text="${v.displayName}">model</span></h1>
+        <a th:href="@{/models}" class="muted">&larr; back to models</a>
+    </div>
+
+    <p>Version <code th:text="${v.version}">v1.0</code> · status
+        <span class="badge" th:text="${v.status}">READY</span></p>
+    <p>Checkpoint: <code th:text="${v.gcsCheckpointUri}">gs://…</code></p>
+    <p th:if="${v.vertexModelResource}">Vertex model: <code th:text="${v.vertexModelResource}">…</code></p>
+
+    <h2>Off-GCP serving handoff</h2>
+    <p class="muted">No persistent serving on GCP — rent a GPU, serve with vLLM, tear it down.</p>
+    <pre class="preview" th:text="${serveCommand}"># …</pre>
+</main>
+</body>
+</html>

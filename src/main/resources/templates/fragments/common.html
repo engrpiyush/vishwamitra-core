@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<!--
+  Shared head + nav fragments. Pages do:
+    <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+    <nav  th:replace="~{fragments/common :: nav}"></nav>
+-->
+<head th:fragment="head(title)">
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title th:text="${title} ? |Vishwamitra · ${title}| : 'Vishwamitra'">Vishwamitra</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}"/>
+    <script th:src="@{/webjars/htmx.org/dist/htmx.min.js}" defer></script>
+</head>
+
+<body>
+<nav th:fragment="nav" class="topnav">
+    <a class="brand" th:href="@{/}">Vishwamitra</a>
+    <div class="links">
+        <a th:href="@{/sft}">SFT</a>
+        <a th:href="@{/dpo}">DPO</a>
+        <a th:href="@{/export}">Export</a>
+        <a th:href="@{/training}">Training</a>
+        <a th:href="@{/models}">Models</a>
+        <a th:href="@{/admin/tools}" sec:authorize="hasRole('ADMIN')">Admin</a>
+    </div>
+    <div class="user" th:if="${currentEmail}">
+        <span class="user-email" th:text="${currentEmail}">user</span>
+        <span class="badge" th:text="${currentRole}">ROLE</span>
+    </div>
+</nav>
+
+<div th:fragment="flash">
+    <div class="flash ok" th:if="${ok}" th:text="${ok}">ok</div>
+    <div class="flash error" th:if="${error}" th:text="${error}">error</div>
+</div>
+
+<nav th:fragment="adminnav(active)" class="subnav">
+    <a th:href="@{/admin/tools}"        th:classappend="${active == 'tools'} ? 'active'">Tools</a>
+    <a th:href="@{/admin/base-models}"  th:classappend="${active == 'base-models'} ? 'active'">Base models</a>
+    <a th:href="@{/admin/taxonomy}"     th:classappend="${active == 'taxonomy'} ? 'active'">Taxonomy</a>
+    <a th:href="@{/admin/scenarios}"    th:classappend="${active == 'scenarios'} ? 'active'">Scenarios</a>
+    <a th:href="@{/admin/users}"        th:classappend="${active == 'users'} ? 'active'">Users</a>
+    <a th:href="@{/admin/providers}"    th:classappend="${active == 'providers'} ? 'active'">Providers</a>
+</nav>
+</body>
+</html>

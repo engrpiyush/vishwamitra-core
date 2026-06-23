@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('tools')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Tool catalog</h1>
+    <p class="muted">Function signatures available for tool-call turns and tool-aware drafting.</p>
+
+    <table class="grid">
+        <thead><tr><th>Name</th><th>Description</th><th>Params</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="t : ${tools}">
+            <td><code th:text="${t.name}">name</code></td>
+            <td th:text="${t.description}">desc</td>
+            <td>
+                <span th:each="p : ${t.params}" class="chip">
+                    <span th:text="${p.name}">p</span><span class="muted" th:text="${p.required} ? '*' : ''"></span>
+                </span>
+            </td>
+            <td><span class="badge" th:text="${t.status}">ACTIVE</span></td>
+            <td class="actions">
+                <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/status'}">
+                    <button class="link" type="submit">toggle</button>
+                </form>
+                <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/delete'}"
+                      onsubmit="return confirm('Delete this tool?');">
+                    <button class="link danger" type="submit">delete</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${tools.isEmpty()}"><td colspan="5" class="muted">No tools yet.</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Add tool</h2>
+    <form method="post" th:action="@{/admin/tools}" class="form">
+        <label>Name <input type="text" name="name" required placeholder="search_workers"/></label>
+        <label>Description <input type="text" name="description" placeholder="Find available workers"/></label>
+        <label>Params (one per line: <code>name|type|required|description</code>)
+            <textarea name="params" rows="4" placeholder="skill|string|true|Worker skill&#10;location|string|true|Area"></textarea>
+        </label>
+        <button type="submit">Create tool</button>
+    </form>
+</main>
+</body>
+</html>

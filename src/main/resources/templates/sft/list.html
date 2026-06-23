@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>SFT examples</h1>
+        <div class="new-dpo">
+            <form method="post" th:action="@{/sft/new}">
+                <button type="submit">New example</button>
+            </form>
+            <form method="post" th:action="@{/sft/new-from-scenario}" class="seed-form">
+                <select name="scenarioId" required>
+                    <option value="" disabled selected
+                            th:text="${draftProvider} ? '+ generate from scenario (' + ${draftProvider} + ')…' : '+ generate from scenario (manual fallback)…'">scenario…</option>
+                    <option th:each="s : ${scenarios}" th:value="${s.id}" th:text="${s.title}">scenario</option>
+                </select>
+                <button type="submit" class="secondary">Generate</button>
+            </form>
+        </div>
+    </div>
+
+    <nav class="subnav">
+        <a th:href="@{/sft}" th:classappend="${activeStatus == null} ? 'active'">All</a>
+        <a th:each="s : ${statuses}" th:href="@{/sft(status=${s})}"
+           th:classappend="${activeStatus == s.name()} ? 'active'" th:text="${s}">STATUS</a>
+    </nav>
+
+    <table class="grid">
+        <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Tool?</th><th>Turns</th><th>Status</th><th>Updated</th></tr></thead>
+        <tbody>
+        <tr th:each="e : ${examples}" class="clickable"
+            th:onclick="|window.location='/sft/${e.id}'|">
+            <td th:text="${e.tags.skill}">skill</td>
+            <td th:text="${e.tags.intent}">intent</td>
+            <td th:text="${e.tags.language}">lang</td>
+            <td th:text="${e.tags.hasToolCall} ? '✓' : ''"></td>
+            <td th:text="${e.turns.size()}">0</td>
+            <td><span class="badge" th:text="${e.status}">DRAFT</span></td>
+            <td class="muted" th:text="${e.updatedAt}">ts</td>
+        </tr>
+        <tr th:if="${examples.isEmpty()}"><td colspan="7" class="muted">No examples yet.</td></tr>
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

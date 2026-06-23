@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('users')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Users</h1>
+    <p class="muted">Email → role allowlist. Only active users may sign in.</p>
+
+    <table class="grid">
+        <thead><tr><th>Email</th><th>Role</th><th>Active</th><th>Added by</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="u : ${users}">
+            <td th:text="${u.email}">email</td>
+            <td><span class="badge" th:text="${u.role}">ROLE</span></td>
+            <td th:text="${u.active} ? 'yes' : 'no'">yes</td>
+            <td class="muted" th:text="${u.addedBy}">by</td>
+            <td class="actions">
+                <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/active'}">
+                    <input type="hidden" name="active" th:value="${!u.active}"/>
+                    <button class="link" type="submit" th:text="${u.active} ? 'deactivate' : 'activate'">toggle</button>
+                </form>
+                <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/delete'}"
+                      onsubmit="return confirm('Remove this user?');">
+                    <button class="link danger" type="submit">delete</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${users.isEmpty()}"><td colspan="5" class="muted">No users yet.</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Add / update user</h2>
+    <form method="post" th:action="@{/admin/users}" class="form">
+        <label>Email <input type="email" name="email" required placeholder="name@vishwakarma.ai"/></label>
+        <label>Role
+            <select name="role">
+                <option th:each="r : ${roles}" th:value="${r}" th:text="${r}">ROLE</option>
+            </select>
+        </label>
+        <button type="submit">Save user</button>
+    </form>
+</main>
+</body>
+</html>

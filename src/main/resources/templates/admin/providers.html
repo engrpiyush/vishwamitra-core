@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('providers')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Drafting providers</h1>
+    <p class="muted">Enable a provider and set its model id. API keys are read from Secret Manager / env, never stored here.</p>
+
+    <div th:each="p : ${providers}" class="provider-card">
+        <form method="post" th:action="@{'/admin/providers/' + ${p.id}}" class="form-row">
+            <span class="provider-name" th:text="${p.id}">provider</span>
+            <label class="inline"><input type="checkbox" name="enabled" value="true" th:checked="${p.enabled}"/> Enabled</label>
+            <label>Model <input type="text" name="model" th:value="${p.model}" placeholder="model id"/></label>
+            <button type="submit">Save</button>
+        </form>
+    </div>
+</main>
+</body>
+</html>

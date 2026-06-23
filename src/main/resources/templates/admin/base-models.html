@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('base-models')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Base models</h1>
+    <p class="muted">Supported OSS bases for foundation tunes. <code>family</code> keys an independent version lineage.</p>
+
+    <table class="grid">
+        <thead><tr><th>Display name</th><th>Publisher model</th><th>Family</th><th>Active</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="m : ${baseModels}">
+            <td th:text="${m.displayName}">name</td>
+            <td><code th:text="${m.publisherModel}">pub</code></td>
+            <td><code th:text="${m.family}">family</code></td>
+            <td th:text="${m.active} ? 'yes' : 'no'">yes</td>
+            <td class="actions">
+                <form method="post" th:action="@{'/admin/base-models/' + ${m.id} + '/active'}">
+                    <input type="hidden" name="active" th:value="${!m.active}"/>
+                    <button class="link" type="submit" th:text="${m.active} ? 'deactivate' : 'activate'">toggle</button>
+                </form>
+                <form method="post" th:action="@{'/admin/base-models/' + ${m.id} + '/delete'}"
+                      onsubmit="return confirm('Delete this base model?');">
+                    <button class="link danger" type="submit">delete</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${baseModels.isEmpty()}"><td colspan="5" class="muted">No base models yet.</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Add base model</h2>
+    <form method="post" th:action="@{/admin/base-models}" class="form">
+        <label>Publisher model <input type="text" name="publisherModel" required placeholder="qwen/qwen3@qwen3-32b"/></label>
+        <label>Display name <input type="text" name="displayName" placeholder="Qwen 3 32B"/></label>
+        <label>Family <input type="text" name="family" required placeholder="qwen3-32b"/></label>
+        <label class="inline"><input type="checkbox" name="active" value="true" checked/> Active</label>
+        <button type="submit">Create base model</button>
+    </form>
+</main>
+</body>
+</html>

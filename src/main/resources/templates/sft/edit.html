@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>
+            SFT example
+            <span class="badge" th:text="${ex.status}">DRAFT</span>
+            <span class="badge" th:if="${ex.tags.hasToolCall}">tool-call</span>
+        </h1>
+        <a th:href="@{/sft}" class="muted">&larr; back to queue</a>
+    </div>
+
+    <!-- lifecycle actions -->
+    <div class="actions-bar">
+        <form method="post" th:action="@{'/sft/' + ${ex.id} + '/submit'}"
+              th:if="${ex.status.name() == 'DRAFT' or ex.status.name() == 'NEEDS_CHANGES'}">
+            <button type="submit">Submit for review</button>
+        </form>
+        <span sec:authorize="hasRole('REVIEWER')" th:if="${ex.status.name() == 'SUBMITTED'}" class="reviewer-actions">
+            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/approve'}">
+                <button type="submit">Approve</button>
+            </form>
+            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/sendback'}" class="inline-send">
+                <input type="text" name="comment" placeholder="reason to send back" required/>
+                <button type="submit" class="secondary">Send back</button>
+            </form>
+        </span>
+        <form sec:authorize="hasRole('REVIEWER')" method="post" th:action="@{'/sft/' + ${ex.id} + '/archive'}"
+              th:unless="${ex.status.name() == 'ARCHIVED'}">
+            <button type="submit" class="secondary">Archive</button>
+        </form>
+    </div>
+
+    <div class="editor-grid">
+        <section class="editor-main">
+            <!-- tags -->
+            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/tags'}" class="tags-form">
+                <label>Skill
+                    <select name="skill">
+                        <option value="">—</option>
+                        <option th:each="s : ${taxonomy.skills}" th:value="${s}" th:text="${s}" th:selected="${s == ex.tags.skill}">s</option>
+                    </select>
+                </label>
+                <label>Intent
+                    <select name="intent">
+                        <option value="">—</option>
+                        <option th:each="i : ${taxonomy.intents}" th:value="${i}" th:text="${i}" th:selected="${i == ex.tags.intent}">i</option>
+                    </select>
+                </label>
+                <label>Language
+                    <select name="language">
+                        <option value="">—</option>
+                        <option th:each="l : ${taxonomy.languages}" th:value="${l}" th:text="${l}" th:selected="${l == ex.tags.language}">l</option>
+                    </select>
+                </label>
+                <button type="submit">Save tags</button>
+            </form>
+
+            <!-- turns -->
+            <h2>Turns</h2>
+            <div class="turns">
+                <div class="turn" th:each="t, iter : ${ex.turns}">
+                    <div class="turn-head">
+                        <span class="badge" th:text="${t.role} + ' · ' + ${t.kind}">USER · TEXT</span>
+                        <div class="turn-ops">
+                            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns/' + ${iter.index} + '/move'}">
+                                <input type="hidden" name="delta" value="-1"/><button class="link" type="submit" title="up">&uarr;</button>
+                            </form>
+                            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns/' + ${iter.index} + '/move'}">
+                                <input type="hidden" name="delta" value="1"/><button class="link" type="submit" title="down">&darr;</button>
+                            </form>
+                            <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns/' + ${iter.index} + '/delete'}">
+                                <button class="link danger" type="submit" title="delete">&times;</button>
+                            </form>
+                        </div>
+                    </div>
+                    <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns/' + ${iter.index}}" class="turn-body">
+                        <!-- TEXT -->
+                        <textarea th:if="${t.kind.name() == 'TEXT'}" name="text" rows="3" th:text="${t.text}"></textarea>
+                        <!-- TOOL_CALL -->
+                        <div th:if="${t.kind.name() == 'TOOL_CALL'}" class="tool-fields">
+                            <label>Tool
+                                <select name="toolName">
+                                    <option value="">—</option>
+                                    <option th:each="tool : ${tools}" th:value="${tool.name}" th:text="${tool.name}" th:selected="${tool.name == t.toolName}">tool</option>
+                                </select>
+                            </label>
+                            <label>Args (JSON) <textarea name="argsJson" rows="3" th:text="${t.argsJson}"></textarea></label>
+                        </div>
+                        <!-- TOOL_RESPONSE -->
+                        <div th:if="${t.kind.name() == 'TOOL_RESPONSE'}" class="tool-fields">
+                            <label>Tool <input type="text" name="toolName" th:value="${t.toolName}"/></label>
+                            <label>Result (JSON) <textarea name="resultJson" rows="3" th:text="${t.resultJson}"></textarea></label>
+                        </div>
+                        <button type="submit">Save turn</button>
+                    </form>
+                </div>
+                <p th:if="${ex.turns.isEmpty()}" class="muted">No turns yet — add one below.</p>
+            </div>
+
+            <!-- add turn -->
+            <div class="add-turns">
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns'}">
+                    <input type="hidden" name="role" value="USER"/><input type="hidden" name="kind" value="TEXT"/>
+                    <button type="submit" class="secondary">+ user text</button>
+                </form>
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns'}">
+                    <input type="hidden" name="role" value="MODEL"/><input type="hidden" name="kind" value="TEXT"/>
+                    <button type="submit" class="secondary">+ model text</button>
+                </form>
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns'}">
+                    <input type="hidden" name="role" value="MODEL"/><input type="hidden" name="kind" value="TOOL_CALL"/>
+                    <button type="submit" class="secondary">+ tool call</button>
+                </form>
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/turns'}">
+                    <input type="hidden" name="role" value="USER"/><input type="hidden" name="kind" value="TOOL_RESPONSE"/>
+                    <button type="submit" class="secondary">+ tool response</button>
+                </form>
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/draft-next'}">
+                    <button type="submit" th:title="${draftProvider} ?: 'manual fallback'">✨ draft next turn (LLM)</button>
+                </form>
+            </div>
+        </section>
+
+        <aside class="editor-side">
+            <div class="panel">
+                <div class="row-between">
+                    <h3>Validation</h3>
+                    <button class="link" type="button" hx-target="#validation" hx-swap="outerHTML"
+                            th:attr="hx-get=@{'/sft/' + ${ex.id} + '/validate'}">re-check</button>
+                </div>
+                <div th:replace="~{sft/fragments :: validation}"></div>
+            </div>
+
+            <div class="panel">
+                <div class="row-between">
+                    <h3>JSONL preview</h3>
+                    <button class="link" type="button" hx-target="#preview" hx-swap="outerHTML"
+                            th:attr="hx-get=@{'/sft/' + ${ex.id} + '/preview'}">refresh</button>
+                </div>
+                <div th:replace="~{sft/fragments :: preview}"></div>
+            </div>
+
+            <div class="panel">
+                <h3>Review comments</h3>
+                <ul class="comments">
+                    <li th:each="c : ${ex.reviewComments}">
+                        <span class="muted" th:text="${c.by}">by</span>
+                        <span th:text="${c.text}">text</span>
+                    </li>
+                    <li th:if="${ex.reviewComments.isEmpty()}" class="muted">No comments.</li>
+                </ul>
+                <form method="post" th:action="@{'/sft/' + ${ex.id} + '/comment'}" class="add-comment">
+                    <input type="text" name="text" placeholder="add a comment" required/>
+                    <button type="submit" class="secondary">Add</button>
+                </form>
+            </div>
+        </aside>
+    </div>
+</main>
+</body>
+</html>

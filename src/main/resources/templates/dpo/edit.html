@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>
+            DPO pair
+            <span class="badge" th:text="${p.status}">DRAFT</span>
+            <span class="badge" th:if="${p.fromSftId}">from SFT</span>
+        </h1>
+        <a th:href="@{/dpo}" class="muted">&larr; back to queue</a>
+    </div>
+
+    <div class="actions-bar">
+        <form method="post" th:action="@{'/dpo/' + ${p.id} + '/submit'}"
+              th:if="${p.status.name() == 'DRAFT' or p.status.name() == 'NEEDS_CHANGES'}">
+            <button type="submit">Submit for review</button>
+        </form>
+        <span sec:authorize="hasRole('REVIEWER')" th:if="${p.status.name() == 'SUBMITTED'}" class="reviewer-actions">
+            <form method="post" th:action="@{'/dpo/' + ${p.id} + '/approve'}"><button type="submit">Approve</button></form>
+            <form method="post" th:action="@{'/dpo/' + ${p.id} + '/sendback'}" class="inline-send">
+                <input type="text" name="comment" placeholder="reason to send back" required/>
+                <button type="submit" class="secondary">Send back</button>
+            </form>
+        </span>
+        <form sec:authorize="hasRole('REVIEWER')" method="post" th:action="@{'/dpo/' + ${p.id} + '/archive'}"
+              th:unless="${p.status.name() == 'ARCHIVED'}">
+            <button type="submit" class="secondary">Archive</button>
+        </form>
+    </div>
+
+    <div class="editor-grid">
+        <section class="editor-main">
+            <!-- tags -->
+            <form method="post" th:action="@{'/dpo/' + ${p.id} + '/tags'}" class="tags-form">
+                <label>Skill
+                    <select name="skill"><option value="">—</option>
+                        <option th:each="s : ${taxonomy.skills}" th:value="${s}" th:text="${s}" th:selected="${s == p.tags.skill}">s</option>
+                    </select>
+                </label>
+                <label>Intent
+                    <select name="intent"><option value="">—</option>
+                        <option th:each="i : ${taxonomy.intents}" th:value="${i}" th:text="${i}" th:selected="${i == p.tags.intent}">i</option>
+                    </select>
+                </label>
+                <label>Language
+                    <select name="language"><option value="">—</option>
+                        <option th:each="l : ${taxonomy.languages}" th:value="${l}" th:text="${l}" th:selected="${l == p.tags.language}">l</option>
+                    </select>
+                </label>
+                <button type="submit">Save tags</button>
+            </form>
+
+            <!-- prompt -->
+            <h2>Prompt</h2>
+            <div th:if="${p.promptTurns.size() > 1}" class="seeded-prompt">
+                <p class="muted">Seeded multi-turn context:</p>
+                <div class="turn" th:each="t : ${p.promptTurns}">
+                    <div class="turn-head"><span class="badge" th:text="${t.role} + ' · ' + ${t.kind}">USER · TEXT</span></div>
+                    <div class="turn-body"><span th:text="${t.text}">text</span></div>
+                </div>
+            </div>
+            <form method="post" th:action="@{'/dpo/' + ${p.id} + '/prompt'}" class="prompt-form">
+                <label>Prompt (sets a single user turn)
+                    <textarea name="promptText" rows="3"
+                              th:text="${p.promptTurns.size() == 1} ? ${p.promptTurns[0].text} : ''"></textarea>
+                </label>
+                <button type="submit">Save prompt</button>
+            </form>
+
+            <!-- candidates -->
+            <h2>Candidates</h2>
+            <form method="post" th:action="@{'/dpo/' + ${p.id} + '/candidates'}" class="candidates-form">
+                <label class="chosen">Chosen (preferred)
+                    <textarea name="chosen" rows="4" th:text="${p.chosenText}"></textarea>
+                </label>
+                <label class="rejected">Rejected
+                    <textarea name="rejected" rows="4" th:text="${p.rejectedText}"></textarea>
+                </label>
+                <button type="submit">Save candidates</button>
+            </form>
+            <div class="dpo-cand-actions">
+                <form method="post" th:action="@{'/dpo/' + ${p.id} + '/swap'}" class="swap-form">
+                    <button type="submit" class="secondary">⇅ Swap chosen / rejected</button>
+                </form>
+                <form method="post" th:action="@{'/dpo/' + ${p.id} + '/draft-candidates'}" class="swap-form">
+                    <button type="submit" th:title="${draftProvider} ?: 'manual fallback'">✨ draft 2 candidates (LLM)</button>
+                </form>
+            </div>
+        </section>
+
+        <aside class="editor-side">
+            <div class="panel">
+                <div class="row-between">
+                    <h3>Validation</h3>
+                    <button class="link" type="button" hx-target="#validation" hx-swap="outerHTML"
+                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/validate'}">re-check</button>
+                </div>
+                <div th:replace="~{sft/fragments :: validation}"></div>
+            </div>
+            <div class="panel">
+                <div class="row-between">
+                    <h3>JSONL preview</h3>
+                    <button class="link" type="button" hx-target="#preview" hx-swap="outerHTML"
+                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/preview'}">refresh</button>
+                </div>
+                <div th:replace="~{sft/fragments :: preview}"></div>
+            </div>
+            <div class="panel">
+                <h3>Review comments</h3>
+                <ul class="comments">
+                    <li th:each="c : ${p.reviewComments}">
+                        <span class="muted" th:text="${c.by}">by</span>
+                        <span th:text="${c.text}">text</span>
+                    </li>
+                    <li th:if="${p.reviewComments.isEmpty()}" class="muted">No comments.</li>
+                </ul>
+                <form method="post" th:action="@{'/dpo/' + ${p.id} + '/comment'}" class="add-comment">
+                    <input type="text" name="text" placeholder="add a comment" required/>
+                    <button type="submit" class="secondary">Add</button>
+                </form>
+            </div>
+        </aside>
+    </div>
+</main>
+</body>
+</html>

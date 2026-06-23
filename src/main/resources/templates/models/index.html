@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Model versions</h1>
+    <p class="muted">Per-base-family lineage. A single global <b>current</b> is the blessed model.</p>
+
+    <p th:if="${families.isEmpty()}" class="muted">No versions yet — submit a tune from Training.</p>
+
+    <section th:each="fam : ${families}" class="family">
+        <h2 th:text="${fam.key}">family</h2>
+        <table class="grid">
+            <thead><tr><th>Version</th><th>Method</th><th>Kind</th><th>Status</th><th>Promotion</th><th>Actions</th></tr></thead>
+            <tbody>
+            <tr th:each="v : ${fam.value}">
+                <td><code th:text="${v.version}">v1.0</code></td>
+                <td th:text="${v.method}">SFT</td>
+                <td th:text="${v.baseKind}">FOUNDATION</td>
+                <td><span class="badge" th:text="${v.status}">TRAINING</span></td>
+                <td>
+                    <span class="badge" th:if="${v.promotion.name() == 'CURRENT'}">current</span>
+                    <span class="muted" th:if="${v.promotion.name() == 'ARCHIVED'}">archived</span>
+                </td>
+                <td class="actions">
+                    <a th:href="@{'/models/' + ${v.id} + '/serve'}" th:if="${v.status.name() == 'READY'}">serve</a>
+                    <a th:href="@{/training(parent=${v.id})}" th:if="${v.status.name() == 'READY'}">new tune</a>
+                    <form sec:authorize="hasRole('REVIEWER')" method="post" th:action="@{'/models/' + ${v.id} + '/promote'}"
+                          th:if="${v.status.name() == 'READY' and v.promotion.name() != 'CURRENT'}">
+                        <input type="hidden" name="target" value="CURRENT"/>
+                        <button class="link" type="submit">make current</button>
+                    </form>
+                    <form sec:authorize="hasRole('REVIEWER')" method="post" th:action="@{'/models/' + ${v.id} + '/promote'}"
+                          th:unless="${v.promotion.name() == 'ARCHIVED'}">
+                        <input type="hidden" name="target" value="ARCHIVED"/>
+                        <button class="link" type="submit">archive</button>
+                    </form>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="validation" id="validation">
+    <div th:if="${errors.isEmpty()}" class="flash ok">Valid &check; — ready to submit</div>
+    <ul th:unless="${errors.isEmpty()}" class="errors">
+        <li th:each="e : ${errors}" th:text="${e}">error</li>
+    </ul>
+</div>
+
+<pre th:fragment="preview" id="preview" class="preview" th:text="${preview}">{}</pre>
+</body>
+</html>

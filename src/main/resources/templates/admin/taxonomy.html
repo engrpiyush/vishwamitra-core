@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('taxonomy')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Taxonomy</h1>
+    <p class="muted">Tags applied to SFT/DPO examples and used to seed generation.</p>
+
+    <div class="tax-grid">
+        <section th:each="dim : ${ {'skills','intents','languages'} }">
+            <h2 th:text="${#strings.capitalize(dim)}">dimension</h2>
+            <div class="chips">
+                <span class="chip" th:each="term : ${dim == 'skills' ? taxonomy.skills : (dim == 'intents' ? taxonomy.intents : taxonomy.languages)}">
+                    <span th:text="${term}">term</span>
+                    <form method="post" th:action="@{'/admin/taxonomy/' + ${dim} + '/remove'}" class="inline-form">
+                        <input type="hidden" name="term" th:value="${term}"/>
+                        <button class="x" type="submit" title="remove">&times;</button>
+                    </form>
+                </span>
+            </div>
+            <form method="post" th:action="@{'/admin/taxonomy/' + ${dim} + '/add'}" class="add-term">
+                <input type="text" name="term" placeholder="add term"/>
+                <button type="submit">Add</button>
+            </form>
+        </section>
+    </div>
+</main>
+</body>
+</html>
