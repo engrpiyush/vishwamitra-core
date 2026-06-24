@@ -17,9 +17,12 @@ steps:
     name: maven:3.9-eclipse-temurin-17
     entrypoint: mvn
     args:
+      # `compile` first so target/classes exists for Jib (and it runs Spotless `check`,
+      # bound to the compile phase). Jib's `build` goal does not compile on its own.
       - -B
       - -ntp
       - -DskipTests
+      - compile
       - jib:build
       - -Dimage=${_IMAGE}:$SHORT_SHA
 
