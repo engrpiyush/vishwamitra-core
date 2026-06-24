@@ -23,6 +23,7 @@
 		<htmx-webjar.version>2.0.6</htmx-webjar.version>
 		<webjars-locator.version>1.1.0</webjars-locator.version>
 		<jib-maven-plugin.version>3.4.5</jib-maven-plugin.version>
+		<spotless-maven-plugin.version>2.43.0</spotless-maven-plugin.version>
 		<!-- Container image coordinates (Artifact Registry on vishwakarma-ai-poc) -->
 		<image.registry>asia-southeast1-docker.pkg.dev</image.registry>
 		<image.project>vishwakarma-ai-poc</image.project>
@@ -210,6 +211,30 @@
 						<version>${kotlin.version}</version>
 					</dependency>
 				</dependencies>
+			</plugin>
+			<!-- Code formatting (ktfmt for Kotlin). `check` is bound to `compile` so any build
+			     — including the CI `mvn jib:build` — fails on unformatted code. Run
+			     `mvn spotless:apply` to auto-format. -->
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+				<version>${spotless-maven-plugin.version}</version>
+				<configuration>
+					<kotlin>
+						<ktfmt>
+							<style>KOTLINLANG</style>
+						</ktfmt>
+					</kotlin>
+				</configuration>
+				<executions>
+					<execution>
+						<id>spotless-check</id>
+						<phase>compile</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

@@ -8,9 +8,7 @@ import org.springframework.web.bind.annotation.ModelAttribute
 @ControllerAdvice
 class GlobalModelAdvice {
 
-    @ModelAttribute("currentEmail")
-    fun currentEmail(): String? = CurrentUser.email()
+    @ModelAttribute("currentEmail") fun currentEmail(): String? = CurrentUser.email()
 
-    @ModelAttribute("currentRole")
-    fun currentRole(): String? = CurrentUser.role()?.name
+    @ModelAttribute("currentRole") fun currentRole(): String? = CurrentUser.role()?.name
 }

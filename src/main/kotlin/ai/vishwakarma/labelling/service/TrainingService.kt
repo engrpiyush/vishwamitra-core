@@ -1,8 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import arrow.core.Either
-import arrow.core.left
-import arrow.core.right
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.BaseKind
 import ai.vishwakarma.labelling.domain.Hyperparams
@@ -17,9 +14,12 @@ import ai.vishwakarma.labelling.persistence.ExportRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
 import ai.vishwakarma.labelling.persistence.TuningJobRepository
 import ai.vishwakarma.labelling.vertex.TuningService
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
+import java.time.Instant
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import java.time.Instant
 
 /**
  * Orchestrates tuning: guards (tuning enabled, 1-concurrent), per-family version numbering, the
@@ -39,17 +39,26 @@ class TrainingService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun jobs(): List<TuningJob> = jobs.findAll()
+
     fun version(id: String): ModelVersion? = versions.findById(id)
+
     fun serveCommand(version: ModelVersion): String = ServeCommand.build(version)
 
     /** Versions grouped by base family, each lineage sorted by (major, minor). */
     fun versionsByFamily(): Map<String, List<ModelVersion>> =
-        versions.findAll().groupBy { it.family }
-            .mapValues { (_, vs) -> vs.sortedWith(compareBy({ it.majorMinor.first }, { it.majorMinor.second })) }
+        versions
+            .findAll()
+            .groupBy { it.family }
+            .mapValues { (_, vs) ->
+                vs.sortedWith(compareBy({ it.majorMinor.first }, { it.majorMinor.second }))
+            }
 
     /** Default continue-from base = latest successful (READY) version. */
     fun latestReady(): ModelVersion? =
-        versions.findAll().filter { it.status == VersionStatus.READY }.maxByOrNull { it.createdAt ?: Instant.MIN }
+        versions
+            .findAll()
+            .filter { it.status == VersionStatus.READY }
+            .maxByOrNull { it.createdAt ?: Instant.MIN }
 
     fun readyVersions(): List<ModelVersion> =
         versions.findAll().filter { it.status == VersionStatus.READY }
@@ -67,33 +76,49 @@ class TrainingService(
         hp: Hyperparams,
         actor: String?,
     ): Either<DomainError, ModelVersion> {
-        if (!props.tuning.enabled) return DomainError.Invalid("Tuning is disabled in this environment").left()
-        if (jobs.anyActive()) return DomainError.Invalid("A tuning job is already running (1 concurrent max)").left()
+        if (!props.tuning.enabled)
+            return DomainError.Invalid("Tuning is disabled in this environment").left()
+        if (jobs.anyActive())
+            return DomainError.Invalid("A tuning job is already running (1 concurrent max)").left()
 
-        val export = exports.findById(datasetExportId)
-            ?: return DomainError.NotFound("Dataset export $datasetExportId not found").left()
+        val export =
+            exports.findById(datasetExportId)
+                ?: return DomainError.NotFound("Dataset export $datasetExportId not found").left()
 
         // Resolve base model, family, customBaseModel and the next version.
-        val resolved = when (baseKind) {
-            BaseKind.FOUNDATION -> {
-                val base = baseModelId?.let { baseModels.findById(it) }
-                    ?: return DomainError.NotFound("Base model not found").left()
-                Resolved(base.publisherModel, base.id, base.family, null)
-            }
-            BaseKind.CONTINUATION -> {
-                val parent = parentVersionId?.let { versions.findById(it) }
-                    ?: return DomainError.NotFound("Parent version not found").left()
-                if (parent.status != VersionStatus.READY || parent.gcsCheckpointUri.isNullOrBlank()) {
-                    return DomainError.Invalid("Parent version is not READY with a checkpoint").left()
+        val resolved =
+            when (baseKind) {
+                BaseKind.FOUNDATION -> {
+                    val base =
+                        baseModelId?.let { baseModels.findById(it) }
+                            ?: return DomainError.NotFound("Base model not found").left()
+                    Resolved(base.publisherModel, base.id, base.family, null)
                 }
-                val base = baseModels.findById(parent.baseModelId)
-                    ?: return DomainError.NotFound("Parent's base model not found").left()
-                Resolved(base.publisherModel, base.id, parent.family, parent.gcsCheckpointUri)
+                BaseKind.CONTINUATION -> {
+                    val parent =
+                        parentVersionId?.let { versions.findById(it) }
+                            ?: return DomainError.NotFound("Parent version not found").left()
+                    if (
+                        parent.status != VersionStatus.READY ||
+                            parent.gcsCheckpointUri.isNullOrBlank()
+                    ) {
+                        return DomainError.Invalid("Parent version is not READY with a checkpoint")
+                            .left()
+                    }
+                    val base =
+                        baseModels.findById(parent.baseModelId)
+                            ?: return DomainError.NotFound("Parent's base model not found").left()
+                    Resolved(base.publisherModel, base.id, parent.family, parent.gcsCheckpointUri)
+                }
             }
-        }
 
         val existing = versions.findByFamily(resolved.family).map { it.version }
-        val newVersion = Versioning.nextVersion(existing, baseKind, parentVersionId?.let { versions.findById(it)?.version })
+        val newVersion =
+            Versioning.nextVersion(
+                existing,
+                baseKind,
+                parentVersionId?.let { versions.findById(it)?.version }
+            )
         val displayName = "vishwakarma-ai-${resolved.family}-$newVersion"
         val outputUri = "gs://${props.gcp.servingBucket}/tuned/${resolved.family}-$newVersion/"
 
@@ -101,46 +126,80 @@ class TrainingService(
         val versionId = versions.newId()
         val jobId = jobs.newId()
         val now = Instant.now()
-        var version = ModelVersion(
-            id = versionId, baseModelId = resolved.baseModelId, family = resolved.family, version = newVersion,
-            method = method, baseKind = baseKind, parentVersionId = parentVersionId,
-            datasetExportIds = listOf(datasetExportId), tuningJobId = jobId, status = VersionStatus.TRAINING,
-            displayName = displayName, createdBy = actor, createdAt = now,
-        )
-        var job = TuningJob(
-            id = jobId, method = method, baseKind = baseKind, baseModelId = resolved.baseModelId,
-            parentVersionId = parentVersionId, datasetExportId = datasetExportId, hyperparams = hp,
-            status = JobStatus.PENDING, outputUri = outputUri, modelVersionId = versionId,
-            submittedBy = actor, submittedAt = now,
-        )
+        var version =
+            ModelVersion(
+                id = versionId,
+                baseModelId = resolved.baseModelId,
+                family = resolved.family,
+                version = newVersion,
+                method = method,
+                baseKind = baseKind,
+                parentVersionId = parentVersionId,
+                datasetExportIds = listOf(datasetExportId),
+                tuningJobId = jobId,
+                status = VersionStatus.TRAINING,
+                displayName = displayName,
+                createdBy = actor,
+                createdAt = now,
+            )
+        var job =
+            TuningJob(
+                id = jobId,
+                method = method,
+                baseKind = baseKind,
+                baseModelId = resolved.baseModelId,
+                parentVersionId = parentVersionId,
+                datasetExportId = datasetExportId,
+                hyperparams = hp,
+                status = JobStatus.PENDING,
+                outputUri = outputUri,
+                modelVersionId = versionId,
+                submittedBy = actor,
+                submittedAt = now,
+            )
         versions.save(version)
         jobs.save(job)
 
         // Dev/test: simulate a successful tune without calling Vertex.
         if (props.tuning.dryRun) {
             val checkpoint = "$outputUri" + "custom-trained/dry-run/"
-            jobs.save(job.copy(vertexJobName = "dry-run/$jobId", status = JobStatus.SUCCEEDED, vertexModelResource = "dry-run-model", finishedAt = Instant.now()))
-            val ready = version.copy(status = VersionStatus.READY, gcsCheckpointUri = checkpoint, vertexModelResource = "dry-run-model")
+            jobs.save(
+                job.copy(
+                    vertexJobName = "dry-run/$jobId",
+                    status = JobStatus.SUCCEEDED,
+                    vertexModelResource = "dry-run-model",
+                    finishedAt = Instant.now()
+                )
+            )
+            val ready =
+                version.copy(
+                    status = VersionStatus.READY,
+                    gcsCheckpointUri = checkpoint,
+                    vertexModelResource = "dry-run-model"
+                )
             versions.save(ready)
             return ready.right()
         }
 
         return try {
-            val jobName = vertex.submit(
-                baseModel = resolved.publisherModel,
-                customBaseModel = resolved.customBaseModel,
-                tunedModelDisplayName = displayName,
-                outputUri = outputUri,
-                trainingDatasetUri = export.gcsUri,
-                method = method,
-                hp = hp,
-            )
+            val jobName =
+                vertex.submit(
+                    baseModel = resolved.publisherModel,
+                    customBaseModel = resolved.customBaseModel,
+                    tunedModelDisplayName = displayName,
+                    outputUri = outputUri,
+                    trainingDatasetUri = export.gcsUri,
+                    method = method,
+                    hp = hp,
+                )
             job = job.copy(vertexJobName = jobName, status = JobStatus.RUNNING)
             jobs.save(job)
             version.right()
         } catch (e: Exception) {
             log.warn("Tuning submit failed: {}", e.message)
-            jobs.save(job.copy(status = JobStatus.FAILED, error = e.message, finishedAt = Instant.now()))
+            jobs.save(
+                job.copy(status = JobStatus.FAILED, error = e.message, finishedAt = Instant.now())
+            )
             versions.save(version.copy(status = VersionStatus.FAILED))
             DomainError.Invalid("Tuning submit failed: ${e.message}").left()
         }
@@ -149,13 +208,18 @@ class TrainingService(
     /** Poll Vertex and finalize the version on terminal states. */
     fun pollJob(jobId: String): Either<DomainError, TuningJob> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
-        val jobName = job.vertexJobName ?: return DomainError.Invalid("Job has no Vertex job name").left()
+        val jobName =
+            job.vertexJobName ?: return DomainError.Invalid("Job has no Vertex job name").left()
         return try {
             val info = vertex.status(jobName)
             var updated = job.copy(status = info.status)
             when (info.status) {
                 JobStatus.SUCCEEDED -> {
-                    updated = updated.copy(vertexModelResource = info.modelResource, finishedAt = Instant.now())
+                    updated =
+                        updated.copy(
+                            vertexModelResource = info.modelResource,
+                            finishedAt = Instant.now()
+                        )
                     job.modelVersionId?.let { vid ->
                         versions.findById(vid)?.let { v ->
                             versions.save(
@@ -170,7 +234,11 @@ class TrainingService(
                 }
                 JobStatus.FAILED -> {
                     updated = updated.copy(finishedAt = Instant.now())
-                    job.modelVersionId?.let { vid -> versions.findById(vid)?.let { versions.save(it.copy(status = VersionStatus.FAILED)) } }
+                    job.modelVersionId?.let { vid ->
+                        versions.findById(vid)?.let {
+                            versions.save(it.copy(status = VersionStatus.FAILED))
+                        }
+                    }
                 }
                 else -> {}
             }
@@ -182,10 +250,15 @@ class TrainingService(
     }
 
     fun promote(versionId: String, target: Promotion): Either<DomainError, ModelVersion> {
-        val v = versions.findById(versionId) ?: return DomainError.NotFound("Version not found").left()
+        val v =
+            versions.findById(versionId) ?: return DomainError.NotFound("Version not found").left()
         if (target == Promotion.CURRENT) {
-            if (v.status != VersionStatus.READY) return DomainError.Invalid("Only READY versions can be promoted to current").left()
-            versions.findAll().filter { it.promotion == Promotion.CURRENT }.forEach { versions.save(it.copy(promotion = Promotion.NONE)) }
+            if (v.status != VersionStatus.READY)
+                return DomainError.Invalid("Only READY versions can be promoted to current").left()
+            versions
+                .findAll()
+                .filter { it.promotion == Promotion.CURRENT }
+                .forEach { versions.save(it.copy(promotion = Promotion.NONE)) }
         }
         val updated = v.copy(promotion = target)
         versions.save(updated)

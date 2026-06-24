@@ -8,8 +8,5 @@ import org.springframework.test.context.ActiveProfiles
 @ActiveProfiles("dev")
 class LabellingApplicationTests {
 
-	@Test
-	fun contextLoads() {
-	}
-
+    @Test fun contextLoads() {}
 }

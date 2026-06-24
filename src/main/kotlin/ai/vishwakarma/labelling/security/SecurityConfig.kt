@@ -17,8 +17,8 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
 
 /**
  * Two mutually-exclusive filter chains by profile:
- *  - `dev`  : OAuth bypassed; [DevAuthFilter] injects a fixed user so roles are exercisable locally.
- *  - others : Google OAuth2 login gated by [AllowlistOidcUserService]; admin area requires ADMIN.
+ * - `dev` : OAuth bypassed; [DevAuthFilter] injects a fixed user so roles are exercisable locally.
+ * - others : Google OAuth2 login gated by [AllowlistOidcUserService]; admin area requires ADMIN.
  *
  * Role hierarchy ADMIN ⊃ REVIEWER ⊃ AUTHOR applies to both web and method security.
  */
@@ -29,21 +29,26 @@ class SecurityConfig {
     @Bean
     fun roleHierarchy(): RoleHierarchy =
         RoleHierarchyImpl.withDefaultRolePrefix()
-            .role("ADMIN").implies("REVIEWER")
-            .role("REVIEWER").implies("AUTHOR")
+            .role("ADMIN")
+            .implies("REVIEWER")
+            .role("REVIEWER")
+            .implies("AUTHOR")
             .build()
 
     @Bean
-    fun methodSecurityExpressionHandler(roleHierarchy: RoleHierarchy): DefaultMethodSecurityExpressionHandler =
+    fun methodSecurityExpressionHandler(
+        roleHierarchy: RoleHierarchy
+    ): DefaultMethodSecurityExpressionHandler =
         DefaultMethodSecurityExpressionHandler().apply { setRoleHierarchy(roleHierarchy) }
 
     @Bean
     @Profile("dev")
     fun devSecurityFilterChain(http: HttpSecurity, props: AppProperties): SecurityFilterChain {
-        val devUser = DevAuthFilter(
-            email = props.auth.devUser.email,
-            role = Role.fromOrNull(props.auth.devUser.role) ?: Role.ADMIN,
-        )
+        val devUser =
+            DevAuthFilter(
+                email = props.auth.devUser.email,
+                role = Role.fromOrNull(props.auth.devUser.role) ?: Role.ADMIN,
+            )
         http {
             authorizeHttpRequests { authorize(anyRequest, permitAll) }
             csrf { disable() }
@@ -57,7 +62,10 @@ class SecurityConfig {
 
     @Bean
     @Profile("!dev")
-    fun securityFilterChain(http: HttpSecurity, allowlistOidcUserService: OidcUserService): SecurityFilterChain {
+    fun securityFilterChain(
+        http: HttpSecurity,
+        allowlistOidcUserService: OidcUserService
+    ): SecurityFilterChain {
         http {
             authorizeHttpRequests {
                 authorize("/actuator/health/**", permitAll)
@@ -69,9 +77,7 @@ class SecurityConfig {
                 authorize("/admin/**", hasRole("ADMIN"))
                 authorize(anyRequest, authenticated)
             }
-            oauth2Login {
-                userInfoEndpoint { oidcUserService = allowlistOidcUserService }
-            }
+            oauth2Login { userInfoEndpoint { oidcUserService = allowlistOidcUserService } }
             logout { logoutSuccessUrl = "/" }
         }
         return http.build()

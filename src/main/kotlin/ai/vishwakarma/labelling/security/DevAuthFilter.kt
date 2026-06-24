@@ -26,11 +26,12 @@ class DevAuthFilter(
         val context = SecurityContextHolder.getContext()
         val existing = context.authentication
         if (existing == null || !existing.isAuthenticated) {
-            context.authentication = UsernamePasswordAuthenticationToken(
-                email,
-                "N/A",
-                listOf(SimpleGrantedAuthority(role.authority)),
-            )
+            context.authentication =
+                UsernamePasswordAuthenticationToken(
+                    email,
+                    "N/A",
+                    listOf(SimpleGrantedAuthority(role.authority)),
+                )
         }
         filterChain.doFilter(request, response)
     }

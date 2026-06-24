@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
 /**
- * Anthropic Claude drafting via the Messages REST API. Enabled via the `claude` provider catalog row
- * (+ model id) and the ANTHROPIC_API_KEY secret/env.
+ * Anthropic Claude drafting via the Messages REST API. Enabled via the `claude` provider catalog
+ * row (+ model id) and the ANTHROPIC_API_KEY secret/env.
  */
 @Component
 class ClaudeDrafting(
@@ -25,22 +25,27 @@ class ClaudeDrafting(
     private val rest = RestClient.create()
 
     override fun available(): Boolean =
-        apiKey.isNotBlank() && (providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false)
+        apiKey.isNotBlank() &&
+            (providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false)
 
     private fun generate(prompt: String): String {
         val cfg = providers.get(id) ?: error("claude not configured")
         val model = cfg.model.ifBlank { error("claude model not set") }
-        val body = mapOf(
-            "model" to model,
-            "max_tokens" to 2048,
-            "messages" to listOf(mapOf("role" to "user", "content" to prompt)),
-        )
-        val response = rest.post().uri("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", apiKey)
-            .header("anthropic-version", "2023-06-01")
-            .body(body)
-            .retrieve()
-            .body(String::class.java) ?: error("empty Claude response")
+        val body =
+            mapOf(
+                "model" to model,
+                "max_tokens" to 2048,
+                "messages" to listOf(mapOf("role" to "user", "content" to prompt)),
+            )
+        val response =
+            rest
+                .post()
+                .uri("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", apiKey)
+                .header("anthropic-version", "2023-06-01")
+                .body(body)
+                .retrieve()
+                .body(String::class.java) ?: error("empty Claude response")
         return extractText(response)
     }
 
@@ -51,7 +56,11 @@ class ClaudeDrafting(
         return content.mapNotNull { it["text"] as? String }.joinToString("")
     }
 
-    override fun draftConversation(scenario: Scenario?, tags: ExampleTags, tools: List<Tool>): List<Turn> =
+    override fun draftConversation(
+        scenario: Scenario?,
+        tags: ExampleTags,
+        tools: List<Tool>
+    ): List<Turn> =
         DraftPrompts.parseTurns(generate(DraftPrompts.conversationPrompt(scenario, tags, tools)))
 
     override fun draftNextTurn(turns: List<Turn>, tools: List<Tool>): Turn =

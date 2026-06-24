@@ -2,7 +2,9 @@ package ai.vishwakarma.labelling.serialization
 
 import tools.jackson.databind.json.JsonMapper
 
-/** Minimal JSON helper (Jackson 3) used by the dataset serializer — independent of Spring's mapper. */
+/**
+ * Minimal JSON helper (Jackson 3) used by the dataset serializer — independent of Spring's mapper.
+ */
 object Json {
     val mapper: JsonMapper = JsonMapper.builder().build()
 
@@ -13,8 +15,13 @@ object Json {
         if (json.isNullOrBlank()) null else mapper.readValue(json, Any::class.java)
 
     fun isValidObject(json: String?): Boolean =
-        runCatching { mapper.readValue(json ?: "", Any::class.java) is Map<*, *> }.getOrDefault(false)
+        runCatching { mapper.readValue(json ?: "", Any::class.java) is Map<*, *> }
+            .getOrDefault(false)
 
     fun isValid(json: String?): Boolean =
-        runCatching { mapper.readValue(json ?: "", Any::class.java); true }.getOrDefault(false)
+        runCatching {
+                mapper.readValue(json ?: "", Any::class.java)
+                true
+            }
+            .getOrDefault(false)
 }

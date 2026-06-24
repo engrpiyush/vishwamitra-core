@@ -2,7 +2,10 @@ package ai.vishwakarma.labelling.domain
 
 import java.time.Instant
 
-enum class ToolStatus { ACTIVE, DEPRECATED }
+enum class ToolStatus {
+    ACTIVE,
+    DEPRECATED
+}
 
 /** A function-call parameter in a tool signature. */
 data class ToolParam(

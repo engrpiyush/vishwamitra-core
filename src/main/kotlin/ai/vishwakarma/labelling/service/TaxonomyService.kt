@@ -1,11 +1,11 @@
 package ai.vishwakarma.labelling.service
 
-import arrow.core.Either
-import arrow.core.left
-import arrow.core.right
 import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.domain.Taxonomy.Dimension
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import org.springframework.stereotype.Service
 
 /** Manages the editable skills / intents / languages tag taxonomy. */
@@ -20,7 +20,8 @@ class TaxonomyService(private val repo: TaxonomyRepository) {
         val current = repo.get()
         val list = current.list(dimension)
         if (list.any { it.equals(clean, ignoreCase = true) }) {
-            return DomainError.Conflict("'$clean' already exists in ${dimension.name.lowercase()}").left()
+            return DomainError.Conflict("'$clean' already exists in ${dimension.name.lowercase()}")
+                .left()
         }
         val updated = current.with(dimension, (list + clean).sorted())
         repo.save(updated)
@@ -34,15 +35,17 @@ class TaxonomyService(private val repo: TaxonomyRepository) {
         return updated
     }
 
-    private fun Taxonomy.list(d: Dimension) = when (d) {
-        Dimension.SKILLS -> skills
-        Dimension.INTENTS -> intents
-        Dimension.LANGUAGES -> languages
-    }
+    private fun Taxonomy.list(d: Dimension) =
+        when (d) {
+            Dimension.SKILLS -> skills
+            Dimension.INTENTS -> intents
+            Dimension.LANGUAGES -> languages
+        }
 
-    private fun Taxonomy.with(d: Dimension, values: List<String>) = when (d) {
-        Dimension.SKILLS -> copy(skills = values)
-        Dimension.INTENTS -> copy(intents = values)
-        Dimension.LANGUAGES -> copy(languages = values)
-    }
+    private fun Taxonomy.with(d: Dimension, values: List<String>) =
+        when (d) {
+            Dimension.SKILLS -> copy(skills = values)
+            Dimension.INTENTS -> copy(intents = values)
+            Dimension.LANGUAGES -> copy(languages = values)
+        }
 }

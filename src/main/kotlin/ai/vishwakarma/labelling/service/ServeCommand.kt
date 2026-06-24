@@ -6,7 +6,8 @@ import ai.vishwakarma.labelling.domain.ModelVersion
 object ServeCommand {
 
     fun build(version: ModelVersion): String {
-        val ckpt = version.gcsCheckpointUri ?: return "# Checkpoint not available yet (version not READY)."
+        val ckpt =
+            version.gcsCheckpointUri ?: return "# Checkpoint not available yet (version not READY)."
         val served = "${version.family}-${version.version}"
         return """
             # 1. Download the merged-weights checkpoint to a GPU box:
@@ -18,6 +19,7 @@ object ServeCommand {
               --max-model-len 8192
 
             # 3. Query, then tear the box down (no persistent serving on GCP).
-        """.trimIndent()
+        """
+            .trimIndent()
     }
 }

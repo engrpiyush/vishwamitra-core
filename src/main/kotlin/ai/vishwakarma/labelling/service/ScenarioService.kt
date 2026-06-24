@@ -1,12 +1,12 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.Scenario
+import ai.vishwakarma.labelling.persistence.ScenarioRepository
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
-import ai.vishwakarma.labelling.domain.Scenario
-import ai.vishwakarma.labelling.persistence.ScenarioRepository
-import org.springframework.stereotype.Service
 import java.time.Instant
+import org.springframework.stereotype.Service
 
 /** Manages the seed-scenario library used for LLM-assisted SFT generation. */
 @Service
@@ -25,16 +25,17 @@ class ScenarioService(private val scenarios: ScenarioRepository) {
         actor: String?,
     ): Either<DomainError, Scenario> {
         if (title.isBlank()) return DomainError.Invalid("Title is required").left()
-        val scenario = Scenario(
-            id = scenarios.newId(),
-            title = title.trim(),
-            description = description.trim(),
-            skill = skill?.ifBlank { null },
-            intent = intent?.ifBlank { null },
-            promptTemplate = promptTemplate.trim(),
-            createdBy = actor,
-            createdAt = Instant.now(),
-        )
+        val scenario =
+            Scenario(
+                id = scenarios.newId(),
+                title = title.trim(),
+                description = description.trim(),
+                skill = skill?.ifBlank { null },
+                intent = intent?.ifBlank { null },
+                promptTemplate = promptTemplate.trim(),
+                createdBy = actor,
+                createdAt = Instant.now(),
+            )
         scenarios.save(scenario)
         return scenario.right()
     }

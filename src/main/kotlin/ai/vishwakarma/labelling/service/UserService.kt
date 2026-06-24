@@ -3,12 +3,12 @@ package ai.vishwakarma.labelling.service
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.User
 import ai.vishwakarma.labelling.persistence.UserRepository
-import org.springframework.stereotype.Service
 import java.time.Instant
+import org.springframework.stereotype.Service
 
 /**
- * Allowlist management + the role lookup used during OAuth login. Only active users have a role;
- * an inactive or unknown email resolves to null → login denied.
+ * Allowlist management + the role lookup used during OAuth login. Only active users have a role; an
+ * inactive or unknown email resolves to null → login denied.
  */
 @Service
 class UserService(private val users: UserRepository) {

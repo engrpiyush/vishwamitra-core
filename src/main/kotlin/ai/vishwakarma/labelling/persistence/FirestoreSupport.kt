@@ -9,7 +9,8 @@ import java.time.Instant
 fun <T> ApiFuture<T>.await(): T = this.get()
 
 /** Convert an [Instant] to a Firestore [Timestamp], or null. */
-fun Instant?.toTimestamp(): Timestamp? = this?.let { Timestamp.ofTimeSecondsAndNanos(it.epochSecond, it.nano) }
+fun Instant?.toTimestamp(): Timestamp? =
+    this?.let { Timestamp.ofTimeSecondsAndNanos(it.epochSecond, it.nano) }
 
 /** Read a Firestore timestamp field as an [Instant], or null. */
 fun DocumentSnapshot.instant(field: String): Instant? =

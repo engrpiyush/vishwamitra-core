@@ -3,20 +3,36 @@ package ai.vishwakarma.labelling.domain
 import java.time.Instant
 
 /** Lifecycle states shared by SFT examples and DPO pairs. */
-enum class ExampleStatus { DRAFT, SUBMITTED, APPROVED, NEEDS_CHANGES, ARCHIVED }
+enum class ExampleStatus {
+    DRAFT,
+    SUBMITTED,
+    APPROVED,
+    NEEDS_CHANGES,
+    ARCHIVED
+}
 
 /** How the example was produced. */
-enum class ExampleSource { MANUAL, LLM }
+enum class ExampleSource {
+    MANUAL,
+    LLM
+}
 
-enum class TurnRole { USER, MODEL }
+enum class TurnRole {
+    USER,
+    MODEL
+}
 
 /** A turn is either plain text, a model function-call, or a tool (function) response. */
-enum class TurnKind { TEXT, TOOL_CALL, TOOL_RESPONSE }
+enum class TurnKind {
+    TEXT,
+    TOOL_CALL,
+    TOOL_RESPONSE
+}
 
 /**
- * One conversation turn. For TEXT: [role] + [text]. For TOOL_CALL (always model): [toolName] +
- * [argsJson] (a JSON object). For TOOL_RESPONSE (serialized on the user side): [toolName] +
- * [resultJson]. JSON is kept as strings here and parsed by the serializer.
+ * One conversation turn. For TEXT: [role] + [text]. For TOOL_CALL (always model):
+ * [toolName] + [argsJson] (a JSON object). For TOOL_RESPONSE (serialized on the user side):
+ * [toolName] + [resultJson]. JSON is kept as strings here and parsed by the serializer.
  */
 data class Turn(
     val role: TurnRole,

@@ -36,7 +36,8 @@ class SftController(
 
     @GetMapping
     fun list(@RequestParam(required = false) status: String?, model: Model): String {
-        val parsed = status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
+        val parsed =
+            status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
         model.addAttribute("pageTitle", "SFT")
         model.addAttribute("examples", sft.list(parsed))
         model.addAttribute("statuses", ExampleStatus.entries)
@@ -57,14 +58,19 @@ class SftController(
         val scenario = scenarios.get(scenarioId)
         val draft = sft.createDraft(actor())
         val tags = ExampleTags(skill = scenario?.skill, intent = scenario?.intent)
-        drafting.draftConversation(scenario, tags).fold(
-            { ra.addFlashAttribute("error", "${it.message} (created an empty draft)") },
-            { turns ->
-                sft.replaceTurns(draft.id, turns)
-                sft.updateTags(draft.id, tags.skill, tags.intent, tags.language)
-                ra.addFlashAttribute("ok", "Drafted ${turns.size} turns via ${drafting.activeProviderId()}")
-            },
-        )
+        drafting
+            .draftConversation(scenario, tags)
+            .fold(
+                { ra.addFlashAttribute("error", "${it.message} (created an empty draft)") },
+                { turns ->
+                    sft.replaceTurns(draft.id, turns)
+                    sft.updateTags(draft.id, tags.skill, tags.intent, tags.language)
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Drafted ${turns.size} turns via ${drafting.activeProviderId()}"
+                    )
+                },
+            )
         return "redirect:/sft/${draft.id}"
     }
 
@@ -75,19 +81,26 @@ class SftController(
             ra.addFlashAttribute("error", "Example not found")
             return "redirect:/sft"
         }
-        drafting.draftNextTurn(ex.turns).fold(
-            { ra.addFlashAttribute("error", it.message) },
-            { turn -> sft.appendTurn(id, turn); ra.addFlashAttribute("ok", "Drafted next turn") },
-        )
+        drafting
+            .draftNextTurn(ex.turns)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { turn ->
+                    sft.appendTurn(id, turn)
+                    ra.addFlashAttribute("ok", "Drafted next turn")
+                },
+            )
         return "redirect:/sft/$id"
     }
 
     @GetMapping("/{id}")
     fun edit(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
-        val example = sft.get(id) ?: run {
-            ra.addFlashAttribute("error", "Example not found")
-            return "redirect:/sft"
-        }
+        val example =
+            sft.get(id)
+                ?: run {
+                    ra.addFlashAttribute("error", "Example not found")
+                    return "redirect:/sft"
+                }
         model.addAttribute("pageTitle", "Edit SFT")
         model.addAttribute("ex", example)
         model.addAttribute("taxonomy", taxonomy.get())
@@ -118,10 +131,11 @@ class SftController(
         ra: RedirectAttributes,
     ): String {
         sft.addTurn(
-            id,
-            runCatching { TurnRole.valueOf(role.uppercase()) }.getOrDefault(TurnRole.USER),
-            runCatching { TurnKind.valueOf(kind.uppercase()) }.getOrDefault(TurnKind.TEXT),
-        ).notify(ra)
+                id,
+                runCatching { TurnRole.valueOf(role.uppercase()) }.getOrDefault(TurnRole.USER),
+                runCatching { TurnKind.valueOf(kind.uppercase()) }.getOrDefault(TurnKind.TEXT),
+            )
+            .notify(ra)
         return "redirect:/sft/$id"
     }
 
@@ -140,39 +154,68 @@ class SftController(
     }
 
     @PostMapping("/{id}/turns/{index}/delete")
-    fun deleteTurn(@PathVariable id: String, @PathVariable index: Int, ra: RedirectAttributes): String {
+    fun deleteTurn(
+        @PathVariable id: String,
+        @PathVariable index: Int,
+        ra: RedirectAttributes
+    ): String {
         sft.deleteTurn(id, index).notify(ra)
         return "redirect:/sft/$id"
     }
 
     @PostMapping("/{id}/turns/{index}/move")
-    fun moveTurn(@PathVariable id: String, @PathVariable index: Int, @RequestParam delta: Int, ra: RedirectAttributes): String {
+    fun moveTurn(
+        @PathVariable id: String,
+        @PathVariable index: Int,
+        @RequestParam delta: Int,
+        ra: RedirectAttributes
+    ): String {
         sft.moveTurn(id, index, delta).notify(ra)
         return "redirect:/sft/$id"
     }
 
     @PostMapping("/{id}/submit")
     fun submit(@PathVariable id: String, ra: RedirectAttributes): String {
-        sft.submit(id, actor()).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Submitted for review") })
+        sft.submit(id, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Submitted for review") }
+            )
         return "redirect:/sft/$id"
     }
 
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasRole('REVIEWER')")
     fun approve(@PathVariable id: String, ra: RedirectAttributes): String {
-        sft.approve(id, actor()).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Approved") })
+        sft.approve(id, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Approved") }
+            )
         return "redirect:/sft/$id"
     }
 
     @PostMapping("/{id}/sendback")
     @PreAuthorize("hasRole('REVIEWER')")
-    fun sendBack(@PathVariable id: String, @RequestParam comment: String, ra: RedirectAttributes): String {
-        sft.sendBack(id, actor(), comment).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Sent back to author") })
+    fun sendBack(
+        @PathVariable id: String,
+        @RequestParam comment: String,
+        ra: RedirectAttributes
+    ): String {
+        sft.sendBack(id, actor(), comment)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Sent back to author") }
+            )
         return "redirect:/sft/$id"
     }
 
     @PostMapping("/{id}/comment")
-    fun comment(@PathVariable id: String, @RequestParam text: String, ra: RedirectAttributes): String {
+    fun comment(
+        @PathVariable id: String,
+        @RequestParam text: String,
+        ra: RedirectAttributes
+    ): String {
         sft.addComment(id, actor(), text).notify(ra)
         return "redirect:/sft/$id"
     }

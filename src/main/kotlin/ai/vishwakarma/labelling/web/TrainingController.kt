@@ -34,7 +34,15 @@ class TrainingController(
         model.addAttribute("readyVersions", training.readyVersions())
         model.addAttribute("exports", exports.history())
         model.addAttribute("methods", TuningMethod.entries)
-        model.addAttribute("adapterSizes", listOf("ADAPTER_SIZE_ONE", "ADAPTER_SIZE_FOUR", "ADAPTER_SIZE_EIGHT", "ADAPTER_SIZE_SIXTEEN"))
+        model.addAttribute(
+            "adapterSizes",
+            listOf(
+                "ADAPTER_SIZE_ONE",
+                "ADAPTER_SIZE_FOUR",
+                "ADAPTER_SIZE_EIGHT",
+                "ADAPTER_SIZE_SIXTEEN"
+            )
+        )
         model.addAttribute("defaultParent", parent ?: training.latestReady()?.id)
         return "training/index"
     }
@@ -57,27 +65,33 @@ class TrainingController(
             ra.addFlashAttribute("error", "Invalid base kind or method")
             return "redirect:/training"
         }
-        training.submit(
-            baseKind = kind,
-            baseModelId = baseModelId,
-            parentVersionId = parentVersionId,
-            datasetExportId = datasetExportId,
-            method = tuningMethod,
-            hp = Hyperparams(epochCount, adapterSize, learningRate),
-            actor = CurrentUser.email(),
-        ).fold(
-            { ra.addFlashAttribute("error", it.message) },
-            { ra.addFlashAttribute("ok", "Submitted tune → ${it.displayName} (${it.version})") },
-        )
+        training
+            .submit(
+                baseKind = kind,
+                baseModelId = baseModelId,
+                parentVersionId = parentVersionId,
+                datasetExportId = datasetExportId,
+                method = tuningMethod,
+                hp = Hyperparams(epochCount, adapterSize, learningRate),
+                actor = CurrentUser.email(),
+            )
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute("ok", "Submitted tune → ${it.displayName} (${it.version})")
+                },
+            )
         return "redirect:/training"
     }
 
     @PostMapping("/jobs/{id}/poll")
     fun poll(@PathVariable id: String, ra: RedirectAttributes): String {
-        training.pollJob(id).fold(
-            { ra.addFlashAttribute("error", it.message) },
-            { ra.addFlashAttribute("ok", "Job status: ${it.status}") },
-        )
+        training
+            .pollJob(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Job status: ${it.status}") },
+            )
         return "redirect:/training"
     }
 }

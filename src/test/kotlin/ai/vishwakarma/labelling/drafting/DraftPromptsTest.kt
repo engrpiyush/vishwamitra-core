@@ -10,7 +10,8 @@ class DraftPromptsTest {
 
     @Test
     fun `parses a fenced JSON turn array including a tool call`() {
-        val raw = """
+        val raw =
+            """
             ```json
             [
               {"role":"user","kind":"TEXT","text":"electricians near Sakinaka?"},
@@ -19,7 +20,8 @@ class DraftPromptsTest {
               {"role":"model","kind":"TEXT","text":"Ramesh is available."}
             ]
             ```
-        """.trimIndent()
+        """
+                .trimIndent()
 
         val turns = DraftPrompts.parseTurns(raw)
         assertEquals(4, turns.size)
@@ -32,7 +34,8 @@ class DraftPromptsTest {
 
     @Test
     fun `parses a single next-turn object`() {
-        val turn = DraftPrompts.parseTurn("""{"role":"model","kind":"TEXT","text":"Sure, which area?"}""")
+        val turn =
+            DraftPrompts.parseTurn("""{"role":"model","kind":"TEXT","text":"Sure, which area?"}""")
         assertEquals(TurnRole.MODEL, turn.role)
         assertEquals("Sure, which area?", turn.text)
     }

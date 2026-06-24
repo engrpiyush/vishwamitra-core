@@ -44,10 +44,17 @@ class ExportController(
             ra.addFlashAttribute("error", "Invalid export kind")
             return "redirect:/export"
         }
-        exportService.export(parsed, skill, intent, language, CurrentUser.email()).fold(
-            { ra.addFlashAttribute("error", it.message) },
-            { ra.addFlashAttribute("ok", "Exported ${it.count} ${parsed.name} examples → ${it.gcsUri}") },
-        )
+        exportService
+            .export(parsed, skill, intent, language, CurrentUser.email())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Exported ${it.count} ${parsed.name} examples → ${it.gcsUri}"
+                    )
+                },
+            )
         return "redirect:/export"
     }
 }

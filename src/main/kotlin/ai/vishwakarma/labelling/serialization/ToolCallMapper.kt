@@ -11,46 +11,56 @@ import org.springframework.stereotype.Component
  * exact shape can be adjusted once confirmed against the managed-tuning API (see plan open item).
  *
  * Current encoding:
- *  - text          → {role, parts:[{text}]}
- *  - tool call      → {role:"model", parts:[{functionCall:{name, args}}]}
- *  - tool response  → {role:"user",  parts:[{functionResponse:{name, response}}]}
+ * - text → {role, parts:[{text}]}
+ * - tool call → {role:"model", parts:[{functionCall:{name, args}}]}
+ * - tool response → {role:"user", parts:[{functionResponse:{name, response}}]}
  */
 @Component
 class ToolCallMapper {
 
-    fun toContent(turn: Turn): Map<String, Any?> = when (turn.kind) {
-        TurnKind.TEXT -> mapOf(
-            "role" to turn.role.gemini(),
-            "parts" to listOf(mapOf("text" to turn.text)),
-        )
-
-        TurnKind.TOOL_CALL -> mapOf(
-            "role" to "model",
-            "parts" to listOf(
+    fun toContent(turn: Turn): Map<String, Any?> =
+        when (turn.kind) {
+            TurnKind.TEXT ->
                 mapOf(
-                    "functionCall" to mapOf(
-                        "name" to turn.toolName,
-                        "args" to (Json.parse(turn.argsJson) ?: emptyMap<String, Any?>()),
-                    ),
-                ),
-            ),
-        )
-
-        TurnKind.TOOL_RESPONSE -> mapOf(
-            "role" to "user",
-            "parts" to listOf(
+                    "role" to turn.role.gemini(),
+                    "parts" to listOf(mapOf("text" to turn.text)),
+                )
+            TurnKind.TOOL_CALL ->
                 mapOf(
-                    "functionResponse" to mapOf(
-                        "name" to turn.toolName,
-                        "response" to (Json.parse(turn.resultJson) ?: emptyMap<String, Any?>()),
-                    ),
-                ),
-            ),
-        )
-    }
+                    "role" to "model",
+                    "parts" to
+                        listOf(
+                            mapOf(
+                                "functionCall" to
+                                    mapOf(
+                                        "name" to turn.toolName,
+                                        "args" to
+                                            (Json.parse(turn.argsJson) ?: emptyMap<String, Any?>()),
+                                    ),
+                            ),
+                        ),
+                )
+            TurnKind.TOOL_RESPONSE ->
+                mapOf(
+                    "role" to "user",
+                    "parts" to
+                        listOf(
+                            mapOf(
+                                "functionResponse" to
+                                    mapOf(
+                                        "name" to turn.toolName,
+                                        "response" to
+                                            (Json.parse(turn.resultJson)
+                                                ?: emptyMap<String, Any?>()),
+                                    ),
+                            ),
+                        ),
+                )
+        }
 
-    private fun TurnRole.gemini(): String = when (this) {
-        TurnRole.USER -> "user"
-        TurnRole.MODEL -> "model"
-    }
+    private fun TurnRole.gemini(): String =
+        when (this) {
+            TurnRole.USER -> "user"
+            TurnRole.MODEL -> "model"
+        }
 }

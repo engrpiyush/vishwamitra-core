@@ -44,8 +44,7 @@ class AdminController(
         }
     }
 
-    @GetMapping
-    fun index() = "redirect:/admin/tools"
+    @GetMapping fun index() = "redirect:/admin/tools"
 
     // ---- Tools -------------------------------------------------------------
     @GetMapping("/tools")
@@ -64,16 +63,29 @@ class AdminController(
         ra: RedirectAttributes,
     ): String {
         val parsed = parseParams(params)
-        catalog.create(name, description, parsed, ToolStatus.ACTIVE, actor()).fold(
-            { ra.notify(it) },
-            { ra.addFlashAttribute("ok", "Tool '${it.name}' created") },
-        )
+        catalog
+            .create(name, description, parsed, ToolStatus.ACTIVE, actor())
+            .fold(
+                { ra.notify(it) },
+                { ra.addFlashAttribute("ok", "Tool '${it.name}' created") },
+            )
         return "redirect:/admin/tools"
     }
 
     @PostMapping("/tools/{id}/status")
     fun toggleToolStatus(@PathVariable id: String, ra: RedirectAttributes): String {
-        catalog.update(id, { it.copy(status = if (it.status == ToolStatus.ACTIVE) ToolStatus.DEPRECATED else ToolStatus.ACTIVE) }, actor())
+        catalog
+            .update(
+                id,
+                {
+                    it.copy(
+                        status =
+                            if (it.status == ToolStatus.ACTIVE) ToolStatus.DEPRECATED
+                            else ToolStatus.ACTIVE
+                    )
+                },
+                actor()
+            )
             .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Status updated") })
         return "redirect:/admin/tools"
     }
@@ -87,15 +99,19 @@ class AdminController(
 
     /** Parse a textarea: one param per line as `name|type|required|description`. */
     private fun parseParams(raw: String): List<ToolParam> =
-        raw.lines().map { it.trim() }.filter { it.isNotBlank() }.map { line ->
-            val parts = line.split("|").map { it.trim() }
-            ToolParam(
-                name = parts.getOrElse(0) { "" },
-                type = parts.getOrElse(1) { "string" }.ifBlank { "string" },
-                required = parts.getOrElse(2) { "true" }.lowercase() != "false",
-                desc = parts.getOrElse(3) { "" },
-            )
-        }.filter { it.name.isNotBlank() }
+        raw.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map { line ->
+                val parts = line.split("|").map { it.trim() }
+                ToolParam(
+                    name = parts.getOrElse(0) { "" },
+                    type = parts.getOrElse(1) { "string" }.ifBlank { "string" },
+                    required = parts.getOrElse(2) { "true" }.lowercase() != "false",
+                    desc = parts.getOrElse(3) { "" },
+                )
+            }
+            .filter { it.name.isNotBlank() }
 
     // ---- Base models -------------------------------------------------------
     @GetMapping("/base-models")
@@ -114,14 +130,24 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "true") active: Boolean,
         ra: RedirectAttributes,
     ): String {
-        baseModels.create(publisherModel, displayName, family, active, actor())
-            .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Base model '${it.family}' created") })
+        baseModels
+            .create(publisherModel, displayName, family, active, actor())
+            .fold(
+                { ra.notify(it) },
+                { ra.addFlashAttribute("ok", "Base model '${it.family}' created") }
+            )
         return "redirect:/admin/base-models"
     }
 
     @PostMapping("/base-models/{id}/active")
-    fun toggleBaseModel(@PathVariable id: String, @RequestParam active: Boolean, ra: RedirectAttributes): String {
-        baseModels.setActive(id, active, actor()).fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Updated") })
+    fun toggleBaseModel(
+        @PathVariable id: String,
+        @RequestParam active: Boolean,
+        ra: RedirectAttributes
+    ): String {
+        baseModels
+            .setActive(id, active, actor())
+            .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Updated") })
         return "redirect:/admin/base-models"
     }
 
@@ -142,14 +168,24 @@ class AdminController(
     }
 
     @PostMapping("/taxonomy/{dimension}/add")
-    fun addTerm(@PathVariable dimension: String, @RequestParam term: String, ra: RedirectAttributes): String {
+    fun addTerm(
+        @PathVariable dimension: String,
+        @RequestParam term: String,
+        ra: RedirectAttributes
+    ): String {
         val dim = Taxonomy.Dimension.valueOf(dimension.uppercase())
-        taxonomy.addTerm(dim, term).fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Added '$term'") })
+        taxonomy
+            .addTerm(dim, term)
+            .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Added '$term'") })
         return "redirect:/admin/taxonomy"
     }
 
     @PostMapping("/taxonomy/{dimension}/remove")
-    fun removeTerm(@PathVariable dimension: String, @RequestParam term: String, ra: RedirectAttributes): String {
+    fun removeTerm(
+        @PathVariable dimension: String,
+        @RequestParam term: String,
+        ra: RedirectAttributes
+    ): String {
         taxonomy.removeTerm(Taxonomy.Dimension.valueOf(dimension.uppercase()), term)
         ra.addFlashAttribute("ok", "Removed '$term'")
         return "redirect:/admin/taxonomy"
@@ -174,7 +210,8 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") promptTemplate: String,
         ra: RedirectAttributes,
     ): String {
-        scenarios.create(title, description, skill, intent, promptTemplate, actor())
+        scenarios
+            .create(title, description, skill, intent, promptTemplate, actor())
             .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Scenario created") })
         return "redirect:/admin/scenarios"
     }
@@ -197,7 +234,11 @@ class AdminController(
     }
 
     @PostMapping("/users")
-    fun upsertUser(@RequestParam email: String, @RequestParam role: String, ra: RedirectAttributes): String {
+    fun upsertUser(
+        @RequestParam email: String,
+        @RequestParam role: String,
+        ra: RedirectAttributes
+    ): String {
         val parsedRole = Role.fromOrNull(role)
         if (email.isBlank() || parsedRole == null) {
             ra.addFlashAttribute("error", "Valid email and role are required")
@@ -209,7 +250,11 @@ class AdminController(
     }
 
     @PostMapping("/users/{email}/active")
-    fun toggleUser(@PathVariable email: String, @RequestParam active: Boolean, ra: RedirectAttributes): String {
+    fun toggleUser(
+        @PathVariable email: String,
+        @RequestParam active: Boolean,
+        ra: RedirectAttributes
+    ): String {
         users.setActive(email, active)
         ra.addFlashAttribute("ok", "User updated")
         return "redirect:/admin/users"

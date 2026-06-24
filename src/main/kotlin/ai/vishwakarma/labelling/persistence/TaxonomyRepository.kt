@@ -7,7 +7,8 @@ import org.springframework.stereotype.Repository
 @Repository
 class TaxonomyRepository(private val db: Firestore) {
 
-    private val doc get() = db.collection(COLLECTION).document(Taxonomy.DOC_ID)
+    private val doc
+        get() = db.collection(COLLECTION).document(Taxonomy.DOC_ID)
 
     @Suppress("UNCHECKED_CAST")
     fun get(): Taxonomy {
@@ -22,12 +23,13 @@ class TaxonomyRepository(private val db: Firestore) {
 
     fun save(taxonomy: Taxonomy) {
         doc.set(
-            mapOf(
-                "skills" to taxonomy.skills,
-                "intents" to taxonomy.intents,
-                "languages" to taxonomy.languages,
-            ),
-        ).await()
+                mapOf(
+                    "skills" to taxonomy.skills,
+                    "intents" to taxonomy.intents,
+                    "languages" to taxonomy.languages,
+                ),
+            )
+            .await()
     }
 
     companion object {

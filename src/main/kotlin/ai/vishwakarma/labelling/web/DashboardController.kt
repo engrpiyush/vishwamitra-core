@@ -9,9 +9,7 @@ import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
 
-/**
- * Landing dashboard: counts by status/kind, recent exports, and the current model version.
- */
+/** Landing dashboard: counts by status/kind, recent exports, and the current model version. */
 @Controller
 class DashboardController(
     private val sft: SftService,
@@ -29,10 +27,25 @@ class DashboardController(
         model.addAttribute(
             "tiles",
             listOf(
-                Tile("SFT examples", sftAll.size.toString(), "${sftAll.count { it.status == ExampleStatus.APPROVED }} approved", "/sft"),
-                Tile("DPO pairs", dpoAll.size.toString(), "${dpoAll.count { it.status == ExampleStatus.APPROVED }} approved", "/dpo"),
+                Tile(
+                    "SFT examples",
+                    sftAll.size.toString(),
+                    "${sftAll.count { it.status == ExampleStatus.APPROVED }} approved",
+                    "/sft"
+                ),
+                Tile(
+                    "DPO pairs",
+                    dpoAll.size.toString(),
+                    "${dpoAll.count { it.status == ExampleStatus.APPROVED }} approved",
+                    "/dpo"
+                ),
                 Tile("Exports", exports.history().size.toString(), "snapshots", "/export"),
-                Tile("Model versions", training.readyVersions().size.toString(), "ready", "/models"),
+                Tile(
+                    "Model versions",
+                    training.readyVersions().size.toString(),
+                    "ready",
+                    "/models"
+                ),
             ),
         )
         model.addAttribute("recentExports", exports.history().take(5))

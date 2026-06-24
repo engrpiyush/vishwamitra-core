@@ -4,10 +4,10 @@ import ai.vishwakarma.labelling.config.AppProperties
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.StorageOptions
-import org.slf4j.LoggerFactory
-import org.springframework.stereotype.Component
 import java.nio.file.Files
 import java.nio.file.Path
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
 
 /**
  * Writes export blobs. When the training bucket is configured, writes to GCS (`gs://…`); otherwise
@@ -29,9 +29,10 @@ class Exporter(private val props: AppProperties) {
             return target.toUri().toString()
         }
         val storage = StorageOptions.newBuilder().setProjectId(props.gcp.projectId).build().service
-        val blobInfo = BlobInfo.newBuilder(BlobId.of(bucket, objectPath))
-            .setContentType("application/x-ndjson")
-            .build()
+        val blobInfo =
+            BlobInfo.newBuilder(BlobId.of(bucket, objectPath))
+                .setContentType("application/x-ndjson")
+                .build()
         storage.create(blobInfo, content.toByteArray())
         val uri = "gs://$bucket/$objectPath"
         log.info("Export written to {}", uri)

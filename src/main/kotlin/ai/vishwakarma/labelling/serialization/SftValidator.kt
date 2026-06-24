@@ -30,22 +30,24 @@ class SftValidator {
         turns.forEachIndexed { i, t ->
             val n = i + 1
             when (t.kind) {
-                TurnKind.TEXT ->
-                    if (t.text.isBlank()) errors += "Turn $n (${t.role}) text is empty"
-
+                TurnKind.TEXT -> if (t.text.isBlank()) errors += "Turn $n (${t.role}) text is empty"
                 TurnKind.TOOL_CALL -> {
                     if (t.role != TurnRole.MODEL) errors += "Turn $n tool-call must be a model turn"
                     if (t.toolName.isNullOrBlank()) errors += "Turn $n tool-call has no tool name"
-                    if (!Json.isValidObject(t.argsJson)) errors += "Turn $n tool-call args must be a JSON object"
+                    if (!Json.isValidObject(t.argsJson))
+                        errors += "Turn $n tool-call args must be a JSON object"
                     val next = turns.getOrNull(i + 1)
-                    if (next?.kind != TurnKind.TOOL_RESPONSE) errors += "Turn $n tool-call must be followed by a tool response"
+                    if (next?.kind != TurnKind.TOOL_RESPONSE)
+                        errors += "Turn $n tool-call must be followed by a tool response"
                 }
-
                 TurnKind.TOOL_RESPONSE -> {
-                    if (t.toolName.isNullOrBlank()) errors += "Turn $n tool-response has no tool name"
-                    if (!Json.isValid(t.resultJson)) errors += "Turn $n tool-response result must be valid JSON"
+                    if (t.toolName.isNullOrBlank())
+                        errors += "Turn $n tool-response has no tool name"
+                    if (!Json.isValid(t.resultJson))
+                        errors += "Turn $n tool-response result must be valid JSON"
                     val prev = turns.getOrNull(i - 1)
-                    if (prev?.kind != TurnKind.TOOL_CALL) errors += "Turn $n tool-response must follow a tool call"
+                    if (prev?.kind != TurnKind.TOOL_CALL)
+                        errors += "Turn $n tool-response must follow a tool call"
                 }
             }
         }

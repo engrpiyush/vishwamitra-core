@@ -29,7 +29,8 @@ class DpoController(
 
     @GetMapping
     fun list(@RequestParam(required = false) status: String?, model: Model): String {
-        val parsed = status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
+        val parsed =
+            status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
         model.addAttribute("pageTitle", "DPO")
         model.addAttribute("pairs", dpo.list(parsed))
         model.addAttribute("statuses", ExampleStatus.entries)
@@ -46,18 +47,24 @@ class DpoController(
 
     @PostMapping("/new-from-sft")
     fun createFromSft(@RequestParam sftId: String, ra: RedirectAttributes): String {
-        return dpo.createFromSft(sftId, actor()).fold(
-            { ra.addFlashAttribute("error", it.message); "redirect:/dpo" },
-            { "redirect:/dpo/${it.id}" },
-        )
+        return dpo.createFromSft(sftId, actor())
+            .fold(
+                {
+                    ra.addFlashAttribute("error", it.message)
+                    "redirect:/dpo"
+                },
+                { "redirect:/dpo/${it.id}" },
+            )
     }
 
     @GetMapping("/{id}")
     fun edit(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
-        val pair = dpo.get(id) ?: run {
-            ra.addFlashAttribute("error", "Pair not found")
-            return "redirect:/dpo"
-        }
+        val pair =
+            dpo.get(id)
+                ?: run {
+                    ra.addFlashAttribute("error", "Pair not found")
+                    return "redirect:/dpo"
+                }
         model.addAttribute("pageTitle", "Edit DPO")
         model.addAttribute("p", pair)
         model.addAttribute("taxonomy", taxonomy.get())
@@ -74,24 +81,38 @@ class DpoController(
             ra.addFlashAttribute("error", "Pair not found")
             return "redirect:/dpo"
         }
-        drafting.draftTwoCandidates(pair.promptTurns).fold(
-            { ra.addFlashAttribute("error", it.message) },
-            { c ->
-                dpo.setCandidates(id, c.a, c.b)
-                ra.addFlashAttribute("ok", "Drafted 2 candidates via ${drafting.activeProviderId()}")
-            },
-        )
+        drafting
+            .draftTwoCandidates(pair.promptTurns)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { c ->
+                    dpo.setCandidates(id, c.a, c.b)
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Drafted 2 candidates via ${drafting.activeProviderId()}"
+                    )
+                },
+            )
         return "redirect:/dpo/$id"
     }
 
     @PostMapping("/{id}/prompt")
-    fun prompt(@PathVariable id: String, @RequestParam promptText: String, ra: RedirectAttributes): String {
+    fun prompt(
+        @PathVariable id: String,
+        @RequestParam promptText: String,
+        ra: RedirectAttributes
+    ): String {
         dpo.setPrompt(id, promptText).notify(ra)
         return "redirect:/dpo/$id"
     }
 
     @PostMapping("/{id}/candidates")
-    fun candidates(@PathVariable id: String, @RequestParam chosen: String, @RequestParam rejected: String, ra: RedirectAttributes): String {
+    fun candidates(
+        @PathVariable id: String,
+        @RequestParam chosen: String,
+        @RequestParam rejected: String,
+        ra: RedirectAttributes
+    ): String {
         dpo.setCandidates(id, chosen, rejected).notify(ra)
         return "redirect:/dpo/$id"
     }
@@ -116,26 +137,46 @@ class DpoController(
 
     @PostMapping("/{id}/submit")
     fun submit(@PathVariable id: String, ra: RedirectAttributes): String {
-        dpo.submit(id, actor()).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Submitted for review") })
+        dpo.submit(id, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Submitted for review") }
+            )
         return "redirect:/dpo/$id"
     }
 
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasRole('REVIEWER')")
     fun approve(@PathVariable id: String, ra: RedirectAttributes): String {
-        dpo.approve(id, actor()).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Approved") })
+        dpo.approve(id, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Approved") }
+            )
         return "redirect:/dpo/$id"
     }
 
     @PostMapping("/{id}/sendback")
     @PreAuthorize("hasRole('REVIEWER')")
-    fun sendBack(@PathVariable id: String, @RequestParam comment: String, ra: RedirectAttributes): String {
-        dpo.sendBack(id, actor(), comment).fold({ ra.addFlashAttribute("error", it.message) }, { ra.addFlashAttribute("ok", "Sent back to author") })
+    fun sendBack(
+        @PathVariable id: String,
+        @RequestParam comment: String,
+        ra: RedirectAttributes
+    ): String {
+        dpo.sendBack(id, actor(), comment)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Sent back to author") }
+            )
         return "redirect:/dpo/$id"
     }
 
     @PostMapping("/{id}/comment")
-    fun comment(@PathVariable id: String, @RequestParam text: String, ra: RedirectAttributes): String {
+    fun comment(
+        @PathVariable id: String,
+        @RequestParam text: String,
+        ra: RedirectAttributes
+    ): String {
         dpo.addComment(id, actor(), text).notify(ra)
         return "redirect:/dpo/$id"
     }

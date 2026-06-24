@@ -3,7 +3,10 @@ package ai.vishwakarma.labelling.domain
 import java.time.Instant
 
 /** How a preference pair was produced. */
-enum class DpoSource { LLM2, MANUAL }
+enum class DpoSource {
+    LLM2,
+    MANUAL
+}
 
 /**
  * A DPO preference pair: a prompt (one or more leading turns, ending on the user side) plus a

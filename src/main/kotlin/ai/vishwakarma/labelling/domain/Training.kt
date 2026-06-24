@@ -2,17 +2,39 @@ package ai.vishwakarma.labelling.domain
 
 import java.time.Instant
 
-enum class TuningMethod { SFT, DPO }
+enum class TuningMethod {
+    SFT,
+    DPO
+}
 
 /** Foundation = tune from the stock base; continuation = tune on top of a prior version. */
-enum class BaseKind { FOUNDATION, CONTINUATION }
+enum class BaseKind {
+    FOUNDATION,
+    CONTINUATION
+}
 
-enum class JobStatus { PENDING, RUNNING, SUCCEEDED, FAILED }
+enum class JobStatus {
+    PENDING,
+    RUNNING,
+    SUCCEEDED,
+    FAILED
+}
 
-enum class VersionStatus { TRAINING, READY, FAILED }
+enum class VersionStatus {
+    TRAINING,
+    READY,
+    FAILED
+}
 
-/** Single global blessed model (`current`); others `archived` or `none` (candidate deferred to eval). */
-enum class Promotion { CURRENT, ARCHIVED, NONE }
+/**
+ * Single global blessed model (`current`); others `archived` or `none` (candidate deferred to
+ * eval).
+ */
+enum class Promotion {
+    CURRENT,
+    ARCHIVED,
+    NONE
+}
 
 data class Hyperparams(
     val epochCount: Int = 3,
@@ -64,7 +86,8 @@ data class ModelVersion(
 ) {
     /** Numeric (major, minor) parsed from `version` like "v1.2". */
     val majorMinor: Pair<Int, Int>
-        get() = version.removePrefix("v").split(".").let {
-            (it.getOrNull(0)?.toIntOrNull() ?: 0) to (it.getOrNull(1)?.toIntOrNull() ?: 0)
-        }
+        get() =
+            version.removePrefix("v").split(".").let {
+                (it.getOrNull(0)?.toIntOrNull() ?: 0) to (it.getOrNull(1)?.toIntOrNull() ?: 0)
+            }
 }

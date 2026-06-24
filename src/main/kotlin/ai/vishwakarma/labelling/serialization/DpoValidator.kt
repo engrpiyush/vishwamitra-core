@@ -15,11 +15,14 @@ class DpoValidator {
         if (pair.promptTurns.isEmpty()) {
             errors += "Prompt has no turns"
         } else {
-            if (pair.promptTurns.first().role != TurnRole.USER) errors += "Prompt must start with a user turn"
+            if (pair.promptTurns.first().role != TurnRole.USER)
+                errors += "Prompt must start with a user turn"
             val last = pair.promptTurns.last()
-            if (!(last.role == TurnRole.USER && last.kind == TurnKind.TEXT)) errors += "Prompt must end with a user text turn"
+            if (!(last.role == TurnRole.USER && last.kind == TurnKind.TEXT))
+                errors += "Prompt must end with a user text turn"
             pair.promptTurns.forEachIndexed { i, t ->
-                if (t.kind == TurnKind.TEXT && t.text.isBlank()) errors += "Prompt turn ${i + 1} text is empty"
+                if (t.kind == TurnKind.TEXT && t.text.isBlank())
+                    errors += "Prompt turn ${i + 1} text is empty"
             }
         }
 
