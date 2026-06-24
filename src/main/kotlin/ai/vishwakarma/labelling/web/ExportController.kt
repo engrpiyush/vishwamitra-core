@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.domain.ExportKind
+import ai.vishwakarma.labelling.domain.ToolEncoding
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.ExportService
 import ai.vishwakarma.labelling.service.TaxonomyService
@@ -28,6 +29,8 @@ class ExportController(
         model.addAttribute("history", exportService.history())
         model.addAttribute("taxonomy", taxonomy.get())
         model.addAttribute("kinds", ExportKind.entries)
+        model.addAttribute("toolEncodings", ToolEncoding.entries)
+        model.addAttribute("defaultEncoding", ToolEncoding.DEFAULT)
         return "export/index"
     }
 
@@ -37,6 +40,7 @@ class ExportController(
         @RequestParam(required = false) skill: String?,
         @RequestParam(required = false) intent: String?,
         @RequestParam(required = false) language: String?,
+        @RequestParam(required = false) toolEncoding: String?,
         ra: RedirectAttributes,
     ): String {
         val parsed = runCatching { ExportKind.valueOf(kind.uppercase()) }.getOrNull()
@@ -44,14 +48,17 @@ class ExportController(
             ra.addFlashAttribute("error", "Invalid export kind")
             return "redirect:/export"
         }
+        val encoding =
+            toolEncoding?.let { runCatching { ToolEncoding.valueOf(it) }.getOrNull() }
+                ?: ToolEncoding.DEFAULT
         exportService
-            .export(parsed, skill, intent, language, CurrentUser.email())
+            .export(parsed, skill, intent, language, CurrentUser.email(), encoding)
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
                 {
                     ra.addFlashAttribute(
                         "ok",
-                        "Exported ${it.count} ${parsed.name} examples → ${it.gcsUri}"
+                        "Exported ${it.count} ${parsed.name} examples (${encoding.label}) → ${it.gcsUri}"
                     )
                 },
             )

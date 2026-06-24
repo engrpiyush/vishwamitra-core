@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ExportKind
 import ai.vishwakarma.labelling.domain.ExportRecord
+import ai.vishwakarma.labelling.domain.ToolEncoding
 import ai.vishwakarma.labelling.gcs.Exporter
 import ai.vishwakarma.labelling.persistence.ExportRepository
 import ai.vishwakarma.labelling.serialization.ContentsPartsSerializer
@@ -41,6 +42,7 @@ class ExportService(
         intent: String?,
         language: String?,
         actor: String?,
+        toolEncoding: ToolEncoding = ToolEncoding.DEFAULT,
     ): Either<DomainError, ExportRecord> {
         val filter =
             ExampleTags(
@@ -53,11 +55,11 @@ class ExportService(
             when (kind) {
                 ExportKind.SFT -> {
                     val items = sft.list(ExampleStatus.APPROVED).filter { it.tags.matches(filter) }
-                    items.map { it.id } to items.map { sftSerializer.toJsonl(it) }
+                    items.map { it.id } to items.map { sftSerializer.toJsonl(it, toolEncoding) }
                 }
                 ExportKind.DPO -> {
                     val items = dpo.list(ExampleStatus.APPROVED).filter { it.tags.matches(filter) }
-                    items.map { it.id } to items.map { dpoSerializer.toJsonl(it) }
+                    items.map { it.id } to items.map { dpoSerializer.toJsonl(it, toolEncoding) }
                 }
             }
 

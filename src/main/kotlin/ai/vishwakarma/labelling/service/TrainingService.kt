@@ -81,23 +81,31 @@ class TrainingService(
         if (jobs.anyActive())
             return DomainError.Invalid("A tuning job is already running (1 concurrent max)").left()
 
+        // Form <select>s post "" (not null) for an unselected option; coerce blanks to null so the
+        // guards below yield friendly errors instead of Firestore's "path must be non-empty".
+        val exportId =
+            datasetExportId.ifBlank { null }
+                ?: return DomainError.Invalid("Select a dataset export to tune on").left()
+        val baseId = baseModelId?.ifBlank { null }
+        val nullableParentVersionId = parentVersionId?.ifBlank { null }
+
         val export =
-            exports.findById(datasetExportId)
-                ?: return DomainError.NotFound("Dataset export $datasetExportId not found").left()
+            exports.findById(exportId)
+                ?: return DomainError.NotFound("Dataset export $exportId not found").left()
 
         // Resolve base model, family, customBaseModel and the next version.
         val resolved =
             when (baseKind) {
                 BaseKind.FOUNDATION -> {
                     val base =
-                        baseModelId?.let { baseModels.findById(it) }
-                            ?: return DomainError.NotFound("Base model not found").left()
+                        baseId?.let { baseModels.findById(it) }
+                            ?: return DomainError.Invalid("Select a base model").left()
                     Resolved(base.publisherModel, base.id, base.family, null)
                 }
                 BaseKind.CONTINUATION -> {
                     val parent =
-                        parentVersionId?.let { versions.findById(it) }
-                            ?: return DomainError.NotFound("Parent version not found").left()
+                        nullableParentVersionId?.let { versions.findById(it) }
+                            ?: return DomainError.Invalid("Select a parent version").left()
                     if (
                         parent.status != VersionStatus.READY ||
                             parent.gcsCheckpointUri.isNullOrBlank()
@@ -117,7 +125,7 @@ class TrainingService(
             Versioning.nextVersion(
                 existing,
                 baseKind,
-                parentVersionId?.let { versions.findById(it)?.version }
+                nullableParentVersionId?.let { versions.findById(it)?.version }
             )
         val displayName = "vishwakarma-ai-${resolved.family}-$newVersion"
         val outputUri = "gs://${props.gcp.servingBucket}/tuned/${resolved.family}-$newVersion/"
@@ -134,8 +142,8 @@ class TrainingService(
                 version = newVersion,
                 method = method,
                 baseKind = baseKind,
-                parentVersionId = parentVersionId,
-                datasetExportIds = listOf(datasetExportId),
+                parentVersionId = nullableParentVersionId,
+                datasetExportIds = listOf(exportId),
                 tuningJobId = jobId,
                 status = VersionStatus.TRAINING,
                 displayName = displayName,
@@ -148,8 +156,8 @@ class TrainingService(
                 method = method,
                 baseKind = baseKind,
                 baseModelId = resolved.baseModelId,
-                parentVersionId = parentVersionId,
-                datasetExportId = datasetExportId,
+                parentVersionId = nullableParentVersionId,
+                datasetExportId = exportId,
                 hyperparams = hp,
                 status = JobStatus.PENDING,
                 outputUri = outputUri,

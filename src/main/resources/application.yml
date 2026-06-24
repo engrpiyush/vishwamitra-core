@@ -31,13 +31,13 @@ app:
   hosted-domain: ${HOSTED_DOMAIN:vishwakarma.ai}
   auth:
     # Comma-separated emails seeded as ADMIN on startup (e.g. the first operators).
-    bootstrap-admins: ${BOOTSTRAP_ADMINS:}
+    bootstrap-admins: ${BOOTSTRAP_ADMINS:piyush@vishx.com}
   gcp:
     project-id: ${GCP_PROJECT_ID:vishwakarma-ai-poc}
     region: ${GCP_REGION:asia-southeast1}
     firestore-database: ${FIRESTORE_DATABASE:vishwakarma-labelling}
-    training-bucket: ${TRAINING_BUCKET:}
-    serving-bucket: ${SERVING_BUCKET:}
+    training-bucket: ${TRAINING_BUCKET:va-ai-training-vishwakarma-ai-poc}
+    serving-bucket: ${SERVING_BUCKET:va-ai-serving-vishwakarma-ai-poc}
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}

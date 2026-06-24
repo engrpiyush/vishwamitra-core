@@ -48,24 +48,81 @@ class ContentsPartsSerializerTest {
         assertEquals("user", contents[0]["role"])
         assertEquals("model", contents[1]["role"])
 
-        // tool call part
+        // OSS tuning only allows text parts: the tool call is a <tool_call> text part (default
+        // QWEN_HERMES encoding), NOT a structured functionCall part.
         @Suppress("UNCHECKED_CAST")
         val callPart = (contents[1]["parts"] as List<Map<String, Any?>>)[0]
-        @Suppress("UNCHECKED_CAST") val functionCall = callPart["functionCall"] as Map<String, Any?>
-        assertEquals("search_workers", functionCall["name"])
-        @Suppress("UNCHECKED_CAST") val args = functionCall["args"] as Map<String, Any?>
-        assertEquals("electrician", args["skill"])
+        assertTrue(!callPart.containsKey("functionCall"))
+        val callText = callPart["text"] as String
+        assertTrue(callText.startsWith("<tool_call>") && callText.endsWith("</tool_call>"))
+        assertTrue(callText.contains("\"name\":\"search_workers\""))
+        assertTrue(callText.contains("\"skill\":\"electrician\""))
 
-        // tool response is serialized on the user side as functionResponse
+        // tool response is a <tool_response> text part on the user side
         assertEquals("user", contents[2]["role"])
         @Suppress("UNCHECKED_CAST")
         val respPart = (contents[2]["parts"] as List<Map<String, Any?>>)[0]
-        assertTrue(respPart.containsKey("functionResponse"))
+        assertTrue(!respPart.containsKey("functionResponse"))
+        assertTrue((respPart["text"] as String).contains("<tool_response>"))
 
         // round-trips through JSON without throwing and is one line
         val jsonl = serializer.toJsonl(example)
         assertTrue(jsonl.startsWith("{\"contents\""))
         assertTrue(!jsonl.contains("\n"))
+    }
+
+    @Test
+    fun `tool encoding is selectable and malformed args do not throw`() {
+        val example =
+            SftExample(
+                id = "x4",
+                turns =
+                    listOf(
+                        Turn(TurnRole.USER, TurnKind.TEXT, text = "book it"),
+                        Turn(
+                            TurnRole.MODEL,
+                            TurnKind.TOOL_CALL,
+                            toolName = "book_worker",
+                            // not valid JSON — serializer must fall back, never throw
+                            argsJson = "create_work_request(...)",
+                        ),
+                        Turn(
+                            TurnRole.USER,
+                            TurnKind.TOOL_RESPONSE,
+                            toolName = "book_worker",
+                            resultJson = """{"ok":true}""",
+                        ),
+                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "Booked."),
+                    ),
+            )
+
+        // Inspect the tool-call part text directly (the serialized JSONL escapes inner quotes).
+        fun callText(encoding: ai.vishwakarma.labelling.domain.ToolEncoding): String {
+            @Suppress("UNCHECKED_CAST")
+            val contents =
+                serializer.toContents(example, encoding)["contents"] as List<Map<String, Any?>>
+            @Suppress("UNCHECKED_CAST")
+            return (contents[1]["parts"] as List<Map<String, Any?>>)[0]["text"] as String
+        }
+
+        // toJsonl must never throw on the malformed args, and stays one line
+        assertTrue(
+            !serializer
+                .toJsonl(example, ai.vishwakarma.labelling.domain.ToolEncoding.PLAIN_JSON)
+                .contains("\n")
+        )
+
+        // PLAIN_JSON: bare {name,args} with empty-args fallback, no <tool_call> wrapper
+        val plain = callText(ai.vishwakarma.labelling.domain.ToolEncoding.PLAIN_JSON)
+        assertTrue(!plain.contains("<tool_call>"))
+        assertTrue(plain.contains("\"name\":\"book_worker\""))
+        assertTrue(plain.contains("\"args\":{}"))
+
+        // GEMMA_FENCED uses fenced blocks
+        assertTrue(
+            callText(ai.vishwakarma.labelling.domain.ToolEncoding.GEMMA_FENCED)
+                .contains("```tool_call")
+        )
     }
 
     @Test

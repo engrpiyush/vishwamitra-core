@@ -96,7 +96,9 @@ class SftService(
         // here would otherwise crash the preview/serializer on every later read). Mirrors the
         // checks in SftValidator: args must be a JSON object, a tool result must be valid JSON.
         if (argsJson != null && !Json.isValidObject(argsJson))
-            return DomainError.Invalid("Tool-call args must be a JSON object, e.g. {\"key\": \"value\"}")
+            return DomainError.Invalid(
+                    "Tool-call args must be a JSON object, e.g. {\"key\": \"value\"}"
+                )
                 .left()
         if (resultJson != null && !Json.isValid(resultJson))
             return DomainError.Invalid("Tool-response result must be valid JSON").left()

@@ -30,6 +30,12 @@
                 <option th:each="l : ${taxonomy.languages}" th:value="${l}" th:text="${l}">l</option>
             </select>
         </label>
+        <label>Tool encoding
+            <select name="toolEncoding">
+                <option th:each="te : ${toolEncodings}" th:value="${te}" th:text="${te.label}"
+                        th:selected="${te == defaultEncoding}">enc</option>
+            </select>
+        </label>
         <button type="submit">Run export</button>
     </form>
 
