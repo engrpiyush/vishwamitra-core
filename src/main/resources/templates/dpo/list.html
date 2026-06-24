@@ -32,7 +32,7 @@
     <table class="grid">
         <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Source</th><th>From SFT</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
-        <tr th:each="p : ${pairs}" class="clickable" th:onclick="|window.location='/dpo/${p.id}'|">
+        <tr th:each="p : ${pairs}" class="clickable" th:attr="data-href=@{/dpo/{id}(id=${p.id})}">
             <td th:text="${p.tags.skill}">skill</td>
             <td th:text="${p.tags.intent}">intent</td>
             <td th:text="${p.tags.language}">lang</td>

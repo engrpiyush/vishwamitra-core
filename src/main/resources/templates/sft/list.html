@@ -33,7 +33,7 @@
         <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Tool?</th><th>Turns</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="e : ${examples}" class="clickable"
-            th:onclick="|window.location='/sft/${e.id}'|">
+            th:attr="data-href=@{/sft/{id}(id=${e.id})}">
             <td th:text="${e.tags.skill}">skill</td>
             <td th:text="${e.tags.intent}">intent</td>
             <td th:text="${e.tags.language}">lang</td>

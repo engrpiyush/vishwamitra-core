@@ -10,6 +10,11 @@ spring:
 
 server:
   port: ${PORT:8080}   # Cloud Run injects PORT; default 8080 locally
+  # Behind the Cloud Run ALB, TLS terminates at the LB and is forwarded over HTTP. Honor
+  # X-Forwarded-Proto/Host so Spring builds https:// absolute URLs (e.g. the OAuth2
+  # redirect_uri). Overridable via SERVER_FORWARD_HEADERS_STRATEGY. Harmless locally (no
+  # forwarded headers are present in dev).
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:framework}
 
 management:
   endpoints:

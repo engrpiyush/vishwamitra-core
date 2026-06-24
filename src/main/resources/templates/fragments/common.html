@@ -12,6 +12,14 @@
     <title th:text="${title} ? |Vishwamitra · ${title}| : 'Vishwamitra'">Vishwamitra</title>
     <link rel="stylesheet" th:href="@{/css/app.css}"/>
     <script th:src="@{/webjars/htmx.org/dist/htmx.min.js}" defer></script>
+    <script>
+        // Rows marked class="clickable" with a data-href navigate on click. (Thymeleaf forbids
+        // interpolating Strings into th:on* handlers, so the URL is carried in data-href.)
+        document.addEventListener('click', function (e) {
+            var row = e.target.closest('.clickable[data-href]');
+            if (row) window.location = row.getAttribute('data-href');
+        });
+    </script>
 </head>
 
 <body>

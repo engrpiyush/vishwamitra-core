@@ -1,0 +1,42 @@
+# CI/CD for the labelling console. Triggered by Cloud Build on push to the watched
+# branch (see vishwamitra-infra terraform module "cicd"). Runs as the dedicated
+# CI/CD service account (vishwakarma-labelling-cicd-sa).
+#
+#   1. Jib builds the image straight from Maven (no Dockerfile) and pushes it to
+#      Artifact Registry, tagged with the commit short SHA. Jib authenticates to
+#      *.pkg.dev via the build's Application Default Credentials (the CI/CD SA).
+#   2. gcloud rolls that exact image onto the existing Cloud Run service.
+
+substitutions:
+  _REGION: asia-southeast1
+  _SERVICE: vishwakarma-labelling
+  _IMAGE: asia-southeast1-docker.pkg.dev/vishwakarma-ai-poc/vishwakarma-labelling/labelling
+
+steps:
+  - id: jib-build-push
+    name: maven:3.9-eclipse-temurin-17
+    entrypoint: mvn
+    args:
+      - -B
+      - -ntp
+      - -DskipTests
+      - jib:build
+      - -Dimage=${_IMAGE}:$SHORT_SHA
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --project=$PROJECT_ID
+      - --quiet
+
+# A user-managed build SA requires an explicit log destination.
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
