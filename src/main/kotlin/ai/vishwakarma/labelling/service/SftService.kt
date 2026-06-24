@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.TurnKind
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.persistence.SftExampleRepository
 import ai.vishwakarma.labelling.serialization.ContentsPartsSerializer
+import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.serialization.SftValidator
 import arrow.core.Either
 import arrow.core.left
@@ -90,8 +91,16 @@ class SftService(
         toolName: String?,
         argsJson: String?,
         resultJson: String?,
-    ): Either<DomainError, SftExample> =
-        mutate(id) { ex ->
+    ): Either<DomainError, SftExample> {
+        // Reject malformed tool JSON at the source so it can never be persisted (a non-JSON value
+        // here would otherwise crash the preview/serializer on every later read). Mirrors the
+        // checks in SftValidator: args must be a JSON object, a tool result must be valid JSON.
+        if (argsJson != null && !Json.isValidObject(argsJson))
+            return DomainError.Invalid("Tool-call args must be a JSON object, e.g. {\"key\": \"value\"}")
+                .left()
+        if (resultJson != null && !Json.isValid(resultJson))
+            return DomainError.Invalid("Tool-response result must be valid JSON").left()
+        return mutate(id) { ex ->
             val turns = ex.turns.toMutableList()
             val t = turns.getOrNull(index) ?: return@mutate ex
             turns[index] =
@@ -103,6 +112,7 @@ class SftService(
                 )
             ex.copy(turns = turns)
         }
+    }
 
     fun deleteTurn(id: String, index: Int): Either<DomainError, SftExample> =
         mutate(id) { ex -> ex.copy(turns = ex.turns.filterIndexed { i, _ -> i != index }) }
