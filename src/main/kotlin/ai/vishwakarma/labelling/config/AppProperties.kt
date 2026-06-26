@@ -27,6 +27,8 @@ data class AppProperties(
         val enabled: Boolean = false,
         /** Dev/test: simulate a successful tune instead of calling Vertex (no credit spend). */
         val dryRun: Boolean = false,
+        /** Per-example token cap (Gemma 3 27B / Qwen 3 32B). Import validation warns past this. */
+        val maxTokensPerExample: Int = 8192,
     )
 
     data class Auth(

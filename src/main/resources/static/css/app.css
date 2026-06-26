@@ -116,6 +116,36 @@ button[type=submit] {
     padding: 0.5rem 0.9rem; font-weight: 600; cursor: pointer; align-self: flex-start;
 }
 
+/* modal popup */
+.modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-card {
+    position: relative; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.5rem; width: 100%; max-width: 520px; margin: 1rem;
+    display: flex; flex-direction: column; gap: 0.75rem;
+}
+.modal-card h3 { margin: 0; }
+.modal-card form { display: flex; flex-direction: column; gap: 0.6rem; }
+.modal-card label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; color: var(--muted); }
+.modal-card input[type=text] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 0.5rem 0.6rem; font: inherit;
+}
+.modal-actions { display: flex; align-items: center; gap: 1rem; }
+.modal-close { position: absolute; top: 0.6rem; right: 0.9rem; color: var(--muted); text-decoration: none; font-size: 1.3rem; line-height: 1; }
+.modal-close:hover { color: var(--text); }
+
+/* import drop zone */
+.dropzone {
+    border: 1px dashed var(--border); border-radius: 10px; background: var(--surface);
+    padding: 1.5rem; text-align: center; transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dropzone.dragover { border-color: var(--accent); background: var(--surface-2); }
+.dropzone .dz-text { margin: 0 0 0.4rem; }
+.dropzone .dz-file { margin: 0; font-size: 0.85rem; }
+
 /* chips */
 .chip { display: inline-flex; align-items: center; gap: 0.25rem; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.55rem; margin: 0.15rem; font-size: 0.85rem; }

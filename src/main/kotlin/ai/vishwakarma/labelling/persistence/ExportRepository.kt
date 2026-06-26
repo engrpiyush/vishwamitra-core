@@ -28,6 +28,10 @@ class ExportRepository(private val db: Firestore) {
         col.document(record.id).set(record.toMap()).await()
     }
 
+    fun delete(id: String) {
+        col.document(id).delete().await()
+    }
+
     private fun ExportRecord.toMap(): Map<String, Any?> =
         mapOf(
             "kind" to kind.name,

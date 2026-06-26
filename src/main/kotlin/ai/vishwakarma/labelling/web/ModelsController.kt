@@ -57,4 +57,20 @@ class ModelsController(private val training: TrainingService) {
             )
         return "redirect:/models"
     }
+
+    @PostMapping("/{id}/checkpoint")
+    @PreAuthorize("hasRole('REVIEWER')")
+    fun checkpoint(
+        @PathVariable id: String,
+        @RequestParam checkpointUri: String,
+        ra: RedirectAttributes,
+    ): String {
+        training
+            .setCheckpoint(id, checkpointUri)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "${it.displayName} → READY (checkpoint set)") },
+            )
+        return "redirect:/models"
+    }
 }

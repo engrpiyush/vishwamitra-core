@@ -39,6 +39,12 @@
                         <input type="hidden" name="target" value="ARCHIVED"/>
                         <button class="link" type="submit">archive</button>
                     </form>
+                    <form sec:authorize="hasRole('REVIEWER')" method="post" class="inline-send"
+                          th:if="${v.status.name() == 'WEIGHTS_NOT_FOUND'}"
+                          th:action="@{'/models/' + ${v.id} + '/checkpoint'}">
+                        <input type="text" name="checkpointUri" placeholder="gs://…/final/" required/>
+                        <button class="link" type="submit">set checkpoint</button>
+                    </form>
                 </td>
             </tr>
             </tbody>

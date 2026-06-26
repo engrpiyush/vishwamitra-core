@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.JobStatus
 import ai.vishwakarma.labelling.domain.TuningMethod
 import ai.vishwakarma.labelling.serialization.Json
 import com.google.auth.oauth2.GoogleCredentials
+import java.math.BigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
@@ -67,7 +68,12 @@ class TuningService(private val props: AppProperties) {
                         mapOf(
                             "epochCount" to hp.epochCount.toString(),
                             "adapterSize" to hp.adapterSize,
-                            "learningRate" to hp.learningRate,
+                            // Jackson renders a raw Double like 0.0002 in scientific notation
+                            // ("2.0E-4"), which Vertex's tuningJobs parser rejects with an opaque
+                            // 500 INTERNAL. A BigDecimal from the plain-decimal string serializes
+                            // as
+                            // a plain JSON number (e.g. 0.00020) that the API accepts.
+                            "learningRate" to BigDecimal(hp.learningRate.toString()),
                         ),
                 ),
             )
@@ -75,10 +81,12 @@ class TuningService(private val props: AppProperties) {
         val url =
             "${base()}/projects/${props.gcp.projectId}/locations/${props.gcp.region}/tuningJobs"
         log.info(
-            "Submitting {} tuning job '{}' (continuation={})",
+            "Submitting {} tuning job '{}' (continuation={}) dataset={} body={}",
             method,
             tunedModelDisplayName,
-            customBaseModel != null
+            customBaseModel != null,
+            trainingDatasetUri,
+            Json.writeLine(body),
         )
         val response =
             rest

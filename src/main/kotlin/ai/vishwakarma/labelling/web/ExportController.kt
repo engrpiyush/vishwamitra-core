@@ -9,6 +9,7 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -61,6 +62,17 @@ class ExportController(
                         "Exported ${it.count} ${parsed.name} examples (${encoding.label}) → ${it.gcsUri}"
                     )
                 },
+            )
+        return "redirect:/export"
+    }
+
+    @PostMapping("/{id}/delete")
+    fun delete(@PathVariable id: String, ra: RedirectAttributes): String {
+        exportService
+            .delete(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Export deleted") },
             )
         return "redirect:/export"
     }

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Import</h1>
+    <p class="muted">Upload an external JSONL dataset to the training bucket. It is renamed and stored
+        under a dated <code>imports/</code> folder, then validated asynchronously. A VALID import is
+        selectable in the Training form.</p>
+
+    <form method="post" th:action="@{/import/run}" enctype="multipart/form-data" class="form">
+        <label>Kind
+            <select name="kind">
+                <option th:each="k : ${kinds}" th:value="${k}" th:text="${k}">SFT</option>
+            </select>
+        </label>
+
+        <div class="dropzone" id="dropzone">
+            <input type="file" name="file" id="fileInput" accept=".jsonl" required hidden/>
+            <p class="dz-text">Drag &amp; drop a <code>.jsonl</code> file here, or
+                <button type="button" class="link" id="browseBtn">browse</button>.</p>
+            <p class="dz-file muted" id="fileName">No file selected.</p>
+        </div>
+
+        <button type="submit">Import &amp; validate</button>
+    </form>
+
+    <div class="row-between">
+        <h2>Imports</h2>
+        <a class="link" th:href="@{/import}">↻ Refresh status</a>
+    </div>
+    <table class="grid">
+        <thead><tr><th>When</th><th>Kind</th><th>Original name</th><th>Stored URI</th><th>Lines</th><th>Status</th><th>Details</th></tr></thead>
+        <tbody>
+        <th:block th:each="im : ${imports}">
+            <tr>
+                <td class="muted" th:text="${im.createdAt}">ts</td>
+                <td><span class="badge" th:text="${im.kind}">SFT</span></td>
+                <td th:text="${im.originalFilename}">file.jsonl</td>
+                <td class="truncate"><code th:text="${im.gcsUri}">gs://…</code></td>
+                <td th:text="${im.lineCount}">0</td>
+                <td><span class="badge" th:text="${im.status}">PENDING</span></td>
+                <td>
+                    <details th:if="${!im.errors.isEmpty()}">
+                        <summary th:text="${im.errors.size() + ' error(s)'}">errors</summary>
+                        <ul class="errors">
+                            <li th:each="er : ${im.errors}"
+                                th:text="${(er.line > 0 ? 'line ' + er.line : 'file') + ': ' + er.message}">err</li>
+                        </ul>
+                    </details>
+                    <form th:if="${im.errors.isEmpty()}" method="post" class="inline-form"
+                          th:action="@{'/import/' + ${im.id} + '/revalidate'}">
+                        <button class="link" type="submit">re-validate</button>
+                    </form>
+                    <form method="post" class="inline-form" th:action="@{'/import/' + ${im.id} + '/delete'}"
+                          onsubmit="return confirm('Delete this import? This removes the JSONL file from the bucket and the record. This cannot be undone.');">
+                        <button class="link danger" type="submit">delete</button>
+                    </form>
+                </td>
+            </tr>
+        </th:block>
+        <tr th:if="${imports.isEmpty()}"><td colspan="7" class="muted">No imports yet.</td></tr>
+        </tbody>
+    </table>
+</main>
+
+<script>
+    (function () {
+        var dz = document.getElementById('dropzone');
+        var input = document.getElementById('fileInput');
+        var name = document.getElementById('fileName');
+        var browse = document.getElementById('browseBtn');
+        if (!dz || !input) return;
+
+        function show() {
+            name.textContent = input.files.length ? input.files[0].name : 'No file selected.';
+        }
+        browse.addEventListener('click', function () { input.click(); });
+        input.addEventListener('change', show);
+
+        ['dragenter', 'dragover'].forEach(function (ev) {
+            dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(function (ev) {
+            dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove('dragover'); });
+        });
+        dz.addEventListener('drop', function (e) {
+            if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; show(); }
+        });
+    })();
+</script>
+</body>
+</html>

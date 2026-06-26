@@ -2,13 +2,16 @@ package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.BaseKind
+import ai.vishwakarma.labelling.domain.DatasetSource
 import ai.vishwakarma.labelling.domain.Hyperparams
 import ai.vishwakarma.labelling.domain.JobStatus
 import ai.vishwakarma.labelling.domain.ModelVersion
 import ai.vishwakarma.labelling.domain.Promotion
 import ai.vishwakarma.labelling.domain.TuningJob
 import ai.vishwakarma.labelling.domain.TuningMethod
+import ai.vishwakarma.labelling.domain.ValidationStatus
 import ai.vishwakarma.labelling.domain.VersionStatus
+import ai.vishwakarma.labelling.gcs.CheckpointLocator
 import ai.vishwakarma.labelling.persistence.BaseModelRepository
 import ai.vishwakarma.labelling.persistence.ExportRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
@@ -32,7 +35,9 @@ class TrainingService(
     private val versions: ModelVersionRepository,
     private val baseModels: BaseModelRepository,
     private val exports: ExportRepository,
+    private val imports: ImportService,
     private val vertex: TuningService,
+    private val checkpoints: CheckpointLocator,
     private val props: AppProperties,
 ) {
 
@@ -71,7 +76,8 @@ class TrainingService(
         baseKind: BaseKind,
         baseModelId: String?,
         parentVersionId: String?,
-        datasetExportId: String,
+        datasetSource: DatasetSource,
+        datasetId: String,
         method: TuningMethod,
         hp: Hyperparams,
         actor: String?,
@@ -83,15 +89,30 @@ class TrainingService(
 
         // Form <select>s post "" (not null) for an unselected option; coerce blanks to null so the
         // guards below yield friendly errors instead of Firestore's "path must be non-empty".
-        val exportId =
-            datasetExportId.ifBlank { null }
-                ?: return DomainError.Invalid("Select a dataset export to tune on").left()
+        val dataId =
+            datasetId.ifBlank { null }
+                ?: return DomainError.Invalid("Select a dataset to tune on").left()
         val baseId = baseModelId?.ifBlank { null }
         val nullableParentVersionId = parentVersionId?.ifBlank { null }
 
-        val export =
-            exports.findById(exportId)
-                ?: return DomainError.NotFound("Dataset export $exportId not found").left()
+        // Resolve the training-dataset GCS URI from either a tool export or a validated import.
+        val datasetUri =
+            when (datasetSource) {
+                DatasetSource.EXPORT ->
+                    exports.findById(dataId)?.gcsUri
+                        ?: return DomainError.NotFound("Dataset export $dataId not found").left()
+                DatasetSource.IMPORT -> {
+                    val imp =
+                        imports.findById(dataId)
+                            ?: return DomainError.NotFound("Import $dataId not found").left()
+                    if (imp.status != ValidationStatus.VALID)
+                        return DomainError.Invalid(
+                                "Import is not VALID — fix validation errors before tuning"
+                            )
+                            .left()
+                    imp.gcsUri
+                }
+            }
 
         // Resolve base model, family, customBaseModel and the next version.
         val resolved =
@@ -143,7 +164,7 @@ class TrainingService(
                 method = method,
                 baseKind = baseKind,
                 parentVersionId = nullableParentVersionId,
-                datasetExportIds = listOf(exportId),
+                datasetExportIds = listOf(dataId),
                 tuningJobId = jobId,
                 status = VersionStatus.TRAINING,
                 displayName = displayName,
@@ -157,7 +178,7 @@ class TrainingService(
                 baseKind = baseKind,
                 baseModelId = resolved.baseModelId,
                 parentVersionId = nullableParentVersionId,
-                datasetExportId = exportId,
+                datasetExportId = dataId,
                 hyperparams = hp,
                 status = JobStatus.PENDING,
                 outputUri = outputUri,
@@ -170,7 +191,7 @@ class TrainingService(
 
         // Dev/test: simulate a successful tune without calling Vertex.
         if (props.tuning.dryRun) {
-            val checkpoint = "$outputUri" + "custom-trained/dry-run/"
+            val checkpoint = "${outputUri}final/"
             jobs.save(
                 job.copy(
                     vertexJobName = "dry-run/$jobId",
@@ -196,7 +217,7 @@ class TrainingService(
                     customBaseModel = resolved.customBaseModel,
                     tunedModelDisplayName = displayName,
                     outputUri = outputUri,
-                    trainingDatasetUri = export.gcsUri,
+                    trainingDatasetUri = datasetUri,
                     method = method,
                     hp = hp,
                 )
@@ -213,48 +234,122 @@ class TrainingService(
         }
     }
 
-    /** Poll Vertex and finalize the version on terminal states. */
-    fun pollJob(jobId: String): Either<DomainError, TuningJob> {
+    /**
+     * Poll Vertex. RUNNING/FAILED are finalized in place. A SUCCEEDED job is NOT auto-finalized:
+     * the weights checkpoint is confirmed by the user (see [confirmWeights]/[markNoWeights]) — so
+     * we return [PollOutcome.NeedsWeights] (with a suggested path) and persist nothing, leaving the
+     * job pollable if the user dismisses the prompt. A re-poll of an already-READY version is a
+     * no-op beyond ensuring the job reads SUCCEEDED.
+     */
+    fun pollJob(jobId: String): Either<DomainError, PollOutcome> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
         val jobName =
             job.vertexJobName ?: return DomainError.Invalid("Job has no Vertex job name").left()
         return try {
             val info = vertex.status(jobName)
-            var updated = job.copy(status = info.status)
             when (info.status) {
                 JobStatus.SUCCEEDED -> {
-                    updated =
-                        updated.copy(
-                            vertexModelResource = info.modelResource,
-                            finishedAt = Instant.now()
-                        )
-                    job.modelVersionId?.let { vid ->
-                        versions.findById(vid)?.let { v ->
-                            versions.save(
-                                v.copy(
-                                    status = VersionStatus.READY,
-                                    gcsCheckpointUri = info.checkpointUri ?: job.outputUri,
+                    val version = job.modelVersionId?.let { versions.findById(it) }
+                    if (version?.status == VersionStatus.READY) {
+                        val updated =
+                            job.copy(
+                                    status = JobStatus.SUCCEEDED,
                                     vertexModelResource = info.modelResource,
-                                ),
-                            )
-                        }
+                                )
+                                .also { jobs.save(it) }
+                        PollOutcome.Updated(updated).right()
+                    } else {
+                        // Defer finalization to user weights-confirmation; persist nothing.
+                        PollOutcome.NeedsWeights(jobId, checkpoints.suggest(job.outputUri)).right()
                     }
                 }
                 JobStatus.FAILED -> {
-                    updated = updated.copy(finishedAt = Instant.now())
+                    val updated =
+                        job.copy(status = info.status, finishedAt = Instant.now()).also {
+                            jobs.save(it)
+                        }
                     job.modelVersionId?.let { vid ->
                         versions.findById(vid)?.let {
                             versions.save(it.copy(status = VersionStatus.FAILED))
                         }
                     }
+                    PollOutcome.Updated(updated).right()
                 }
-                else -> {}
+                else ->
+                    PollOutcome.Updated(job.copy(status = info.status).also { jobs.save(it) })
+                        .right()
             }
-            jobs.save(updated)
-            updated.right()
         } catch (e: Exception) {
             DomainError.Invalid("Status poll failed: ${e.message}").left()
         }
+    }
+
+    /**
+     * User confirms the SUCCEEDED job's weights live at [uri]: validate the folder actually
+     * contains weight files, then finalize the version READY (with the checkpoint) and the job
+     * SUCCEEDED.
+     */
+    fun confirmWeights(jobId: String, uri: String): Either<DomainError, ModelVersion> {
+        val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        val checkpoint =
+            uri.trim().ifBlank { null }
+                ?: return DomainError.Invalid("Enter the weights folder path").left()
+        if (!checkpoint.startsWith("gs://"))
+            return DomainError.Invalid("Path must be a gs:// URI").left()
+        if (!checkpoints.containsWeights(checkpoint))
+            return DomainError.Invalid("No weights found at $checkpoint").left()
+        val normalized = if (checkpoint.endsWith("/")) checkpoint else "$checkpoint/"
+
+        val vid =
+            job.modelVersionId ?: return DomainError.Invalid("Job has no associated version").left()
+        val version =
+            versions.findById(vid) ?: return DomainError.NotFound("Version $vid not found").left()
+
+        jobs.save(
+            job.copy(
+                status = JobStatus.SUCCEEDED,
+                finishedAt = job.finishedAt ?: Instant.now(),
+            )
+        )
+        val ready = version.copy(status = VersionStatus.READY, gcsCheckpointUri = normalized)
+        versions.save(ready)
+        return ready.right()
+    }
+
+    /**
+     * User reports the SUCCEEDED job produced no usable weights: park the version for manual fix.
+     */
+    fun markNoWeights(jobId: String): Either<DomainError, TuningJob> {
+        val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        job.modelVersionId?.let { vid ->
+            versions.findById(vid)?.let {
+                versions.save(it.copy(status = VersionStatus.WEIGHTS_NOT_FOUND))
+            }
+        }
+        val updated =
+            job.copy(status = JobStatus.SUCCEEDED, finishedAt = job.finishedAt ?: Instant.now())
+                .also { jobs.save(it) }
+        return updated.right()
+    }
+
+    /**
+     * Manually set/correct a version's checkpoint (Models page) — validates weights, flips to
+     * READY.
+     */
+    fun setCheckpoint(versionId: String, uri: String): Either<DomainError, ModelVersion> {
+        val version =
+            versions.findById(versionId) ?: return DomainError.NotFound("Version not found").left()
+        val checkpoint =
+            uri.trim().ifBlank { null }
+                ?: return DomainError.Invalid("Enter the weights folder path").left()
+        if (!checkpoint.startsWith("gs://"))
+            return DomainError.Invalid("Path must be a gs:// URI").left()
+        if (!checkpoints.containsWeights(checkpoint))
+            return DomainError.Invalid("No weights found at $checkpoint").left()
+        val normalized = if (checkpoint.endsWith("/")) checkpoint else "$checkpoint/"
+        val updated = version.copy(status = VersionStatus.READY, gcsCheckpointUri = normalized)
+        versions.save(updated)
+        return updated.right()
     }
 
     fun promote(versionId: String, target: Promotion): Either<DomainError, ModelVersion> {
@@ -279,4 +374,15 @@ class TrainingService(
         val family: String,
         val customBaseModel: String?,
     )
+}
+
+/** Result of [TrainingService.pollJob]. */
+sealed interface PollOutcome {
+    /** Status advanced and persisted (RUNNING/FAILED, or an already-finalized SUCCEEDED). */
+    data class Updated(val job: TuningJob) : PollOutcome
+
+    /**
+     * SUCCEEDED but weights unconfirmed — prompt the user; [suggested] pre-fills the path input.
+     */
+    data class NeedsWeights(val jobId: String, val suggested: String?) : PollOutcome
 }

@@ -13,6 +13,12 @@ enum class BaseKind {
     CONTINUATION
 }
 
+/** Where a tuning dataset comes from: a tool-produced export, or an externally-uploaded import. */
+enum class DatasetSource {
+    EXPORT,
+    IMPORT
+}
+
 enum class JobStatus {
     PENDING,
     RUNNING,
@@ -23,7 +29,12 @@ enum class JobStatus {
 enum class VersionStatus {
     TRAINING,
     READY,
-    FAILED
+    FAILED,
+    /**
+     * Tuning job SUCCEEDED on Vertex but no weights checkpoint was confirmed yet (needs manual
+     * fix).
+     */
+    WEIGHTS_NOT_FOUND
 }
 
 /**

@@ -36,6 +36,15 @@ class ExportService(
 
     fun history(): List<ExportRecord> = exports.findAll()
 
+    /** Delete an export: its JSONL blob from the bucket (best-effort) and its Firestore record. */
+    fun delete(id: String): Either<DomainError, Unit> {
+        val record =
+            exports.findById(id) ?: return DomainError.NotFound("Export $id not found").left()
+        runCatching { exporter.deleteUri(record.gcsUri) }
+        exports.delete(id)
+        return Unit.right()
+    }
+
     fun export(
         kind: ExportKind,
         skill: String?,

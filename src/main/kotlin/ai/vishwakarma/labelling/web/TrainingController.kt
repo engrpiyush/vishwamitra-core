@@ -1,11 +1,14 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.domain.BaseKind
+import ai.vishwakarma.labelling.domain.DatasetSource
 import ai.vishwakarma.labelling.domain.Hyperparams
 import ai.vishwakarma.labelling.domain.TuningMethod
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.ExportService
+import ai.vishwakarma.labelling.service.ImportService
+import ai.vishwakarma.labelling.service.PollOutcome
 import ai.vishwakarma.labelling.service.TrainingService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -24,6 +27,7 @@ class TrainingController(
     private val training: TrainingService,
     private val baseModels: BaseModelService,
     private val exports: ExportService,
+    private val imports: ImportService,
 ) {
 
     @GetMapping
@@ -33,6 +37,7 @@ class TrainingController(
         model.addAttribute("baseModels", baseModels.list(activeOnly = true))
         model.addAttribute("readyVersions", training.readyVersions())
         model.addAttribute("exports", exports.history())
+        model.addAttribute("validImports", imports.listValid())
         model.addAttribute("methods", TuningMethod.entries)
         model.addAttribute(
             "adapterSizes",
@@ -52,7 +57,7 @@ class TrainingController(
         @RequestParam baseKind: String,
         @RequestParam(required = false) baseModelId: String?,
         @RequestParam(required = false) parentVersionId: String?,
-        @RequestParam datasetExportId: String,
+        @RequestParam dataset: String,
         @RequestParam method: String,
         @RequestParam(defaultValue = "3") epochCount: Int,
         @RequestParam(defaultValue = "ADAPTER_SIZE_FOUR") adapterSize: String,
@@ -65,12 +70,22 @@ class TrainingController(
             ra.addFlashAttribute("error", "Invalid base kind or method")
             return "redirect:/training"
         }
+        // Dataset dropdown posts a composite "EXPORT:<id>" / "IMPORT:<id>" value.
+        val sourceToken = dataset.substringBefore(':', "")
+        val datasetId = dataset.substringAfter(':', "")
+        val datasetSource =
+            runCatching { DatasetSource.valueOf(sourceToken.uppercase()) }.getOrNull()
+        if (datasetSource == null) {
+            ra.addFlashAttribute("error", "Select a dataset to tune on")
+            return "redirect:/training"
+        }
         training
             .submit(
                 baseKind = kind,
                 baseModelId = baseModelId,
                 parentVersionId = parentVersionId,
-                datasetExportId = datasetExportId,
+                datasetSource = datasetSource,
+                datasetId = datasetId,
                 method = tuningMethod,
                 hp = Hyperparams(epochCount, adapterSize, learningRate),
                 actor = CurrentUser.email(),
@@ -90,7 +105,53 @@ class TrainingController(
             .pollJob(id)
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
-                { ra.addFlashAttribute("ok", "Job status: ${it.status}") },
+                { outcome ->
+                    when (outcome) {
+                        is PollOutcome.Updated ->
+                            ra.addFlashAttribute("ok", "Job status: ${outcome.job.status}")
+                        is PollOutcome.NeedsWeights -> {
+                            // Open the weights-confirmation popup (prefilled with the suggestion).
+                            ra.addFlashAttribute("confirmJobId", outcome.jobId)
+                            ra.addFlashAttribute("suggestedCheckpoint", outcome.suggested ?: "")
+                        }
+                    }
+                },
+            )
+        return "redirect:/training"
+    }
+
+    @PostMapping("/jobs/{id}/confirm-weights")
+    fun confirmWeights(
+        @PathVariable id: String,
+        @RequestParam checkpointUri: String,
+        ra: RedirectAttributes,
+    ): String {
+        training
+            .confirmWeights(id, checkpointUri)
+            .fold(
+                {
+                    // Reopen the popup prefilled with what the user typed so they can correct it.
+                    ra.addFlashAttribute("error", it.message)
+                    ra.addFlashAttribute("confirmJobId", id)
+                    ra.addFlashAttribute("suggestedCheckpoint", checkpointUri)
+                },
+                { ra.addFlashAttribute("ok", "Marked ${it.displayName} READY (${it.version})") },
+            )
+        return "redirect:/training"
+    }
+
+    @PostMapping("/jobs/{id}/no-weights")
+    fun noWeights(@PathVariable id: String, ra: RedirectAttributes): String {
+        training
+            .markNoWeights(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Marked version WEIGHTS_NOT_FOUND — set the checkpoint manually on Models"
+                    )
+                },
             )
         return "redirect:/training"
     }
