@@ -46,6 +46,9 @@ app:
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}
+  # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
+  coming-soon:
+    cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}
 
 ---
 # Local development: OAuth bypassed, Firestore emulator expected on localhost:8081.

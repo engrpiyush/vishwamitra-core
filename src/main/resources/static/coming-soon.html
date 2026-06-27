@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vishwakarma.ai — Coming Soon</title>
+<meta name="description" content="Something that changes how the world sees you is on its way. Vishwakarma.ai — by Vishx Innovations. Launching 2026.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Google reCAPTCHA — loads the widget. Replace the site key in the .g-recaptcha div below. -->
+<script src="https://www.google.com/recaptcha/api.js" async defer></script>
+<style>
+  :root{
+    --black:#02060A;
+    --green:#00FF85;
+    --green-dim:#19C46A;
+    --green-soft:#7FFFC0;
+    --green-faint:#3A6B53;
+    --text:#C8F6DD;
+    --text-2:#8FCBAB;
+    --text-soft:#5C8A72;
+    --line:rgba(0,255,120,.16);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    background:var(--black);color:var(--text);
+    -webkit-font-smoothing:antialiased;line-height:1.6;
+    min-height:100vh;overflow-x:hidden;position:relative;
+  }
+  ::selection{background:var(--green);color:var(--black)}
+  a{color:inherit;text-decoration:none}
+  .mono{font-family:'IBM Plex Mono',monospace}
+
+  #rain{position:fixed;inset:0;z-index:0;display:block;opacity:.5}
+  .veil{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse 80% 65% at 50% 45%,rgba(2,6,10,.45),rgba(2,6,10,.9) 78%)}
+  .scanlines{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.4;background:repeating-linear-gradient(rgba(0,0,0,0) 0px,rgba(0,0,0,0) 2px,rgba(0,20,10,.25) 3px)}
+  .content{position:relative;z-index:5;display:flex;flex-direction:column;min-height:100vh}
+
+  header{padding:30px 0}
+  .wrap{width:100%;max-width:720px;margin:0 auto;padding:0 28px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:18px;letter-spacing:-.01em}
+  .brand .mk{width:32px;height:32px;flex:none}
+  .brand b{color:var(--green)}
+
+  main{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:30px 0 60px}
+  .stage{max-width:640px;margin:0 auto;padding:0 28px}
+  .pill{display:inline-flex;align-items:center;gap:9px;background:rgba(0,255,120,.05);border:1px solid var(--line);padding:8px 17px;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.08em;color:var(--green-soft);margin-bottom:30px;animation:rise .8s .1s both}
+  .pill .led{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:flick 1.6s infinite}
+  @keyframes flick{0%,100%{opacity:1}45%{opacity:.3}}
+
+  .boot{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--green-dim);letter-spacing:.04em;margin-bottom:24px;min-height:18px;animation:rise .8s .15s both}
+  .boot .cur{display:inline-block;width:8px;height:14px;background:var(--green);box-shadow:0 0 6px var(--green);vertical-align:middle;margin-left:3px;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  h1{font-size:clamp(38px,6.4vw,68px);font-weight:700;line-height:1.06;letter-spacing:-.02em;animation:rise .9s .25s both}
+  h1 em{font-style:normal;color:var(--green);text-shadow:0 0 20px rgba(0,255,120,.5)}
+  .teaser{font-size:clamp(16px,2.4vw,19px);color:var(--text-2);max-width:480px;margin:26px auto 0;line-height:1.6;animation:rise 1s .4s both}
+  .badge{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--green-soft);margin-top:28px;letter-spacing:.06em;animation:rise 1s .55s both}
+
+  .notify{margin:40px auto 0;max-width:440px;animation:rise 1s .65s both}
+  .notify form{display:flex;gap:0;border:1px solid var(--green-faint);background:rgba(0,255,120,.04)}
+  .notify input{flex:1;border:none;background:transparent;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--text);padding:14px 16px}
+  .notify input:focus{outline:none}
+  .notify input::placeholder{color:var(--text-soft)}
+  .notify button{flex:none;border:none;border-left:1px solid var(--green-faint);background:var(--green);color:var(--black);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;letter-spacing:.04em;padding:14px 22px;cursor:pointer;transition:box-shadow .2s}
+  .notify button:hover{box-shadow:0 0 22px rgba(0,255,120,.5)}
+  .notify .captcha{display:flex;justify-content:center;margin-top:18px}
+  .notify .note{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-soft);margin-top:16px;letter-spacing:.03em}
+  .notify .ok{display:none;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--green);padding:14px;text-align:center;text-shadow:0 0 10px rgba(0,255,120,.4)}
+
+  footer{padding:26px 0;border-top:1px solid var(--line)}
+  .foot-in{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-soft);letter-spacing:.03em}
+  .foot-in a{color:var(--text-2);transition:color .2s}
+  .foot-in a:hover{color:var(--green)}
+
+  @keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+  @media(max-width:520px){
+    .notify form{flex-direction:column}
+    .notify input{border-bottom:1px solid var(--green-faint)}
+    .notify button{border-left:none;width:100%}
+    .foot-in{justify-content:center;text-align:center}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}#rain{display:none}}
+</style>
+</head>
+<body>
+
+<canvas id="rain" aria-hidden="true"></canvas>
+<div class="veil"></div>
+<div class="scanlines"></div>
+
+<div class="content">
+  <header>
+    <div class="wrap">
+      <a href="#" class="brand">
+        <svg class="mk" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Vishwakarma.ai">
+          <rect x="1" y="1" width="30" height="30" stroke="#00FF85" stroke-width="1.4"/>
+          <path d="M8 9 L16 24 L24 9" stroke="#00FF85" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="14.2" y="8" width="3.6" height="3.6" fill="#00FF85"/>
+        </svg>
+        Vishwakarma<b>.ai</b>
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <div class="stage">
+      <span class="pill"><span class="led"></span> SYSTEM STATUS: BUILDING // LAUNCH 2026</span>
+      <div class="boot" id="boot"></div>
+      <h1>A résumé can't tell them <em>who you really are.</em></h1>
+      <p class="teaser">We're building something that finally can. A new way to be known — beyond the page, beyond the interview.</p>
+      <div class="badge">&gt; the_first_is_almost_ready_</div>
+
+      <div class="notify">
+        <form id="notifyForm" onsubmit="return notifyMe(event)">
+          <input type="email" id="email" placeholder="enter email for early access" aria-label="Your email" required>
+          <button type="submit">NOTIFY_ME</button>
+        </form>
+        <!-- Google reCAPTCHA — replace data-sitekey with your own key -->
+        <div class="captcha">
+          <div class="g-recaptcha" data-sitekey="6LdcGDktAAAAAOczGZTkuNP44UZ-I7Y97_D2z3s0"></div>
+        </div>
+        <div class="ok" id="okMsg">&gt; access_granted // you're on the list.</div>
+        <p class="note">be first through the door · no spam, ever</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap foot-in">
+      <span>© 2026 VISHX INNOVATIONS (OPC) PVT. LTD.</span>
+      <span>MUMBAI, INDIA · <a href="mailto:info@vishx.com">INFO@VISHX.COM</a></span>
+    </div>
+  </footer>
+</div>
+
+<script>
+  /* MATRIX CODE RAIN */
+  (function(){
+    const c=document.getElementById('rain'), x=c.getContext('2d');
+    let w,h,cols,drops,fs=16;
+    const glyphs="アイウエオカキクケコサシスセソタチツテトナニヌネノﾊﾋﾌﾍﾎマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>/{}[]=+*".split("");
+    function size(){w=c.width=innerWidth;h=c.height=innerHeight;cols=Math.floor(w/fs);drops=Array(cols).fill(0).map(()=>Math.random()*-h/fs);}
+    size(); addEventListener('resize',size);
+    function draw(){
+      x.fillStyle="rgba(2,6,10,0.09)"; x.fillRect(0,0,w,h);
+      x.font=fs+"px 'IBM Plex Mono', monospace";
+      for(let i=0;i<cols;i++){
+        const ch=glyphs[Math.floor(Math.random()*glyphs.length)];
+        const px=i*fs, py=drops[i]*fs;
+        x.fillStyle="rgba(180,255,210,0.9)"; x.fillText(ch,px,py);
+        x.fillStyle="rgba(0,255,120,0.5)"; x.fillText(ch,px,py);
+        if(py>h && Math.random()>0.975) drops[i]=Math.random()*-20;
+        drops[i]+=0.5;
+      }
+      requestAnimationFrame(draw);
+    }
+    if(!matchMedia('(prefers-reduced-motion: reduce)').matches) draw();
+  })();
+
+  /* boot typing line */
+  (function(){
+    const el=document.getElementById('boot');
+    if(!el) return;
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches){el.textContent='> loading vishwakarma.ai';return;}
+    const msg='> loading vishwakarma.ai // a new way to be known';
+    let i=0;
+    function t(){ el.innerHTML=msg.slice(0,i)+'<span class="cur"></span>'; if(i++<msg.length) setTimeout(t,42); }
+    setTimeout(t,500);
+  })();
+
+  /* notify — POST the email to the subscribe API, then reveal the confirmation */
+  async function notifyMe(e){
+    e.preventDefault();
+    var btn=document.querySelector('#notifyForm button');
+    var email=document.getElementById('email').value.trim();
+    if(btn) btn.disabled=true;
+    try{
+      var res=await fetch('/coming-soon/subscribe',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({email:email})
+      });
+      if(!res.ok) throw new Error('subscribe failed');
+      document.getElementById('notifyForm').style.display='none';
+      document.querySelector('.notify .captcha').style.display='none';
+      document.querySelector('.notify .note').style.display='none';
+      document.getElementById('okMsg').style.display='block';
+    }catch(err){
+      if(btn) btn.disabled=false;
+      alert('Something went wrong. Please try again.');
+    }
+    return false;
+  }
+</script>
+</body>
+</html>

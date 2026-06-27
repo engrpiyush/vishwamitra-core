@@ -12,7 +12,14 @@ data class AppProperties(
     val gcp: Gcp = Gcp(),
     val tuning: Tuning = Tuning(),
     val auth: Auth = Auth(),
+    val comingSoon: ComingSoon = ComingSoon(),
 ) {
+    data class ComingSoon(
+        /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
+        val corsOrigins: List<String> =
+            listOf("https://*.vishwakarma.ai", "https://vishwakarma.ai"),
+    )
+
     data class Gcp(
         val projectId: String = "vishwakarma-ai-poc",
         val region: String = "asia-southeast1",

@@ -14,6 +14,9 @@ import org.springframework.security.config.annotation.web.invoke
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
  * Two mutually-exclusive filter chains by profile:
@@ -40,6 +43,24 @@ class SecurityConfig {
         roleHierarchy: RoleHierarchy
     ): DefaultMethodSecurityExpressionHandler =
         DefaultMethodSecurityExpressionHandler().apply { setRoleHierarchy(roleHierarchy) }
+
+    /**
+     * Restricts cross-site calls to the subscribe API to vishwakarma.ai origins. The page is served
+     * same-origin so it is unaffected; this blocks other sites' scripts from posting.
+     */
+    @Bean
+    fun corsConfigurationSource(props: AppProperties): CorsConfigurationSource {
+        val config =
+            CorsConfiguration().apply {
+                allowedOriginPatterns = props.comingSoon.corsOrigins
+                allowedMethods = listOf("GET", "POST", "OPTIONS")
+                allowedHeaders = listOf("Content-Type", "Accept")
+                maxAge = 3600
+            }
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/coming-soon/**", config)
+        }
+    }
 
     @Bean
     @Profile("dev")
@@ -79,9 +100,17 @@ class SecurityConfig {
                 authorize("/login/**", permitAll)
                 authorize("/", permitAll)
                 authorize("/error", permitAll)
+                // Public coming-soon page + its subscribe API.
+                authorize("/coming-soon.html", permitAll)
+                authorize("/coming-soon/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
                 authorize(anyRequest, authenticated)
             }
+            // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).
+            cors {}
+            // The subscribe endpoint is unauthenticated JSON (no session to protect) and is already
+            // origin-restricted by CORS, so exempt it from CSRF — the page sends no CSRF token.
+            csrf { ignoringRequestMatchers("/coming-soon/**") }
             // The root "/" landing page is the OAuth entry point: unauthenticated requests redirect
             // here (instead of straight to Google); its CTA initiates /oauth2/authorization/google.
             // On success, land on /home — unless a deep-linked protected page was saved first.
