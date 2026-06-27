@@ -55,8 +55,9 @@ class SecurityConfig {
             formLogin { disable() }
             httpBasic { disable() }
             // Without this, logout falls back to Spring's default "/login?logout", which 404s
-            // (there is no login page in dev). DevAuthFilter re-authenticates on the next request.
-            logout { logoutSuccessUrl = "/welcome" }
+            // (there is no login page in dev). DevAuthFilter re-authenticates on the next request,
+            // so "/" immediately bounces back to /home.
+            logout { logoutSuccessUrl = "/" }
         }
         // Must run before the anonymous filter, otherwise an authenticated anonymous token wins.
         http.addFilterBefore(devUser, AnonymousAuthenticationFilter::class.java)
@@ -76,18 +77,20 @@ class SecurityConfig {
                 authorize("/js/**", permitAll)
                 authorize("/webjars/**", permitAll)
                 authorize("/login/**", permitAll)
-                authorize("/welcome", permitAll)
+                authorize("/", permitAll)
                 authorize("/error", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
                 authorize(anyRequest, authenticated)
             }
-            // Custom landing page is the OAuth entry point: unauthenticated requests redirect here
-            // (instead of straight to Google); its CTA initiates /oauth2/authorization/google.
+            // The root "/" landing page is the OAuth entry point: unauthenticated requests redirect
+            // here (instead of straight to Google); its CTA initiates /oauth2/authorization/google.
+            // On success, land on /home — unless a deep-linked protected page was saved first.
             oauth2Login {
-                loginPage = "/welcome"
+                loginPage = "/"
+                defaultSuccessUrl("/home", false)
                 userInfoEndpoint { oidcUserService = allowlistOidcUserService }
             }
-            logout { logoutSuccessUrl = "/welcome" }
+            logout { logoutSuccessUrl = "/" }
         }
         return http.build()
     }
