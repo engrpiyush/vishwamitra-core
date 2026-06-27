@@ -10,7 +10,8 @@
     <p class="muted">Submit a managed tuning job (1 concurrent). Foundation = new major; continuation = minor bump.</p>
 
     <form method="post" th:action="@{/training/submit}" class="form"
-          onsubmit="return confirm('Submit a tuning job? This spends credits.');">
+          data-confirm="This submits a managed tuning job on Vertex and spends credits."
+          data-confirm-title="Submit a tuning job?" data-confirm-ok="Submit tune">
         <label>Base kind
             <select name="baseKind" id="baseKind">
                 <option value="FOUNDATION">Foundation (new family / major)</option>
@@ -62,9 +63,9 @@
         <tr th:each="j : ${jobs}">
             <td th:text="${j.method}">SFT</td>
             <td th:text="${j.baseKind}">FOUNDATION</td>
-            <td><span class="badge" th:text="${j.status}">PENDING</span></td>
-            <td><code th:text="${j.outputUri}">gs://…</code></td>
-            <td class="muted" th:text="${j.submittedAt}">ts</td>
+            <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(j.status),'_','-')}" th:text="${j.status}">PENDING</span></td>
+            <td><code class="copyable" title="Click to copy" th:text="${j.outputUri}">gs://…</code></td>
+            <td class="muted"><time class="js-ts" th:datetime="${j.submittedAt}" th:text="${j.submittedAt}">ts</time></td>
             <td>
                 <form method="post" th:action="@{'/training/jobs/' + ${j.id} + '/poll'}"
                       th:if="${j.vertexJobName != null}">
@@ -72,7 +73,7 @@
                 </form>
             </td>
         </tr>
-        <tr th:if="${jobs.isEmpty()}"><td colspan="6" class="muted">No jobs yet.</td></tr>
+        <tr th:if="${jobs.isEmpty()}"><td colspan="6"><div class="empty-state">No tuning jobs yet — submit one above.</div></td></tr>
         </tbody>
     </table>
 

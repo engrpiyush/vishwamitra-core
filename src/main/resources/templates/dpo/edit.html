@@ -10,8 +10,8 @@
     <div class="row-between">
         <h1>
             DPO pair
-            <span class="badge" th:text="${p.status}">DRAFT</span>
-            <span class="badge" th:if="${p.fromSftId}">from SFT</span>
+            <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(p.status),'_','-')}" th:text="${p.status}">DRAFT</span>
+            <span class="badge badge--info" th:if="${p.fromSftId}">from SFT</span>
         </h1>
         <a th:href="@{/dpo}" class="muted">&larr; back to queue</a>
     </div>
@@ -99,7 +99,8 @@
                 <div class="row-between">
                     <h3>Validation</h3>
                     <button class="link" type="button" hx-target="#validation" hx-swap="outerHTML"
-                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/validate'}">re-check</button>
+                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/validate'}">re-check
+                        <span class="htmx-indicator spinner"></span></button>
                 </div>
                 <div th:replace="~{sft/fragments :: validation}"></div>
             </div>
@@ -107,7 +108,8 @@
                 <div class="row-between">
                     <h3>JSONL preview</h3>
                     <button class="link" type="button" hx-target="#preview" hx-swap="outerHTML"
-                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/preview'}">refresh</button>
+                            th:attr="hx-get=@{'/dpo/' + ${p.id} + '/preview'}">refresh
+                        <span class="htmx-indicator spinner"></span></button>
                 </div>
                 <div th:replace="~{sft/fragments :: preview}"></div>
             </div>

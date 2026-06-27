@@ -10,33 +10,58 @@
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title th:text="${title} ? |Vishwamitra · ${title}| : 'Vishwamitra'">Vishwamitra</title>
+    <!-- Set theme before first paint to avoid a flash of the wrong theme. -->
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+        })();
+    </script>
     <link rel="stylesheet" th:href="@{/css/app.css}"/>
     <script th:src="@{/webjars/htmx.org/dist/htmx.min.js}" defer></script>
-    <script>
-        // Rows marked class="clickable" with a data-href navigate on click. (Thymeleaf forbids
-        // interpolating Strings into th:on* handlers, so the URL is carried in data-href.)
-        document.addEventListener('click', function (e) {
-            var row = e.target.closest('.clickable[data-href]');
-            if (row) window.location = row.getAttribute('data-href');
-        });
-    </script>
+    <script th:src="@{/js/app.js}" defer></script>
 </head>
 
 <body>
+<div th:fragment="progressbar" id="progress-bar"></div>
+
 <nav th:fragment="nav" class="topnav">
-    <a class="brand" th:href="@{/}">Vishwamitra</a>
-    <div class="links">
-        <a th:href="@{/sft}">SFT</a>
-        <a th:href="@{/dpo}">DPO</a>
-        <a th:href="@{/export}">Export</a>
-        <a th:href="@{/import}">Import</a>
-        <a th:href="@{/training}">Training</a>
-        <a th:href="@{/models}">Models</a>
-        <a th:href="@{/admin/tools}" sec:authorize="hasRole('ADMIN')">Admin</a>
+    <a class="brand" th:href="@{/}"><span class="brand-mark"></span>Vishwamitra</a>
+    <button type="button" class="icon-btn nav-burger" aria-label="Toggle menu" data-nav-toggle>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <div class="links" id="navLinks">
+        <a th:href="@{/sft}"      th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/sft')} ? 'active'">SFT</a>
+        <a th:href="@{/dpo}"      th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/dpo')} ? 'active'">DPO</a>
+        <a th:href="@{/export}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/export')} ? 'active'">Export</a>
+        <a th:href="@{/import}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/import')} ? 'active'">Import</a>
+        <a th:href="@{/training}" th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/training')} ? 'active'">Training</a>
+        <a th:href="@{/models}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/models')} ? 'active'">Models</a>
+        <a th:href="@{/admin/tools}" sec:authorize="hasRole('ADMIN')"
+           th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/admin')} ? 'active'">Admin</a>
     </div>
-    <div class="user" th:if="${currentEmail}">
-        <span class="user-email" th:text="${currentEmail}">user</span>
-        <span class="badge" th:text="${currentRole}">ROLE</span>
+    <div class="nav-tools">
+        <button type="button" class="icon-btn theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">
+            <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <circle cx="12" cy="12" r="4"/>
+                <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+            <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+        <div class="user" th:if="${currentEmail}">
+            <span class="avatar" th:text="${currentEmail != null ? #strings.toUpperCase(#strings.substring(currentEmail, 0, 1)) : '?'}">U</span>
+            <span class="user-email" th:text="${currentEmail}">user</span>
+            <span class="badge" th:text="${currentRole}">ROLE</span>
+            <form method="post" th:action="@{/logout}" class="inline-form">
+                <button type="submit" class="icon-btn" aria-label="Sign out" title="Sign out">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                </button>
+            </form>
+        </div>
     </div>
 </nav>
 

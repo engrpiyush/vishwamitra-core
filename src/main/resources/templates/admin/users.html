@@ -15,21 +15,24 @@
         <tbody>
         <tr th:each="u : ${users}">
             <td th:text="${u.email}">email</td>
-            <td><span class="badge" th:text="${u.role}">ROLE</span></td>
-            <td th:text="${u.active} ? 'yes' : 'no'">yes</td>
+            <td><span class="badge badge--info" th:text="${u.role}">ROLE</span></td>
+            <td><span class="badge" th:classappend="${u.active} ? 'badge--success' : 'badge--muted'" th:text="${u.active} ? 'active' : 'inactive'">yes</span></td>
             <td class="muted" th:text="${u.addedBy}">by</td>
-            <td class="actions">
-                <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/active'}">
-                    <input type="hidden" name="active" th:value="${!u.active}"/>
-                    <button class="link" type="submit" th:text="${u.active} ? 'deactivate' : 'activate'">toggle</button>
-                </form>
-                <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/delete'}"
-                      onsubmit="return confirm('Remove this user?');">
-                    <button class="link danger" type="submit">delete</button>
-                </form>
+            <td>
+                <div class="row-actions">
+                    <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/active'}">
+                        <input type="hidden" name="active" th:value="${!u.active}"/>
+                        <button class="btn--ghost btn--sm" type="submit" th:text="${u.active} ? 'Deactivate' : 'Activate'">toggle</button>
+                    </form>
+                    <form method="post" th:action="@{'/admin/users/' + ${u.email} + '/delete'}"
+                          data-confirm="This removes the user from the allowlist; they will no longer be able to sign in."
+                          data-confirm-title="Remove this user?" data-confirm-ok="Remove" data-confirm-danger>
+                        <button class="btn--danger btn--sm" type="submit">Delete</button>
+                    </form>
+                </div>
             </td>
         </tr>
-        <tr th:if="${users.isEmpty()}"><td colspan="5" class="muted">No users yet.</td></tr>
+        <tr th:if="${users.isEmpty()}"><td colspan="5"><div class="empty-state">No users yet — add one below.</div></td></tr>
         </tbody>
     </table>
 

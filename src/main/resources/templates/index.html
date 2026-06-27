@@ -5,8 +5,10 @@
 <nav th:replace="~{fragments/common :: nav}"></nav>
 
 <main class="container">
-    <h1>Labelling &amp; Training Console</h1>
-    <p class="muted">Author SFT/DPO data and drive Vertex managed tuning for Vishwakarma AI.</p>
+    <div class="page-head">
+        <h1>Labelling &amp; Training Console</h1>
+        <p class="muted">Author SFT/DPO data and drive Vertex managed tuning for Vishwakarma AI.</p>
+    </div>
 
     <section class="tiles">
         <a class="tile" th:each="t : ${tiles}" th:href="@{${t.href}}">
@@ -21,7 +23,7 @@
             <h3>Current model</h3>
             <div th:if="${currentVersion}">
                 <p><code th:text="${currentVersion.displayName}">model</code>
-                    <span class="badge">current</span></p>
+                    <span class="badge badge--current">current</span></p>
                 <p class="muted">Family <span th:text="${currentVersion.family}">fam</span> ·
                     <a th:href="@{'/models/' + ${currentVersion.id} + '/serve'}">serve</a></p>
             </div>
@@ -34,7 +36,7 @@
                 <li th:each="e : ${recentExports}">
                     <span class="badge" th:text="${e.kind}">SFT</span>
                     <span th:text="${e.count}">0</span> ·
-                    <code th:text="${e.gcsUri}">gs://…</code>
+                    <code class="copyable" title="Click to copy" th:text="${e.gcsUri}">gs://…</code>
                 </li>
                 <li th:if="${recentExports.isEmpty()}" class="muted">No exports yet.</li>
             </ul>

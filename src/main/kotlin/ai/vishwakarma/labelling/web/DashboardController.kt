@@ -5,6 +5,9 @@ import ai.vishwakarma.labelling.service.DpoService
 import ai.vishwakarma.labelling.service.ExportService
 import ai.vishwakarma.labelling.service.SftService
 import ai.vishwakarma.labelling.service.TrainingService
+import jakarta.servlet.http.HttpSession
+import org.springframework.core.env.Environment
+import org.springframework.core.env.Profiles
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
@@ -16,10 +19,18 @@ class DashboardController(
     private val dpo: DpoService,
     private val exports: ExportService,
     private val training: TrainingService,
+    env: Environment,
 ) {
 
+    private val isDev: Boolean = env.acceptsProfiles(Profiles.of("dev"))
+
     @GetMapping("/")
-    fun dashboard(model: Model): String {
+    fun dashboard(model: Model, session: HttpSession): String {
+        // Dev has no real login gate, so route the first visit through the landing splash once
+        // (prod does this automatically via the OAuth entry point). The flag is set when /welcome
+        // renders, so clicking the button — or the nav logo afterwards — lands on the dashboard.
+        if (isDev && session.getAttribute(WELCOMED_ATTR) == null) return "redirect:/welcome"
+
         val sftAll = sft.list()
         val dpoAll = dpo.list()
 

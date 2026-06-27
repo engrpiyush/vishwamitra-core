@@ -18,14 +18,15 @@
             <td th:text="${s.skill}">skill</td>
             <td th:text="${s.intent}">intent</td>
             <td class="truncate" th:text="${s.promptTemplate}">prompt</td>
-            <td class="actions">
+            <td>
                 <form method="post" th:action="@{'/admin/scenarios/' + ${s.id} + '/delete'}"
-                      onsubmit="return confirm('Delete this scenario?');">
-                    <button class="link danger" type="submit">delete</button>
+                      data-confirm="This permanently removes the scenario template."
+                      data-confirm-title="Delete this scenario?" data-confirm-ok="Delete" data-confirm-danger>
+                    <button class="btn--danger btn--sm" type="submit">Delete</button>
                 </form>
             </td>
         </tr>
-        <tr th:if="${scenarios.isEmpty()}"><td colspan="5" class="muted">No scenarios yet.</td></tr>
+        <tr th:if="${scenarios.isEmpty()}"><td colspan="5"><div class="empty-state">No scenarios yet — add one below.</div></td></tr>
         </tbody>
     </table>
 

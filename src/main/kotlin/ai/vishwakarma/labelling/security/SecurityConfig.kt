@@ -54,6 +54,9 @@ class SecurityConfig {
             csrf { disable() }
             formLogin { disable() }
             httpBasic { disable() }
+            // Without this, logout falls back to Spring's default "/login?logout", which 404s
+            // (there is no login page in dev). DevAuthFilter re-authenticates on the next request.
+            logout { logoutSuccessUrl = "/welcome" }
         }
         // Must run before the anonymous filter, otherwise an authenticated anonymous token wins.
         http.addFilterBefore(devUser, AnonymousAuthenticationFilter::class.java)
@@ -73,12 +76,18 @@ class SecurityConfig {
                 authorize("/js/**", permitAll)
                 authorize("/webjars/**", permitAll)
                 authorize("/login/**", permitAll)
+                authorize("/welcome", permitAll)
                 authorize("/error", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
                 authorize(anyRequest, authenticated)
             }
-            oauth2Login { userInfoEndpoint { oidcUserService = allowlistOidcUserService } }
-            logout { logoutSuccessUrl = "/" }
+            // Custom landing page is the OAuth entry point: unauthenticated requests redirect here
+            // (instead of straight to Google); its CTA initiates /oauth2/authorization/google.
+            oauth2Login {
+                loginPage = "/welcome"
+                userInfoEndpoint { oidcUserService = allowlistOidcUserService }
+            }
+            logout { logoutSuccessUrl = "/welcome" }
         }
         return http.build()
     }

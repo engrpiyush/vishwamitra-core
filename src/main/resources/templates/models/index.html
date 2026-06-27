@@ -21,10 +21,10 @@
                 <td><code th:text="${v.version}">v1.0</code></td>
                 <td th:text="${v.method}">SFT</td>
                 <td th:text="${v.baseKind}">FOUNDATION</td>
-                <td><span class="badge" th:text="${v.status}">TRAINING</span></td>
+                <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.status),'_','-')}" th:text="${v.status}">TRAINING</span></td>
                 <td>
-                    <span class="badge" th:if="${v.promotion.name() == 'CURRENT'}">current</span>
-                    <span class="muted" th:if="${v.promotion.name() == 'ARCHIVED'}">archived</span>
+                    <span class="badge badge--current" th:if="${v.promotion.name() == 'CURRENT'}">current</span>
+                    <span class="badge badge--muted" th:if="${v.promotion.name() == 'ARCHIVED'}">archived</span>
                 </td>
                 <td class="actions">
                     <a th:href="@{'/models/' + ${v.id} + '/serve'}" th:if="${v.status.name() == 'READY'}">serve</a>

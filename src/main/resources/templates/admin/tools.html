@@ -21,18 +21,21 @@
                     <span th:text="${p.name}">p</span><span class="muted" th:text="${p.required} ? '*' : ''"></span>
                 </span>
             </td>
-            <td><span class="badge" th:text="${t.status}">ACTIVE</span></td>
-            <td class="actions">
-                <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/status'}">
-                    <button class="link" type="submit">toggle</button>
-                </form>
-                <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/delete'}"
-                      onsubmit="return confirm('Delete this tool?');">
-                    <button class="link danger" type="submit">delete</button>
-                </form>
+            <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(t.status),'_','-')}" th:text="${t.status}">ACTIVE</span></td>
+            <td>
+                <div class="row-actions">
+                    <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/status'}">
+                        <button class="btn--ghost btn--sm" type="submit">Toggle</button>
+                    </form>
+                    <form method="post" th:action="@{'/admin/tools/' + ${t.id} + '/delete'}"
+                          data-confirm="This permanently removes the tool from the catalog."
+                          data-confirm-title="Delete this tool?" data-confirm-ok="Delete" data-confirm-danger>
+                        <button class="btn--danger btn--sm" type="submit">Delete</button>
+                    </form>
+                </div>
             </td>
         </tr>
-        <tr th:if="${tools.isEmpty()}"><td colspan="5" class="muted">No tools yet.</td></tr>
+        <tr th:if="${tools.isEmpty()}"><td colspan="5"><div class="empty-state">No tools yet — add one below.</div></td></tr>
         </tbody>
     </table>
 

@@ -10,9 +10,9 @@
     </div>
 
     <p>Version <code th:text="${v.version}">v1.0</code> · status
-        <span class="badge" th:text="${v.status}">READY</span></p>
-    <p>Checkpoint: <code th:text="${v.gcsCheckpointUri}">gs://…</code></p>
-    <p th:if="${v.vertexModelResource}">Vertex model: <code th:text="${v.vertexModelResource}">…</code></p>
+        <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.status),'_','-')}" th:text="${v.status}">READY</span></p>
+    <p>Checkpoint: <code class="copyable" title="Click to copy" th:text="${v.gcsCheckpointUri}">gs://…</code></p>
+    <p th:if="${v.vertexModelResource}">Vertex model: <code class="copyable" title="Click to copy" th:text="${v.vertexModelResource}">…</code></p>
 
     <h2>Off-GCP serving handoff</h2>
     <p class="muted">No persistent serving on GCP — rent a GPU, serve with vLLM, tear it down.</p>

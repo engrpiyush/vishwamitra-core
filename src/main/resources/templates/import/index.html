@@ -33,16 +33,16 @@
         <a class="link" th:href="@{/import}">↻ Refresh status</a>
     </div>
     <table class="grid">
-        <thead><tr><th>When</th><th>Kind</th><th>Original name</th><th>Stored URI</th><th>Lines</th><th>Status</th><th>Details</th></tr></thead>
+        <thead><tr><th>When</th><th>Kind</th><th>Original name</th><th>Stored URI</th><th>Lines</th><th>Status</th><th>Details</th><th>Actions</th></tr></thead>
         <tbody>
         <th:block th:each="im : ${imports}">
             <tr>
-                <td class="muted" th:text="${im.createdAt}">ts</td>
+                <td class="muted"><time class="js-ts" th:datetime="${im.createdAt}" th:text="${im.createdAt}">ts</time></td>
                 <td><span class="badge" th:text="${im.kind}">SFT</span></td>
                 <td th:text="${im.originalFilename}">file.jsonl</td>
-                <td class="truncate"><code th:text="${im.gcsUri}">gs://…</code></td>
+                <td class="truncate"><code class="copyable" title="Click to copy" th:text="${im.gcsUri}">gs://…</code></td>
                 <td th:text="${im.lineCount}">0</td>
-                <td><span class="badge" th:text="${im.status}">PENDING</span></td>
+                <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(im.status),'_','-')}" th:text="${im.status}">PENDING</span></td>
                 <td>
                     <details th:if="${!im.errors.isEmpty()}">
                         <summary th:text="${im.errors.size() + ' error(s)'}">errors</summary>
@@ -51,18 +51,24 @@
                                 th:text="${(er.line > 0 ? 'line ' + er.line : 'file') + ': ' + er.message}">err</li>
                         </ul>
                     </details>
-                    <form th:if="${im.errors.isEmpty()}" method="post" class="inline-form"
-                          th:action="@{'/import/' + ${im.id} + '/revalidate'}">
-                        <button class="link" type="submit">re-validate</button>
-                    </form>
-                    <form method="post" class="inline-form" th:action="@{'/import/' + ${im.id} + '/delete'}"
-                          onsubmit="return confirm('Delete this import? This removes the JSONL file from the bucket and the record. This cannot be undone.');">
-                        <button class="link danger" type="submit">delete</button>
-                    </form>
+                    <span th:if="${im.errors.isEmpty()}" class="muted">—</span>
+                </td>
+                <td>
+                    <div class="row-actions">
+                        <form th:if="${im.errors.isEmpty()}" method="post" class="inline-form"
+                              th:action="@{'/import/' + ${im.id} + '/revalidate'}">
+                            <button class="btn--ghost btn--sm" type="submit">Re-validate</button>
+                        </form>
+                        <form method="post" class="inline-form" th:action="@{'/import/' + ${im.id} + '/delete'}"
+                              data-confirm="This removes the JSONL file from the bucket and the record. This cannot be undone."
+                              data-confirm-title="Delete this import?" data-confirm-ok="Delete" data-confirm-danger>
+                            <button class="btn--danger btn--sm" type="submit">Delete</button>
+                        </form>
+                    </div>
                 </td>
             </tr>
         </th:block>
-        <tr th:if="${imports.isEmpty()}"><td colspan="7" class="muted">No imports yet.</td></tr>
+        <tr th:if="${imports.isEmpty()}"><td colspan="8"><div class="empty-state">No imports yet — upload a <code>.jsonl</code> file above.</div></td></tr>
         </tbody>
     </table>
 </main>

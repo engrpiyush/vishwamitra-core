@@ -39,10 +39,10 @@
             <td th:text="${e.tags.language}">lang</td>
             <td th:text="${e.tags.hasToolCall} ? '✓' : ''"></td>
             <td th:text="${e.turns.size()}">0</td>
-            <td><span class="badge" th:text="${e.status}">DRAFT</span></td>
-            <td class="muted" th:text="${e.updatedAt}">ts</td>
+            <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(e.status),'_','-')}" th:text="${e.status}">DRAFT</span></td>
+            <td class="muted"><time class="js-ts" th:datetime="${e.updatedAt}" th:text="${e.updatedAt}">ts</time></td>
         </tr>
-        <tr th:if="${examples.isEmpty()}"><td colspan="7" class="muted">No examples yet.</td></tr>
+        <tr th:if="${examples.isEmpty()}"><td colspan="7"><div class="empty-state">No examples yet — create one to get started.</div></td></tr>
         </tbody>
     </table>
 </main>

@@ -44,19 +44,20 @@
         <thead><tr><th>When</th><th>Kind</th><th>Count</th><th>URI</th><th>By</th><th></th></tr></thead>
         <tbody>
         <tr th:each="e : ${history}">
-            <td class="muted" th:text="${e.createdAt}">ts</td>
+            <td class="muted"><time class="js-ts" th:datetime="${e.createdAt}" th:text="${e.createdAt}">ts</time></td>
             <td><span class="badge" th:text="${e.kind}">SFT</span></td>
             <td th:text="${e.count}">0</td>
-            <td><code th:text="${e.gcsUri}">gs://…</code></td>
+            <td><code class="copyable" title="Click to copy" th:text="${e.gcsUri}">gs://…</code></td>
             <td class="muted" th:text="${e.createdBy}">by</td>
             <td>
                 <form method="post" class="inline-form" th:action="@{'/export/' + ${e.id} + '/delete'}"
-                      onsubmit="return confirm('Delete this export? This removes the JSONL file from the bucket and the record. This cannot be undone.');">
-                    <button class="link danger" type="submit">delete</button>
+                      data-confirm="This removes the JSONL file from the bucket and the record. This cannot be undone."
+                      data-confirm-title="Delete this export?" data-confirm-ok="Delete" data-confirm-danger>
+                    <button class="btn--danger btn--sm" type="submit">Delete</button>
                 </form>
             </td>
         </tr>
-        <tr th:if="${history.isEmpty()}"><td colspan="6" class="muted">No exports yet.</td></tr>
+        <tr th:if="${history.isEmpty()}"><td colspan="6"><div class="empty-state">No exports yet — run one above.</div></td></tr>
         </tbody>
     </table>
 </main>

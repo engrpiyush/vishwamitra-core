@@ -38,10 +38,10 @@
             <td th:text="${p.tags.language}">lang</td>
             <td th:text="${p.source}">MANUAL</td>
             <td th:text="${p.fromSftId} ? '✓' : ''"></td>
-            <td><span class="badge" th:text="${p.status}">DRAFT</span></td>
-            <td class="muted" th:text="${p.updatedAt}">ts</td>
+            <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(p.status),'_','-')}" th:text="${p.status}">DRAFT</span></td>
+            <td class="muted"><time class="js-ts" th:datetime="${p.updatedAt}" th:text="${p.updatedAt}">ts</time></td>
         </tr>
-        <tr th:if="${pairs.isEmpty()}"><td colspan="7" class="muted">No pairs yet.</td></tr>
+        <tr th:if="${pairs.isEmpty()}"><td colspan="7"><div class="empty-state">No preference pairs yet — create one manually or seed from approved SFT.</div></td></tr>
         </tbody>
     </table>
 </main>
