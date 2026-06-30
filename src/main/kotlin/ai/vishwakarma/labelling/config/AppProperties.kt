@@ -26,6 +26,8 @@ data class AppProperties(
         val firestoreDatabase: String = "vishwakarma-labelling",
         val trainingBucket: String = "",
         val servingBucket: String = "",
+        /** Raw Stage 1 intake assets. Blank → IntakeStorage falls back to local disk. */
+        val intakeBucket: String = "",
     )
 
     data class Tuning(

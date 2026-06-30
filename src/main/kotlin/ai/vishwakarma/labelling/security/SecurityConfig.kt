@@ -104,6 +104,9 @@ class SecurityConfig {
                 authorize("/coming-soon.html", permitAll)
                 authorize("/coming-soon/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
+                // Stage 1 intake API: same-origin app JSON, REVIEWER+. Also enforced at the method
+                // level by @PreAuthorize; CSRF stays on (no exemption — the UI sends the token).
+                authorize("/api/intake/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }
             // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).

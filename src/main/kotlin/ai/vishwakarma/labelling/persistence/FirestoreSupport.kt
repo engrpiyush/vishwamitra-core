@@ -7,6 +7,7 @@ import com.google.api.core.ApiFuture
 import com.google.cloud.Timestamp
 import com.google.cloud.firestore.DocumentSnapshot
 import java.time.Instant
+import java.time.LocalDate
 
 /** Block on a Firestore ApiFuture (the client is used synchronously throughout). */
 fun <T> ApiFuture<T>.await(): T = this.get()
@@ -18,6 +19,16 @@ fun Instant?.toTimestamp(): Timestamp? =
 /** Read a Firestore timestamp field as an [Instant], or null. */
 fun DocumentSnapshot.instant(field: String): Instant? =
     getTimestamp(field)?.let { Instant.ofEpochSecond(it.seconds, it.nanos.toLong()) }
+
+/**
+ * Serialize a date-only value as an ISO-8601 string ("yyyy-MM-dd"), or null. Stored as text (not a
+ * Timestamp) so a calendar date carries no time-zone baggage.
+ */
+fun LocalDate?.toIsoDate(): String? = this?.toString()
+
+/** Read an ISO date string field back as a [LocalDate], tolerating missing/garbage values. */
+fun DocumentSnapshot.localDate(field: String): LocalDate? =
+    getString(field)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
 /** Serialize [ExampleTags] to a Firestore map (enums as names; labels as a string list). */
 fun ExampleTags.toTagMap(): Map<String, Any?> =

@@ -1,0 +1,143 @@
+package ai.vishwakarma.labelling.gcs
+
+import ai.vishwakarma.labelling.config.AppProperties
+import com.google.cloud.storage.BlobId
+import com.google.cloud.storage.BlobInfo
+import com.google.cloud.storage.HttpMethod
+import com.google.cloud.storage.Storage
+import com.google.cloud.storage.StorageOptions
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Component
+
+/**
+ * A descriptor the browser uses to upload an intake asset's bytes directly to storage. The client
+ * issues a single `PUT` of the raw bytes to [url] with the given [headers]. For real GCS this is a
+ * V4 signed URL straight to the bucket (never through the app, so multi-GB A/V bypasses Cloud Run's
+ * request-size cap). For local dev ([local] == true) it points at the app's own dev upload
+ * endpoint.
+ */
+data class SignedUpload(
+    val url: String,
+    val objectPath: String,
+    val method: String = "PUT",
+    val headers: Map<String, String> = emptyMap(),
+    val local: Boolean = false,
+)
+
+/**
+ * Storage for Stage 1 intake assets. Kept separate from [Exporter] (which is JSONL/training
+ * specific): the intake bucket holds large binary media with its own lifecycle.
+ *
+ * When [AppProperties.Gcp.intakeBucket] is configured, uploads use **V4 signed PUT URLs** direct to
+ * the bucket. When it is blank (local dev), [signedUploadUrl] returns a URL to the app's dev upload
+ * endpoint and bytes land under `var/intake/`, so the whole register → upload → complete flow is
+ * exercisable without GCP.
+ */
+@Component
+class IntakeStorage(private val props: AppProperties) {
+
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    private val bucket: String
+        get() = props.gcp.intakeBucket
+
+    private fun storage(): Storage =
+        StorageOptions.newBuilder().setProjectId(props.gcp.projectId).build().service
+
+    private fun localPath(objectPath: String): Path = Path.of("var", "intake").resolve(objectPath)
+
+    /** The durable URI we store on the asset record (`gs://…` in real envs, `file://…` locally). */
+    fun uriFor(objectPath: String): String =
+        if (bucket.isBlank()) localPath(objectPath).toUri().toString()
+        else "gs://$bucket/$objectPath"
+
+    /**
+     * Mint an upload descriptor for [objectPath]. The signed URL is bound to [contentType], so the
+     * client must send the same `Content-Type` header on its PUT.
+     *
+     * NOTE (infra): minting a V4 signed URL requires signing credentials. On Cloud Run the runtime
+     * service account must be able to sign (a key, or `iam.serviceAccounts.signBlob`); see the
+     * Stage 1 infra dependencies.
+     */
+    fun signedUploadUrl(objectPath: String, contentType: String): SignedUpload {
+        if (bucket.isBlank()) {
+            val encoded = URLEncoder.encode(objectPath, StandardCharsets.UTF_8)
+            return SignedUpload(
+                url = "/api/intake/dev/upload?path=$encoded",
+                objectPath = objectPath,
+                headers = mapOf("Content-Type" to contentType),
+                local = true,
+            )
+        }
+        val blobInfo =
+            BlobInfo.newBuilder(BlobId.of(bucket, objectPath)).setContentType(contentType).build()
+        val url =
+            storage()
+                .signUrl(
+                    blobInfo,
+                    15,
+                    TimeUnit.MINUTES,
+                    Storage.SignUrlOption.httpMethod(HttpMethod.PUT),
+                    Storage.SignUrlOption.withContentType(),
+                    Storage.SignUrlOption.withV4Signature(),
+                )
+                .toString()
+        log.info("Issued signed upload URL for gs://{}/{}", bucket, objectPath)
+        return SignedUpload(
+            url = url,
+            objectPath = objectPath,
+            headers = mapOf("Content-Type" to contentType),
+            local = false,
+        )
+    }
+
+    /**
+     * Mint a short-lived V4 signed GET URL so the UI can preview/download a stored asset. Locally
+     * (no bucket) returns the `file://` URI of the stored bytes.
+     */
+    fun signedDownloadUrl(objectPath: String): String {
+        if (bucket.isBlank()) return localPath(objectPath).toUri().toString()
+        val blobInfo = BlobInfo.newBuilder(BlobId.of(bucket, objectPath)).build()
+        return storage()
+            .signUrl(
+                blobInfo,
+                15,
+                TimeUnit.MINUTES,
+                Storage.SignUrlOption.httpMethod(HttpMethod.GET),
+                Storage.SignUrlOption.withV4Signature(),
+            )
+            .toString()
+    }
+
+    /** Size in bytes of a stored object, or null if it isn't present yet. */
+    fun objectSize(objectPath: String): Long? {
+        if (bucket.isBlank()) {
+            val target = localPath(objectPath)
+            return if (Files.exists(target)) Files.size(target) else null
+        }
+        return storage().get(BlobId.of(bucket, objectPath))?.size
+    }
+
+    /** Best-effort delete of a stored object (missing object is not an error). */
+    fun deleteObject(objectPath: String) {
+        if (bucket.isBlank()) {
+            Files.deleteIfExists(localPath(objectPath))
+            return
+        }
+        storage().delete(BlobId.of(bucket, objectPath))
+        log.info("Deleted gs://{}/{}", bucket, objectPath)
+    }
+
+    /** Local-dev only: persist bytes uploaded to the dev endpoint under `var/intake/`. */
+    fun writeLocalBytes(objectPath: String, bytes: ByteArray) {
+        val target = localPath(objectPath)
+        Files.createDirectories(target.parent)
+        Files.write(target, bytes)
+        log.info("Stored intake asset locally: {}", target.toUri())
+    }
+}

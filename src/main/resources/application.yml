@@ -43,6 +43,9 @@ app:
     firestore-database: ${FIRESTORE_DATABASE:vishwakarma-labelling}
     training-bucket: ${TRAINING_BUCKET:va-ai-training-vishwakarma-ai-poc}
     serving-bucket: ${SERVING_BUCKET:va-ai-serving-vishwakarma-ai-poc}
+    # Raw Stage 1 intake assets (binary, possibly multi-GB A/V). Separate bucket/lifecycle from
+    # the training JSONL. Browser uploads directly via V4 signed URLs (see IntakeStorage).
+    intake-bucket: ${INTAKE_BUCKET:va-ai-intake-vishwakarma-ai-poc}
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}
@@ -63,6 +66,10 @@ app:
     dev-user:
       email: dev@vishwakarma.ai
       role: ADMIN
+  gcp:
+    # Blank locally so intake uploads use IntakeStorage's local-disk fallback (var/intake/)
+    # instead of minting GCS signed URLs, which need real credentials.
+    intake-bucket: ""
   tuning:
     enabled: true     # allowed locally, but…
     dry-run: true     # …simulated — never calls Vertex / spends credits in dev
