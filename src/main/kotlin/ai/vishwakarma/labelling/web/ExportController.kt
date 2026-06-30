@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExportKind
 import ai.vishwakarma.labelling.domain.ToolEncoding
 import ai.vishwakarma.labelling.security.CurrentUser
@@ -38,9 +40,9 @@ class ExportController(
     @PostMapping("/run")
     fun run(
         @RequestParam kind: String,
-        @RequestParam(required = false) skill: String?,
-        @RequestParam(required = false) intent: String?,
-        @RequestParam(required = false) language: String?,
+        @RequestParam(required = false) claimType: String?,
+        @RequestParam(required = false) authenticityTier: String?,
+        @RequestParam(required = false) label: String?,
         @RequestParam(required = false) toolEncoding: String?,
         ra: RedirectAttributes,
     ): String {
@@ -53,7 +55,14 @@ class ExportController(
             toolEncoding?.let { runCatching { ToolEncoding.valueOf(it) }.getOrNull() }
                 ?: ToolEncoding.DEFAULT
         exportService
-            .export(parsed, skill, intent, language, CurrentUser.email(), encoding)
+            .export(
+                parsed,
+                ClaimType.fromOrNull(claimType),
+                AuthenticityTier.fromOrNull(authenticityTier),
+                label,
+                CurrentUser.email(),
+                encoding,
+            )
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
                 {

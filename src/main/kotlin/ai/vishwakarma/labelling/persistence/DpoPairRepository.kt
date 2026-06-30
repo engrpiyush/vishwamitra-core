@@ -3,7 +3,6 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.DpoSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
-import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnKind
@@ -62,13 +61,7 @@ class DpoPairRepository(private val db: Firestore) {
                 },
             "chosenText" to chosenText,
             "rejectedText" to rejectedText,
-            "tags" to
-                mapOf(
-                    "skill" to tags.skill,
-                    "intent" to tags.intent,
-                    "language" to tags.language,
-                    "hasToolCall" to tags.hasToolCall
-                ),
+            "tags" to tags.toTagMap(),
             "status" to status.name,
             "source" to source.name,
             "fromSftId" to fromSftId,
@@ -106,13 +99,7 @@ class DpoPairRepository(private val db: Firestore) {
                 },
             chosenText = getString("chosenText") ?: "",
             rejectedText = getString("rejectedText") ?: "",
-            tags =
-                ExampleTags(
-                    skill = tagsMap["skill"] as? String,
-                    intent = tagsMap["intent"] as? String,
-                    language = tagsMap["language"] as? String,
-                    hasToolCall = tagsMap["hasToolCall"] as? Boolean ?: false,
-                ),
+            tags = tagsMap.toExampleTags(),
             status =
                 runCatching { ExampleStatus.valueOf(getString("status") ?: "DRAFT") }
                     .getOrDefault(ExampleStatus.DRAFT),

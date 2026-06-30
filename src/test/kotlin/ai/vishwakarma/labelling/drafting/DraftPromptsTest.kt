@@ -14,10 +14,10 @@ class DraftPromptsTest {
             """
             ```json
             [
-              {"role":"user","kind":"TEXT","text":"electricians near Sakinaka?"},
-              {"role":"model","kind":"TOOL_CALL","toolName":"search_workers","args":{"skill":"electrician"}},
-              {"role":"user","kind":"TOOL_RESPONSE","toolName":"search_workers","result":{"n":1}},
-              {"role":"model","kind":"TEXT","text":"Ramesh is available."}
+              {"role":"user","kind":"TEXT","text":"What has she built?"},
+              {"role":"model","kind":"TOOL_CALL","toolName":"lookup_fact","args":{"topic":"projects"}},
+              {"role":"user","kind":"TOOL_RESPONSE","toolName":"lookup_fact","result":{"n":1}},
+              {"role":"model","kind":"TEXT","text":"She led the payments migration."}
             ]
             ```
         """
@@ -27,8 +27,8 @@ class DraftPromptsTest {
         assertEquals(4, turns.size)
         assertEquals(TurnRole.USER, turns[0].role)
         assertEquals(TurnKind.TOOL_CALL, turns[1].kind)
-        assertEquals("search_workers", turns[1].toolName)
-        assertTrue(turns[1].argsJson!!.contains("electrician"))
+        assertEquals("lookup_fact", turns[1].toolName)
+        assertTrue(turns[1].argsJson!!.contains("projects"))
         assertEquals(TurnKind.TOOL_RESPONSE, turns[2].kind)
     }
 

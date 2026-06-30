@@ -16,7 +16,7 @@
                 <select name="sftId" required>
                     <option value="" disabled selected>seed from approved SFT…</option>
                     <option th:each="e : ${seedable}" th:value="${e.id}"
-                            th:text="${(e.tags.skill ?: '—') + ' / ' + (e.tags.intent ?: '—') + ' · ' + e.turns.size() + ' turns'}">sft</option>
+                            th:text="${(e.tags.claimType != null ? e.tags.claimType.name().toLowerCase() : '—') + ' · ' + e.turns.size() + ' turns'}">sft</option>
                 </select>
                 <button type="submit" class="secondary">Seed</button>
             </form>
@@ -30,12 +30,12 @@
     </nav>
 
     <table class="grid">
-        <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Source</th><th>From SFT</th><th>Status</th><th>Updated</th></tr></thead>
+        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Source</th><th>From SFT</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="p : ${pairs}" class="clickable" th:attr="data-href=@{/dpo/{id}(id=${p.id})}">
-            <td th:text="${p.tags.skill}">skill</td>
-            <td th:text="${p.tags.intent}">intent</td>
-            <td th:text="${p.tags.language}">lang</td>
+            <td th:text="${p.tags.claimType != null ? p.tags.claimType.name().toLowerCase() : ''}">claim</td>
+            <td th:text="${p.tags.authenticityTier != null ? p.tags.authenticityTier.name().toLowerCase() : ''}">tier</td>
+            <td th:text="${#strings.listJoin(p.tags.labels, ', ')}">labels</td>
             <td th:text="${p.source}">MANUAL</td>
             <td th:text="${p.fromSftId} ? '✓' : ''"></td>
             <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(p.status),'_','-')}" th:text="${p.status}">DRAFT</span></td>

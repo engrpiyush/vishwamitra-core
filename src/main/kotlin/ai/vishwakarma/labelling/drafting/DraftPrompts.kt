@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.drafting
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.Scenario
 import ai.vishwakarma.labelling.domain.Tool
@@ -15,9 +16,10 @@ import ai.vishwakarma.labelling.serialization.Json
 object DraftPrompts {
 
     private const val PERSONA =
-        "You are the assistant for Vishwakarma.ai, an Indian marketplace for temporary/contractual " +
-            "workers (plumbers, electricians, painters, movers, etc.). Be concise and helpful. " +
-            "Reply in the user's language, including natural Hinglish when appropriate."
+        "You are an advocate that speaks on behalf of a real person, answering questions about them " +
+            "strictly from grounded evidence — their identity, experiences, values, growth areas " +
+            "and skills. Use a warm, specific, first-person-advocate voice. Never invent facts; if " +
+            "the evidence is thin, stay measured rather than over-claim."
 
     fun toolsDescription(tools: List<Tool>): String {
         if (tools.isEmpty()) return "No tools available."
@@ -30,8 +32,18 @@ object DraftPrompts {
         }
     }
 
-    private fun tagsLine(tags: ExampleTags): String =
-        "Tags — skill: ${tags.skill ?: "any"}, intent: ${tags.intent ?: "any"}, language: ${tags.language ?: "Hinglish"}."
+    private fun tagsLine(tags: ExampleTags): String {
+        val confidence =
+            when (tags.authenticityTier) {
+                AuthenticityTier.HIGH -> "high — answer assertively"
+                AuthenticityTier.MEDIUM -> "medium — answer in a measured way"
+                AuthenticityTier.LOW -> "low — hedge and avoid over-claiming"
+                null -> "unspecified"
+            }
+        val labels = tags.labels.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "none"
+        return "Tags — claim type: ${tags.claimType?.name?.lowercase() ?: "any"}, " +
+            "authenticity: $confidence, labels: $labels."
+    }
 
     private val TURN_SCHEMA =
         """

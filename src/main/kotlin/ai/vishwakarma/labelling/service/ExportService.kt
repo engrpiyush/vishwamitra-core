@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ExportKind
@@ -47,27 +49,28 @@ class ExportService(
 
     fun export(
         kind: ExportKind,
-        skill: String?,
-        intent: String?,
-        language: String?,
+        claimType: ClaimType?,
+        authenticityTier: AuthenticityTier?,
+        label: String?,
         actor: String?,
         toolEncoding: ToolEncoding = ToolEncoding.DEFAULT,
     ): Either<DomainError, ExportRecord> {
-        val filter =
-            ExampleTags(
-                skill?.ifBlank { null },
-                intent?.ifBlank { null },
-                language?.ifBlank { null }
-            )
+        val labelFilter = label?.ifBlank { null }
 
         val (ids, lines) =
             when (kind) {
                 ExportKind.SFT -> {
-                    val items = sft.list(ExampleStatus.APPROVED).filter { it.tags.matches(filter) }
+                    val items =
+                        sft.list(ExampleStatus.APPROVED).filter {
+                            it.tags.matches(claimType, authenticityTier, labelFilter)
+                        }
                     items.map { it.id } to items.map { sftSerializer.toJsonl(it, toolEncoding) }
                 }
                 ExportKind.DPO -> {
-                    val items = dpo.list(ExampleStatus.APPROVED).filter { it.tags.matches(filter) }
+                    val items =
+                        dpo.list(ExampleStatus.APPROVED).filter {
+                            it.tags.matches(claimType, authenticityTier, labelFilter)
+                        }
                     items.map { it.id } to items.map { dpoSerializer.toJsonl(it, toolEncoding) }
                 }
             }
@@ -99,8 +102,12 @@ class ExportService(
         return record.right()
     }
 
-    private fun ExampleTags.matches(filter: ExampleTags): Boolean =
-        (filter.skill == null || filter.skill == skill) &&
-            (filter.intent == null || filter.intent == intent) &&
-            (filter.language == null || filter.language == language)
+    private fun ExampleTags.matches(
+        claimType: ClaimType?,
+        tier: AuthenticityTier?,
+        label: String?,
+    ): Boolean =
+        (claimType == null || claimType == this.claimType) &&
+            (tier == null || tier == authenticityTier) &&
+            (label == null || labels.any { it.equals(label, ignoreCase = true) })
 }

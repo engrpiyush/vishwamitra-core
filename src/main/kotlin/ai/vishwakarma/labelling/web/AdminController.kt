@@ -1,9 +1,10 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Role
-import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.domain.ToolParam
 import ai.vishwakarma.labelling.domain.ToolStatus
+import ai.vishwakarma.labelling.domain.splitLabels
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.CatalogService
@@ -167,26 +168,17 @@ class AdminController(
         return "admin/taxonomy"
     }
 
-    @PostMapping("/taxonomy/{dimension}/add")
-    fun addTerm(
-        @PathVariable dimension: String,
-        @RequestParam term: String,
-        ra: RedirectAttributes
-    ): String {
-        val dim = Taxonomy.Dimension.valueOf(dimension.uppercase())
+    @PostMapping("/taxonomy/add")
+    fun addLabel(@RequestParam term: String, ra: RedirectAttributes): String {
         taxonomy
-            .addTerm(dim, term)
+            .addLabel(term)
             .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Added '$term'") })
         return "redirect:/admin/taxonomy"
     }
 
-    @PostMapping("/taxonomy/{dimension}/remove")
-    fun removeTerm(
-        @PathVariable dimension: String,
-        @RequestParam term: String,
-        ra: RedirectAttributes
-    ): String {
-        taxonomy.removeTerm(Taxonomy.Dimension.valueOf(dimension.uppercase()), term)
+    @PostMapping("/taxonomy/remove")
+    fun removeLabel(@RequestParam term: String, ra: RedirectAttributes): String {
+        taxonomy.removeLabel(term)
         ra.addFlashAttribute("ok", "Removed '$term'")
         return "redirect:/admin/taxonomy"
     }
@@ -205,13 +197,20 @@ class AdminController(
     fun createScenario(
         @RequestParam title: String,
         @RequestParam(required = false, defaultValue = "") description: String,
-        @RequestParam(required = false) skill: String?,
-        @RequestParam(required = false) intent: String?,
+        @RequestParam(required = false) claimType: String?,
+        @RequestParam(required = false) labels: String?,
         @RequestParam(required = false, defaultValue = "") promptTemplate: String,
         ra: RedirectAttributes,
     ): String {
         scenarios
-            .create(title, description, skill, intent, promptTemplate, actor())
+            .create(
+                title,
+                description,
+                ClaimType.fromOrNull(claimType),
+                splitLabels(labels),
+                promptTemplate,
+                actor(),
+            )
             .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Scenario created") })
         return "redirect:/admin/scenarios"
     }

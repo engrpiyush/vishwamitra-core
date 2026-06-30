@@ -20,24 +20,25 @@ class ContentsPartsSerializerTest {
                 id = "x1",
                 turns =
                     listOf(
-                        Turn(
-                            TurnRole.USER,
-                            TurnKind.TEXT,
-                            text = "Show me electricians near Sakinaka"
-                        ),
+                        Turn(TurnRole.USER, TurnKind.TEXT, text = "What has she built?"),
                         Turn(
                             TurnRole.MODEL,
                             TurnKind.TOOL_CALL,
-                            toolName = "search_workers",
-                            argsJson = """{"skill":"electrician","location":"Sakinaka"}"""
+                            toolName = "lookup_fact",
+                            argsJson = """{"topic":"projects","source":"github"}"""
                         ),
                         Turn(
                             TurnRole.USER,
                             TurnKind.TOOL_RESPONSE,
-                            toolName = "search_workers",
-                            resultJson = """{"results":[{"id":"w12","name":"Ramesh"}]}"""
+                            toolName = "lookup_fact",
+                            resultJson =
+                                """{"results":[{"id":"p12","name":"Payments migration"}]}"""
                         ),
-                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "Ramesh is available. Book?"),
+                        Turn(
+                            TurnRole.MODEL,
+                            TurnKind.TEXT,
+                            text = "She led the payments migration."
+                        ),
                     ),
             )
 
@@ -55,8 +56,8 @@ class ContentsPartsSerializerTest {
         assertTrue(!callPart.containsKey("functionCall"))
         val callText = callPart["text"] as String
         assertTrue(callText.startsWith("<tool_call>") && callText.endsWith("</tool_call>"))
-        assertTrue(callText.contains("\"name\":\"search_workers\""))
-        assertTrue(callText.contains("\"skill\":\"electrician\""))
+        assertTrue(callText.contains("\"name\":\"lookup_fact\""))
+        assertTrue(callText.contains("\"topic\":\"projects\""))
 
         // tool response is a <tool_response> text part on the user side
         assertEquals("user", contents[2]["role"])
@@ -78,21 +79,21 @@ class ContentsPartsSerializerTest {
                 id = "x4",
                 turns =
                     listOf(
-                        Turn(TurnRole.USER, TurnKind.TEXT, text = "book it"),
+                        Turn(TurnRole.USER, TurnKind.TEXT, text = "verify it"),
                         Turn(
                             TurnRole.MODEL,
                             TurnKind.TOOL_CALL,
-                            toolName = "book_worker",
+                            toolName = "verify_claim",
                             // not valid JSON — serializer must fall back, never throw
-                            argsJson = "create_work_request(...)",
+                            argsJson = "verify(...)",
                         ),
                         Turn(
                             TurnRole.USER,
                             TurnKind.TOOL_RESPONSE,
-                            toolName = "book_worker",
+                            toolName = "verify_claim",
                             resultJson = """{"ok":true}""",
                         ),
-                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "Booked."),
+                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "Verified."),
                     ),
             )
 
@@ -115,7 +116,7 @@ class ContentsPartsSerializerTest {
         // PLAIN_JSON: bare {name,args} with empty-args fallback, no <tool_call> wrapper
         val plain = callText(ai.vishwakarma.labelling.domain.ToolEncoding.PLAIN_JSON)
         assertTrue(!plain.contains("<tool_call>"))
-        assertTrue(plain.contains("\"name\":\"book_worker\""))
+        assertTrue(plain.contains("\"name\":\"verify_claim\""))
         assertTrue(plain.contains("\"args\":{}"))
 
         // GEMMA_FENCED uses fenced blocks
@@ -136,7 +137,7 @@ class ContentsPartsSerializerTest {
                         Turn(
                             TurnRole.MODEL,
                             TurnKind.TOOL_CALL,
-                            toolName = "list_skills",
+                            toolName = "lookup_fact",
                             argsJson = "{}"
                         ),
                     ),
@@ -153,8 +154,8 @@ class ContentsPartsSerializerTest {
                 id = "x3",
                 turns =
                     listOf(
-                        Turn(TurnRole.USER, TurnKind.TEXT, text = "Need a plumber tomorrow"),
-                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "Sure, which area and time?"),
+                        Turn(TurnRole.USER, TurnKind.TEXT, text = "Tell me about her leadership"),
+                        Turn(TurnRole.MODEL, TurnKind.TEXT, text = "She led a team of eight."),
                     ),
             )
         assertEquals(emptyList(), validator.validate(ok))

@@ -14,22 +14,11 @@ class TaxonomyRepository(private val db: Firestore) {
     fun get(): Taxonomy {
         val snap = doc.get().await()
         if (!snap.exists()) return Taxonomy()
-        return Taxonomy(
-            skills = snap.get("skills") as? List<String> ?: emptyList(),
-            intents = snap.get("intents") as? List<String> ?: emptyList(),
-            languages = snap.get("languages") as? List<String> ?: emptyList(),
-        )
+        return Taxonomy(labels = snap.get("labels") as? List<String> ?: emptyList())
     }
 
     fun save(taxonomy: Taxonomy) {
-        doc.set(
-                mapOf(
-                    "skills" to taxonomy.skills,
-                    "intents" to taxonomy.intents,
-                    "languages" to taxonomy.languages,
-                ),
-            )
-            .await()
+        doc.set(mapOf("labels" to taxonomy.labels)).await()
     }
 
     companion object {

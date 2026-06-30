@@ -2,7 +2,6 @@ package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.ExampleSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
-import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.SftExample
 import ai.vishwakarma.labelling.domain.Turn
@@ -48,13 +47,7 @@ class SftExampleRepository(private val db: Firestore) {
 
     private fun SftExample.toMap(): Map<String, Any?> =
         mapOf(
-            "tags" to
-                mapOf(
-                    "skill" to tags.skill,
-                    "intent" to tags.intent,
-                    "language" to tags.language,
-                    "hasToolCall" to tags.hasToolCall,
-                ),
+            "tags" to tags.toTagMap(),
             "turns" to
                 turns.map {
                     mapOf(
@@ -87,13 +80,7 @@ class SftExampleRepository(private val db: Firestore) {
         val commentsList = get("reviewComments") as? List<Map<String, Any?>> ?: emptyList()
         return SftExample(
             id = id,
-            tags =
-                ExampleTags(
-                    skill = tagsMap["skill"] as? String,
-                    intent = tagsMap["intent"] as? String,
-                    language = tagsMap["language"] as? String,
-                    hasToolCall = tagsMap["hasToolCall"] as? Boolean ?: false,
-                ),
+            tags = tagsMap.toExampleTags(),
             turns =
                 turnsList.map {
                     Turn(

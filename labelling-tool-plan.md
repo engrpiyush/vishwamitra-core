@@ -1,5 +1,12 @@
 # Vishwakarma AI — Labelling & Training Console — Implementation Plan
 
+> **⚠️ Superseded (2026-06-30).** This document describes the original **LaborMandi / WorkerChowk
+> gig-worker assistant** use-case (skills like plumber/electrician, booking tools, Hinglish). The app
+> has been forked toward **Project Neo** (a personal-advocate model): the gig taxonomy/tools/scenarios
+> were stripped and the SFT/DPO tag dimensions are now Claim-aligned (`claimType` + `authenticityTier`
+> + freeform `labels`). The **import → train → version → publish** machinery described below is
+> unchanged and still accurate. Treat the gig-specific catalog/scenario/persona sections as historical.
+
 > **Status:** planned, not built. Training work is paused; **next session** picks up here.
 > Source of truth for the *training* side remains the repo-root [`../PLAN.md`](../PLAN.md); this doc is the
 > full spec for the **labelling + training-management web app** (and a self-contained recap of the context).

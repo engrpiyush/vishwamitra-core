@@ -15,20 +15,21 @@
                 <option th:each="k : ${kinds}" th:value="${k}" th:text="${k}">SFT</option>
             </select>
         </label>
-        <label>Skill
-            <select name="skill"><option value="">any</option>
-                <option th:each="s : ${taxonomy.skills}" th:value="${s}" th:text="${s}">s</option>
+        <label>Claim type
+            <select name="claimType"><option value="">any</option>
+                <option th:each="ct : ${T(ai.vishwakarma.labelling.domain.ClaimType).values()}" th:value="${ct.name()}" th:text="${ct.name().toLowerCase()}">ct</option>
             </select>
         </label>
-        <label>Intent
-            <select name="intent"><option value="">any</option>
-                <option th:each="i : ${taxonomy.intents}" th:value="${i}" th:text="${i}">i</option>
+        <label>Authenticity
+            <select name="authenticityTier"><option value="">any</option>
+                <option th:each="t : ${T(ai.vishwakarma.labelling.domain.AuthenticityTier).values()}" th:value="${t.name()}" th:text="${t.name().toLowerCase()}">t</option>
             </select>
         </label>
-        <label>Language
-            <select name="language"><option value="">any</option>
-                <option th:each="l : ${taxonomy.languages}" th:value="${l}" th:text="${l}">l</option>
-            </select>
+        <label>Label
+            <input type="text" name="label" list="labelSuggestions" placeholder="any"/>
+            <datalist id="labelSuggestions">
+                <option th:each="l : ${taxonomy.labels}" th:value="${l}"></option>
+            </datalist>
         </label>
         <label>Tool encoding
             <select name="toolEncoding">

@@ -1,9 +1,12 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.TurnKind
 import ai.vishwakarma.labelling.domain.TurnRole
+import ai.vishwakarma.labelling.domain.splitLabels
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.CatalogService
 import ai.vishwakarma.labelling.service.DomainError
@@ -57,14 +60,15 @@ class SftController(
     fun createFromScenario(@RequestParam scenarioId: String, ra: RedirectAttributes): String {
         val scenario = scenarios.get(scenarioId)
         val draft = sft.createDraft(actor())
-        val tags = ExampleTags(skill = scenario?.skill, intent = scenario?.intent)
+        val tags =
+            ExampleTags(claimType = scenario?.claimType, labels = scenario?.labels ?: emptyList())
         drafting
             .draftConversation(scenario, tags)
             .fold(
                 { ra.addFlashAttribute("error", "${it.message} (created an empty draft)") },
                 { turns ->
                     sft.replaceTurns(draft.id, turns)
-                    sft.updateTags(draft.id, tags.skill, tags.intent, tags.language)
+                    sft.updateTags(draft.id, tags.claimType, tags.authenticityTier, tags.labels)
                     ra.addFlashAttribute(
                         "ok",
                         "Drafted ${turns.size} turns via ${drafting.activeProviderId()}"
@@ -114,12 +118,18 @@ class SftController(
     @PostMapping("/{id}/tags")
     fun tags(
         @PathVariable id: String,
-        @RequestParam(required = false) skill: String?,
-        @RequestParam(required = false) intent: String?,
-        @RequestParam(required = false) language: String?,
+        @RequestParam(required = false) claimType: String?,
+        @RequestParam(required = false) authenticityTier: String?,
+        @RequestParam(required = false) labels: String?,
         ra: RedirectAttributes,
     ): String {
-        sft.updateTags(id, skill, intent, language).notify(ra)
+        sft.updateTags(
+                id,
+                ClaimType.fromOrNull(claimType),
+                AuthenticityTier.fromOrNull(authenticityTier),
+                splitLabels(labels),
+            )
+            .notify(ra)
         return "redirect:/sft/$id"
     }
 

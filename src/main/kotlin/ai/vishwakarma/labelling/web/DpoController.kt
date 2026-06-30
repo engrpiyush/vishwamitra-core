@@ -1,6 +1,9 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleStatus
+import ai.vishwakarma.labelling.domain.splitLabels
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.DpoService
@@ -126,12 +129,18 @@ class DpoController(
     @PostMapping("/{id}/tags")
     fun tags(
         @PathVariable id: String,
-        @RequestParam(required = false) skill: String?,
-        @RequestParam(required = false) intent: String?,
-        @RequestParam(required = false) language: String?,
+        @RequestParam(required = false) claimType: String?,
+        @RequestParam(required = false) authenticityTier: String?,
+        @RequestParam(required = false) labels: String?,
         ra: RedirectAttributes,
     ): String {
-        dpo.updateTags(id, skill, intent, language).notify(ra)
+        dpo.updateTags(
+                id,
+                ClaimType.fromOrNull(claimType),
+                AuthenticityTier.fromOrNull(authenticityTier),
+                splitLabels(labels),
+            )
+            .notify(ra)
         return "redirect:/dpo/$id"
     }
 

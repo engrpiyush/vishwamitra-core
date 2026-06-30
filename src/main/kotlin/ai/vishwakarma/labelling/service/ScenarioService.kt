@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Scenario
 import ai.vishwakarma.labelling.persistence.ScenarioRepository
 import arrow.core.Either
@@ -19,8 +20,8 @@ class ScenarioService(private val scenarios: ScenarioRepository) {
     fun create(
         title: String,
         description: String,
-        skill: String?,
-        intent: String?,
+        claimType: ClaimType?,
+        labels: List<String>,
         promptTemplate: String,
         actor: String?,
     ): Either<DomainError, Scenario> {
@@ -30,8 +31,8 @@ class ScenarioService(private val scenarios: ScenarioRepository) {
                 id = scenarios.newId(),
                 title = title.trim(),
                 description = description.trim(),
-                skill = skill?.ifBlank { null },
-                intent = intent?.ifBlank { null },
+                claimType = claimType,
+                labels = labels,
                 promptTemplate = promptTemplate.trim(),
                 createdBy = actor,
                 createdAt = Instant.now(),

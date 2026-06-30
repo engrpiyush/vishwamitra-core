@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.DpoSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
@@ -101,17 +103,17 @@ class DpoService(
 
     fun updateTags(
         id: String,
-        skill: String?,
-        intent: String?,
-        language: String?
+        claimType: ClaimType?,
+        authenticityTier: AuthenticityTier?,
+        labels: List<String>,
     ): Either<DomainError, DpoPair> =
         mutate(id) {
             it.copy(
                 tags =
                     it.tags.copy(
-                        skill = skill?.ifBlank { null },
-                        intent = intent?.ifBlank { null },
-                        language = language?.ifBlank { null }
+                        claimType = claimType,
+                        authenticityTier = authenticityTier,
+                        labels = labels,
                     )
             )
         }

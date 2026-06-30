@@ -1,12 +1,10 @@
 package ai.vishwakarma.labelling.config
 
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.Taxonomy
-import ai.vishwakarma.labelling.domain.ToolParam
-import ai.vishwakarma.labelling.domain.ToolStatus
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
 import ai.vishwakarma.labelling.service.BaseModelService
-import ai.vishwakarma.labelling.service.CatalogService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.UserService
 import org.slf4j.LoggerFactory
@@ -15,8 +13,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
 /**
- * Idempotently seeds strawman catalogs (tools, base models, taxonomy, scenarios) when empty, plus
- * bootstrap ADMIN users from config. Safe to run on every startup; only fills gaps.
+ * Idempotently seeds starter content (base models, the label vocabulary, advocate scenarios) when
+ * empty, plus bootstrap ADMIN users from config. The tool catalog starts empty (an advocate model
+ * rarely tool-calls). Safe to run on every startup; only fills gaps.
  */
 @Configuration
 class DataSeeder {
@@ -26,7 +25,6 @@ class DataSeeder {
     @Bean
     fun seedRunner(
         props: AppProperties,
-        catalog: CatalogService,
         baseModels: BaseModelService,
         scenarios: ScenarioService,
         taxonomyRepo: TaxonomyRepository,
@@ -34,7 +32,6 @@ class DataSeeder {
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
-                seedTools(catalog)
                 seedBaseModels(baseModels)
                 seedTaxonomy(taxonomyRepo)
                 seedScenarios(scenarios)
@@ -52,57 +49,6 @@ class DataSeeder {
                     log.info("Seeded bootstrap admin {}", email)
                 }
             }
-    }
-
-    private fun seedTools(catalog: CatalogService) {
-        if (catalog.list().isNotEmpty()) return
-        val tools =
-            listOf(
-                Triple(
-                    "search_workers",
-                    "Find available workers by skill, location and date",
-                    listOf(
-                        ToolParam("skill", "string", true, "Worker skill, e.g. electrician"),
-                        ToolParam("location", "string", true, "Area / locality"),
-                        ToolParam("date", "string", false, "Date or 'today'"),
-                    )
-                ),
-                Triple(
-                    "book_worker",
-                    "Book a specific worker for a slot",
-                    listOf(
-                        ToolParam("worker_id", "string", true, "Worker id"),
-                        ToolParam("slot", "string", true, "Requested time slot"),
-                    )
-                ),
-                Triple(
-                    "cancel_booking",
-                    "Cancel an existing booking",
-                    listOf(
-                        ToolParam("booking_id", "string", true, "Booking id"),
-                    )
-                ),
-                Triple(
-                    "get_refund_status",
-                    "Check refund status for a booking",
-                    listOf(
-                        ToolParam("booking_id", "string", true, "Booking id"),
-                    )
-                ),
-                Triple(
-                    "check_availability",
-                    "Check whether a skill is available in an area",
-                    listOf(
-                        ToolParam("skill", "string", true, "Worker skill"),
-                        ToolParam("area", "string", true, "Area / locality"),
-                    )
-                ),
-                Triple("list_skills", "List supported worker skills", emptyList()),
-            )
-        tools.forEach { (name, desc, params) ->
-            catalog.create(name, desc, params, ToolStatus.ACTIVE, actor = "seed")
-        }
-        log.info("Seeded {} tools", tools.size)
     }
 
     private fun seedBaseModels(baseModels: BaseModelService) {
@@ -133,60 +79,65 @@ class DataSeeder {
 
     private fun seedTaxonomy(taxonomyRepo: TaxonomyRepository) {
         val current = taxonomyRepo.get()
-        if (
-            current.skills.isNotEmpty() ||
-                current.intents.isNotEmpty() ||
-                current.languages.isNotEmpty()
-        )
-            return
+        if (current.labels.isNotEmpty()) return
         taxonomyRepo.save(
             Taxonomy(
-                skills =
+                labels =
                     listOf(
-                        "plumber",
-                        "electrician",
-                        "painter",
-                        "helper/mover",
-                        "security guard",
-                        "carpenter",
-                        "cleaner"
+                        "leadership",
+                        "technical",
+                        "community",
+                        "education",
+                        "career",
+                        "award",
+                        "mentorship",
+                        "creativity",
+                        "resilience",
+                        "english",
                     ),
-                intents =
-                    listOf(
-                        "search",
-                        "book",
-                        "cancel",
-                        "refund",
-                        "price-inquiry",
-                        "availability",
-                        "complaint",
-                        "off-topic"
-                    ),
-                languages = listOf("Hindi", "Hinglish", "English"),
             ),
         )
-        log.info("Seeded taxonomy")
+        log.info("Seeded label vocabulary")
     }
 
     private fun seedScenarios(scenarios: ScenarioService) {
         if (scenarios.list().isNotEmpty()) return
         scenarios.create(
-            title = "Search workers by skill + area",
+            title = "Identity — origin story",
             description =
-                "User looks for workers of a given skill in an area; assistant clarifies and searches.",
-            skill = null,
-            intent = "search",
+                "Who the person is and where they come from, grounded in their own account.",
+            claimType = ClaimType.IDENTITY,
+            labels = emptyList(),
             promptTemplate =
-                "Generate a Hinglish conversation where a user looks for a {{skill}} in {{area}}; the assistant clarifies date/budget and calls search_workers.",
+                "Generate a conversation where someone asks about {{subject}}'s background; the advocate gives a grounded, first-person-advocate origin story without inventing facts.",
             actor = "seed",
         )
         scenarios.create(
-            title = "Refund query when worker no-show",
-            description = "User asks about refund policy after a worker didn't show up.",
-            skill = null,
-            intent = "refund",
+            title = "Episode — award-winning moment",
+            description = "A concrete, corroborated achievement told as a specific episode.",
+            claimType = ClaimType.EPISODE,
+            labels = listOf("award"),
             promptTemplate =
-                "Generate a conversation where a user asks about a refund after a no-show; the assistant explains the policy and offers a replacement.",
+                "Generate a conversation where someone asks what {{subject}} is most proud of; the advocate recounts a specific, evidence-backed award/achievement episode and answers assertively (high authenticity).",
+            actor = "seed",
+        )
+        scenarios.create(
+            title = "Value — owning a weakness honestly",
+            description =
+                "How the person handles a growth area; tests measured, non-defensive tone.",
+            claimType = ClaimType.WEAKNESS,
+            labels = listOf("resilience"),
+            promptTemplate =
+                "Generate a conversation where someone probes a weakness of {{subject}}; the advocate answers honestly and constructively, hedging where evidence is thin (lower authenticity).",
+            actor = "seed",
+        )
+        scenarios.create(
+            title = "Skill — technical depth",
+            description = "Demonstrating a concrete skill with grounded specifics.",
+            claimType = ClaimType.SKILL,
+            labels = listOf("technical"),
+            promptTemplate =
+                "Generate a conversation where someone asks how strong {{subject}} is at a particular skill; the advocate substantiates it with specific, grounded evidence.",
             actor = "seed",
         )
         log.info("Seeded scenarios")

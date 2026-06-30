@@ -30,13 +30,13 @@
     </nav>
 
     <table class="grid">
-        <thead><tr><th>Skill</th><th>Intent</th><th>Lang</th><th>Tool?</th><th>Turns</th><th>Status</th><th>Updated</th></tr></thead>
+        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Tool?</th><th>Turns</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="e : ${examples}" class="clickable"
             th:attr="data-href=@{/sft/{id}(id=${e.id})}">
-            <td th:text="${e.tags.skill}">skill</td>
-            <td th:text="${e.tags.intent}">intent</td>
-            <td th:text="${e.tags.language}">lang</td>
+            <td th:text="${e.tags.claimType != null ? e.tags.claimType.name().toLowerCase() : ''}">claim</td>
+            <td th:text="${e.tags.authenticityTier != null ? e.tags.authenticityTier.name().toLowerCase() : ''}">tier</td>
+            <td th:text="${#strings.listJoin(e.tags.labels, ', ')}">labels</td>
             <td th:text="${e.tags.hasToolCall} ? '✓' : ''"></td>
             <td th:text="${e.turns.size()}">0</td>
             <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(e.status),'_','-')}" th:text="${e.status}">DRAFT</span></td>

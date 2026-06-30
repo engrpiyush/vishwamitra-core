@@ -8,24 +8,35 @@
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <h1>Taxonomy</h1>
-    <p class="muted">Tags applied to SFT/DPO examples and used to seed generation.</p>
+    <p class="muted">Freeform <strong>labels</strong> suggested on SFT/DPO examples and used to seed
+        generation. The fixed dimensions below are enums, set per example.</p>
 
     <div class="tax-grid">
-        <section th:each="dim : ${ {'skills','intents','languages'} }">
-            <h2 th:text="${#strings.capitalize(dim)}">dimension</h2>
+        <section>
+            <h2>Labels</h2>
             <div class="chips">
-                <span class="chip" th:each="term : ${dim == 'skills' ? taxonomy.skills : (dim == 'intents' ? taxonomy.intents : taxonomy.languages)}">
+                <span class="chip" th:each="term : ${taxonomy.labels}">
                     <span th:text="${term}">term</span>
-                    <form method="post" th:action="@{'/admin/taxonomy/' + ${dim} + '/remove'}" class="inline-form">
+                    <form method="post" th:action="@{/admin/taxonomy/remove}" class="inline-form">
                         <input type="hidden" name="term" th:value="${term}"/>
                         <button class="x" type="submit" title="remove">&times;</button>
                     </form>
                 </span>
             </div>
-            <form method="post" th:action="@{'/admin/taxonomy/' + ${dim} + '/add'}" class="add-term">
-                <input type="text" name="term" placeholder="add term"/>
+            <form method="post" th:action="@{/admin/taxonomy/add}" class="add-term">
+                <input type="text" name="term" placeholder="add label"/>
                 <button type="submit">Add</button>
             </form>
+        </section>
+        <section>
+            <h2>Claim type <span class="muted">(fixed)</span></h2>
+            <div class="chips">
+                <span class="chip" th:each="ct : ${T(ai.vishwakarma.labelling.domain.ClaimType).values()}" th:text="${ct.name().toLowerCase()}">claim</span>
+            </div>
+            <h2>Authenticity tier <span class="muted">(fixed)</span></h2>
+            <div class="chips">
+                <span class="chip" th:each="t : ${T(ai.vishwakarma.labelling.domain.AuthenticityTier).values()}" th:text="${t.name().toLowerCase()}">tier</span>
+            </div>
         </section>
     </div>
 </main>

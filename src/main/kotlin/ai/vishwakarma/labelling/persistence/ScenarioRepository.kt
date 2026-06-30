@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.persistence
 
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Scenario
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
@@ -32,20 +33,22 @@ class ScenarioRepository(private val db: Firestore) {
         mapOf(
             "title" to title,
             "description" to description,
-            "skill" to skill,
-            "intent" to intent,
+            "claimType" to claimType?.name,
+            "labels" to labels,
             "promptTemplate" to promptTemplate,
             "createdBy" to createdBy,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
 
+    @Suppress("UNCHECKED_CAST")
     private fun DocumentSnapshot.toScenario(): Scenario =
         Scenario(
             id = id,
             title = getString("title") ?: "",
             description = getString("description") ?: "",
-            skill = getString("skill"),
-            intent = getString("intent"),
+            claimType =
+                getString("claimType")?.let { runCatching { ClaimType.valueOf(it) }.getOrNull() },
+            labels = (get("labels") as? List<String>) ?: emptyList(),
             promptTemplate = getString("promptTemplate") ?: "",
             createdBy = getString("createdBy"),
             createdAt = instant("createdAt"),

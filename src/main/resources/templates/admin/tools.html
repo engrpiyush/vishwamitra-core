@@ -41,10 +41,10 @@
 
     <h2>Add tool</h2>
     <form method="post" th:action="@{/admin/tools}" class="form">
-        <label>Name <input type="text" name="name" required placeholder="search_workers"/></label>
-        <label>Description <input type="text" name="description" placeholder="Find available workers"/></label>
+        <label>Name <input type="text" name="name" required placeholder="lookup_fact"/></label>
+        <label>Description <input type="text" name="description" placeholder="Look up a grounded fact about the subject"/></label>
         <label>Params (one per line: <code>name|type|required|description</code>)
-            <textarea name="params" rows="4" placeholder="skill|string|true|Worker skill&#10;location|string|true|Area"></textarea>
+            <textarea name="params" rows="4" placeholder="query|string|true|What to look up&#10;source|string|false|Preferred evidence source"></textarea>
         </label>
         <button type="submit">Create tool</button>
     </form>

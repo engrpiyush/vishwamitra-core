@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ReviewComment
@@ -56,17 +58,17 @@ class SftService(
 
     fun updateTags(
         id: String,
-        skill: String?,
-        intent: String?,
-        language: String?
+        claimType: ClaimType?,
+        authenticityTier: AuthenticityTier?,
+        labels: List<String>,
     ): Either<DomainError, SftExample> =
         mutate(id) {
             it.copy(
                 tags =
                     it.tags.copy(
-                        skill = skill?.ifBlank { null },
-                        intent = intent?.ifBlank { null },
-                        language = language?.ifBlank { null }
+                        claimType = claimType,
+                        authenticityTier = authenticityTier,
+                        labels = labels,
                     )
             )
         }
