@@ -46,6 +46,9 @@ app:
     # Raw Stage 1 intake assets (binary, possibly multi-GB A/V). Separate bucket/lifecycle from
     # the training JSONL. Browser uploads directly via V4 signed URLs (see IntakeStorage).
     intake-bucket: ${INTAKE_BUCKET:va-ai-intake-vishwakarma-ai-poc}
+  intake:
+    max-asset-size-bytes: ${INTAKE_MAX_ASSET_SIZE_BYTES:5368709120} # 5GB
+    stale-upload-hours: ${INTAKE_STALE_UPLOAD_HOURS:24}
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}

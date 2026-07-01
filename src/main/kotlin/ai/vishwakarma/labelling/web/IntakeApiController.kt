@@ -111,6 +111,7 @@ class IntakeApiController(
                 consentNote = body.consentNote,
                 labels = splitLabels(body.labels),
                 notes = body.notes ?: "",
+                declaredSizeBytes = body.declaredSizeBytes,
             )
         return intake.registerAsset(id, actor(), reg).toResponse(HttpStatus.CREATED)
     }
@@ -118,6 +119,20 @@ class IntakeApiController(
     @PostMapping("/assets/{assetId}/complete")
     fun completeAsset(@PathVariable assetId: String): ResponseEntity<Any> =
         intake.completeAsset(assetId).toResponse()
+
+    /** Re-issue a signed upload URL for an asset stuck in AWAITING_UPLOAD/FAILED. */
+    @PostMapping("/assets/{assetId}/upload-url")
+    fun reissueUploadUrl(@PathVariable assetId: String): ResponseEntity<Any> =
+        intake.reissueUploadUrl(assetId).toResponse()
+
+    /** Re-checks one stuck asset's bytes and completes or fails it. */
+    @PostMapping("/assets/{assetId}/reconcile")
+    fun reconcileAsset(@PathVariable assetId: String): ResponseEntity<Any> =
+        intake.reconcileAsset(assetId).toResponse()
+
+    /** Reconciles every stuck asset for a subject; returns the ones that changed. */
+    @PostMapping("/subjects/{id}/reconcile")
+    fun reconcileSubject(@PathVariable id: String) = ResponseEntity.ok(intake.reconcileSubject(id))
 
     @PostMapping("/subjects/{id}/links")
     fun registerLink(
@@ -295,6 +310,8 @@ class IntakeApiController(
         val consentNote: String? = null,
         val labels: String? = null,
         val notes: String? = null,
+        /** Client-declared byte size (e.g. `File.size`); advisory fast-fail only. */
+        val declaredSizeBytes: Long? = null,
     )
 
     data class LinkRequest(

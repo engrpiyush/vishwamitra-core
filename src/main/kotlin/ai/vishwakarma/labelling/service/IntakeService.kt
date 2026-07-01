@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
@@ -9,6 +10,8 @@ import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.defaultPrior
+import ai.vishwakarma.labelling.domain.isAllowedFilename
+import ai.vishwakarma.labelling.domain.isValidExternalUrl
 import ai.vishwakarma.labelling.gcs.IntakeStorage
 import ai.vishwakarma.labelling.gcs.SignedUpload
 import ai.vishwakarma.labelling.persistence.AssetRepository
@@ -17,6 +20,7 @@ import ai.vishwakarma.labelling.persistence.SubjectRepository
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -40,6 +44,11 @@ data class AssetRegistration(
     val consentNote: String? = null,
     val labels: List<String> = emptyList(),
     val notes: String = "",
+    /**
+     * Client-declared byte size (e.g. `File.size` in the browser). Advisory only — bytes never pass
+     * through the app for real GCS uploads, so this is a fast-fail UX check, not enforcement.
+     */
+    val declaredSizeBytes: Long? = null,
 )
 
 /** Register-a-link input (PUBLIC_PROFILE / external URL; no bytes to store). */
@@ -88,6 +97,7 @@ class IntakeService(
     private val subjects: SubjectRepository,
     private val manifests: IntakeManifestRepository,
     private val storage: IntakeStorage,
+    private val props: AppProperties,
 ) {
 
     fun listAssets(subjectId: String): List<Asset> = assets.findBySubject(subjectId)
@@ -108,6 +118,18 @@ class IntakeService(
         if (reg.title.isBlank()) return DomainError.Invalid("Asset title is required").left()
         if (reg.modality == AssetModality.LINK)
             return DomainError.Invalid("Use the links endpoint for LINK assets").left()
+        if (!reg.modality.isAllowedFilename(reg.originalFilename))
+            return DomainError.Invalid(
+                    "File extension not allowed for modality ${reg.modality}: " +
+                        (reg.originalFilename ?: "(no filename)")
+                )
+                .left()
+        if (reg.declaredSizeBytes != null && reg.declaredSizeBytes > props.intake.maxAssetSizeBytes)
+            return DomainError.Invalid(
+                    "Declared size ${reg.declaredSizeBytes} exceeds the " +
+                        "${props.intake.maxAssetSizeBytes}-byte limit"
+                )
+                .left()
 
         val now = Instant.now()
         val id = assets.newId()
@@ -157,6 +179,18 @@ class IntakeService(
         val size =
             storage.objectSize(path)
                 ?: return DomainError.Invalid("No uploaded bytes found for asset $id").left()
+        if (size > props.intake.maxAssetSizeBytes) {
+            storage.deleteObject(path)
+            val failed =
+                asset.copy(uploadStatus = AssetUploadStatus.FAILED, updatedAt = Instant.now())
+            assets.save(failed)
+            recomputeManifest(asset.subjectId)
+            return DomainError.Invalid(
+                    "Asset $id exceeds max size of ${props.intake.maxAssetSizeBytes} bytes " +
+                        "($size uploaded); rejected"
+                )
+                .left()
+        }
         val updated =
             asset.copy(
                 sizeBytes = size,
@@ -168,6 +202,104 @@ class IntakeService(
         return updated.right()
     }
 
+    /**
+     * Re-issue a signed upload URL for an asset stuck in `AWAITING_UPLOAD` or `FAILED` (expired
+     * URL, dropped connection, …). Re-arms a `FAILED` asset back to `AWAITING_UPLOAD`. Refused for
+     * LINK assets (no bytes) and already-`STORED` assets (delete + re-register to replace stored
+     * bytes).
+     */
+    fun reissueUploadUrl(id: String): Either<DomainError, AssetUpload> {
+        val asset = assets.findById(id) ?: return DomainError.NotFound("Asset $id not found").left()
+        if (asset.modality == AssetModality.LINK)
+            return DomainError.Invalid("LINK assets have no upload URL").left()
+        if (asset.uploadStatus == AssetUploadStatus.STORED)
+            return DomainError.Invalid(
+                    "Asset $id is already stored; delete and re-register to replace it"
+                )
+                .left()
+        val path =
+            asset.storedObjectPath
+                ?: return DomainError.Invalid("Asset $id has no stored object path").left()
+        val contentType = asset.mimeType ?: "application/octet-stream"
+        val upload = storage.signedUploadUrl(path, contentType)
+        val current =
+            if (asset.uploadStatus == AssetUploadStatus.FAILED) {
+                val reArmed =
+                    asset.copy(
+                        uploadStatus = AssetUploadStatus.AWAITING_UPLOAD,
+                        updatedAt = Instant.now()
+                    )
+                assets.save(reArmed)
+                recomputeManifest(asset.subjectId)
+                reArmed
+            } else asset
+        return AssetUpload(current, upload).right()
+    }
+
+    /**
+     * Re-checks one stuck asset's bytes and completes or fails it. No-op for LINK/STORED assets.
+     */
+    fun reconcileAsset(id: String): Either<DomainError, Asset> {
+        val asset = assets.findById(id) ?: return DomainError.NotFound("Asset $id not found").left()
+        return reconcileInternal(asset).right()
+    }
+
+    /** Reconciles every stuck asset for a subject; returns the ones whose status changed. */
+    fun reconcileSubject(subjectId: String): List<Asset> {
+        val stale =
+            assets.findBySubject(subjectId).filter {
+                it.uploadStatus == AssetUploadStatus.AWAITING_UPLOAD ||
+                    it.uploadStatus == AssetUploadStatus.FAILED
+            }
+        val changed =
+            stale.mapNotNull { before ->
+                reconcileInternal(before).takeIf { it.uploadStatus != before.uploadStatus }
+            }
+        if (changed.isNotEmpty()) recomputeManifest(subjectId)
+        return changed
+    }
+
+    private fun reconcileInternal(asset: Asset): Asset {
+        if (asset.modality == AssetModality.LINK) return asset
+        if (
+            asset.uploadStatus != AssetUploadStatus.AWAITING_UPLOAD &&
+                asset.uploadStatus != AssetUploadStatus.FAILED
+        )
+            return asset
+        val path = asset.storedObjectPath ?: return asset
+        val size = storage.objectSize(path)
+        val now = Instant.now()
+        return when {
+            size != null && size > props.intake.maxAssetSizeBytes -> {
+                storage.deleteObject(path)
+                val updated = asset.copy(uploadStatus = AssetUploadStatus.FAILED, updatedAt = now)
+                assets.save(updated)
+                updated
+            }
+            size != null -> {
+                val updated =
+                    asset.copy(
+                        sizeBytes = size,
+                        uploadStatus = AssetUploadStatus.STORED,
+                        updatedAt = now
+                    )
+                assets.save(updated)
+                updated
+            }
+            isStale(asset, now) -> {
+                val updated = asset.copy(uploadStatus = AssetUploadStatus.FAILED, updatedAt = now)
+                assets.save(updated)
+                updated
+            }
+            else -> asset
+        }
+    }
+
+    private fun isStale(asset: Asset, now: Instant): Boolean {
+        val created = asset.createdAt ?: return false
+        return created.isBefore(now.minus(Duration.ofHours(props.intake.staleUploadHours)))
+    }
+
     /** Register an external link (PUBLIC_PROFILE) — no bytes, immediately `REGISTERED`. */
     fun registerLink(
         subjectId: String,
@@ -177,8 +309,8 @@ class IntakeService(
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
         if (reg.title.isBlank()) return DomainError.Invalid("Link title is required").left()
-        if (!reg.externalUrl.startsWith("http://") && !reg.externalUrl.startsWith("https://"))
-            return DomainError.Invalid("externalUrl must be an http(s) URL").left()
+        if (!isValidExternalUrl(reg.externalUrl))
+            return DomainError.Invalid("externalUrl must be a valid http(s) URL with a host").left()
 
         val now = Instant.now()
         val asset =
@@ -293,10 +425,12 @@ class IntakeService(
     fun sealManifest(subjectId: String, actor: String?): Either<DomainError, IntakeManifest> {
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
+        val current = recomputeManifest(subjectId)
+        if (current.sealBlockers.isNotEmpty())
+            return DomainError.Conflict("Cannot seal: ${current.sealBlockers.joinToString("; ")}")
+                .left()
         val now = Instant.now()
-        val sealed =
-            recomputeManifest(subjectId)
-                .copy(sealed = true, sealedBy = actor, sealedAt = now, updatedAt = now)
+        val sealed = current.copy(sealed = true, sealedBy = actor, sealedAt = now, updatedAt = now)
         manifests.save(sealed)
         return sealed.right()
     }
@@ -313,6 +447,7 @@ class IntakeService(
                 countsByModality = all.groupingBy { it.modality.name }.eachCount(),
                 countsByContentType = all.groupingBy { it.contentType.name }.eachCount(),
                 consentSummary = all.groupingBy { it.consentStatus.name }.eachCount(),
+                sealBlockers = computeSealBlockers(all),
                 // Preserve any existing seal; the seal action re-stamps it explicitly.
                 sealed = existing?.sealed ?: false,
                 sealedBy = existing?.sealedBy,
@@ -321,6 +456,26 @@ class IntakeService(
             )
         manifests.save(manifest)
         return manifest
+    }
+
+    /**
+     * Reasons sealing is blocked: pending consent, or bytes not yet stored. Empty = ready to seal.
+     */
+    private fun computeSealBlockers(all: List<Asset>): List<String> {
+        val blockers = mutableListOf<String>()
+        val pendingConsent = all.filter { it.consentStatus == ConsentStatus.PENDING }
+        if (pendingConsent.isNotEmpty())
+            blockers +=
+                "${pendingConsent.size} asset(s) pending consent: ${pendingConsent.joinToString { it.id }}"
+        val notStored =
+            all.filter {
+                it.modality != AssetModality.LINK &&
+                    (it.uploadStatus == AssetUploadStatus.AWAITING_UPLOAD ||
+                        it.uploadStatus == AssetUploadStatus.FAILED)
+            }
+        if (notStored.isNotEmpty())
+            blockers += "${notStored.size} asset(s) not stored: ${notStored.joinToString { it.id }}"
+        return blockers
     }
 
     private fun objectPath(

@@ -19,6 +19,8 @@ data class IntakeManifest(
     val countsByContentType: Map<String, Int> = emptyMap(),
     /** ConsentStatus.name → count. */
     val consentSummary: Map<String, Int> = emptyMap(),
+    /** Human-readable reasons sealing is currently blocked; empty means ready to seal. */
+    val sealBlockers: List<String> = emptyList(),
     val sealed: Boolean = false,
     val sealedBy: String? = null,
     val sealedAt: Instant? = null,

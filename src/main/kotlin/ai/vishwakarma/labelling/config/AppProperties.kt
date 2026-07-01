@@ -13,6 +13,7 @@ data class AppProperties(
     val tuning: Tuning = Tuning(),
     val auth: Auth = Auth(),
     val comingSoon: ComingSoon = ComingSoon(),
+    val intake: Intake = Intake(),
 ) {
     data class ComingSoon(
         /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
@@ -51,5 +52,16 @@ data class AppProperties(
     data class DevUser(
         val email: String = "dev@vishwakarma.ai",
         val role: String = "ADMIN",
+    )
+
+    data class Intake(
+        /**
+         * Assets found larger than this on completion/reconciliation are rejected (marked FAILED).
+         */
+        val maxAssetSizeBytes: Long = 5L * 1024 * 1024 * 1024,
+        /**
+         * How long an asset may sit in AWAITING_UPLOAD/FAILED before reconciliation gives up on it.
+         */
+        val staleUploadHours: Long = 24,
     )
 }
