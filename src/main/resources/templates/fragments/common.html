@@ -9,6 +9,8 @@
 <head th:fragment="head(title)">
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <!-- CSRF token for JS-driven /api/intake calls (the signed-URL uploader). Absent in dev (CSRF off). -->
+    <meta th:if="${_csrf != null}" name="csrf-token" th:content="${_csrf.token}"/>
     <title th:text="${title} ? |Vishwamitra · ${title}| : 'Vishwamitra'">Vishwamitra</title>
     <!-- Set theme before first paint to avoid a flash of the wrong theme. -->
     <script>
@@ -38,6 +40,8 @@
         <a th:href="@{/dpo}"      th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/dpo')} ? 'active'">DPO</a>
         <a th:href="@{/export}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/export')} ? 'active'">Export</a>
         <a th:href="@{/import}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/import')} ? 'active'">Import</a>
+        <a th:href="@{/intake}"   sec:authorize="hasRole('REVIEWER')"
+           th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/intake')} ? 'active'">Intake</a>
         <a th:href="@{/training}" th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/training')} ? 'active'">Training</a>
         <a th:href="@{/models}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/models')} ? 'active'">Models</a>
         <a th:href="@{/admin/tools}" sec:authorize="hasRole('ADMIN')"

@@ -298,19 +298,21 @@ form.inline-form button.x { background: none; border: none; color: var(--muted);
     background: var(--neutral-bg); border: 1px solid var(--neutral-bd); color: var(--accent);
     white-space: nowrap;
 }
-.badge--success, .badge--approved, .badge--valid, .badge--succeeded, .badge--ready, .badge--active, .badge--current {
+.badge--success, .badge--approved, .badge--valid, .badge--succeeded, .badge--ready, .badge--active, .badge--current,
+.badge--stored, .badge--granted, .badge--high {
     background: var(--ok-bg); border-color: var(--ok-bd); color: var(--ok-fg);
 }
-.badge--info, .badge--submitted, .badge--pending, .badge--validating, .badge--running {
+.badge--info, .badge--submitted, .badge--pending, .badge--validating, .badge--running,
+.badge--registered, .badge--medium {
     background: var(--info-bg); border-color: var(--info-bd); color: var(--info-fg);
 }
-.badge--warning, .badge--needs-changes {
+.badge--warning, .badge--needs-changes, .badge--awaiting-upload {
     background: var(--warn-bg); border-color: var(--warn-bd); color: var(--warn-fg);
 }
-.badge--danger, .badge--invalid, .badge--failed, .badge--rejected {
+.badge--danger, .badge--invalid, .badge--failed, .badge--rejected, .badge--revoked {
     background: var(--err-bg); border-color: var(--err-bd); color: var(--err-fg);
 }
-.badge--muted, .badge--draft, .badge--archived {
+.badge--muted, .badge--draft, .badge--archived, .badge--not-required, .badge--low {
     background: var(--neutral-bg); border-color: var(--neutral-bd); color: var(--muted);
 }
 

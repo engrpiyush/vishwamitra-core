@@ -104,8 +104,10 @@ class SecurityConfig {
                 authorize("/coming-soon.html", permitAll)
                 authorize("/coming-soon/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
-                // Stage 1 intake API: same-origin app JSON, REVIEWER+. Also enforced at the method
-                // level by @PreAuthorize; CSRF stays on (no exemption — the UI sends the token).
+                // Stage 1 intake: the server-rendered UI and its JSON API are both REVIEWER+ (also
+                // enforced at the method level by @PreAuthorize). CSRF stays on — forms carry the
+                // hidden token, and the uploader JS sends it from the <meta> as X-CSRF-TOKEN.
+                authorize("/intake/**", hasRole("REVIEWER"))
                 authorize("/api/intake/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }

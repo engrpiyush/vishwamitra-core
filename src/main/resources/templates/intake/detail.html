@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>
+            <span th:text="${subject.displayName}">Name</span>
+            <span class="muted" th:if="${subject.handle != null}" th:text="'@' + ${subject.handle}">@handle</span>
+            <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(subject.status)}"
+                  th:text="${subject.status}">ACTIVE</span>
+        </h1>
+        <a th:href="@{/intake}" class="muted">&larr; subjects</a>
+    </div>
+
+    <div class="editor-grid">
+        <section class="editor-main">
+
+            <!-- Deferred: browser→GCS signed-URL uploader (collapsible inline panel). -->
+            <div class="panel" style="border-style: dashed;">
+                <h3>Add asset <span class="badge badge--draft">coming next</span></h3>
+                <p class="muted">Binary/text upload (audio, video, images, documents) uploads straight
+                    to storage via a signed URL — it ships in the next pass. For now, register external
+                    links below, or use the API. The collapsible upload panel will live here.</p>
+            </div>
+
+            <h2>Assets <span class="muted" th:text="'(' + ${assetCount} + ')'">(0)</span></h2>
+
+            <div th:if="${assetsByClass.isEmpty()}" class="empty-state">
+                No assets yet — add an external link on the right, or upload once the uploader ships.
+            </div>
+
+            <th:block th:each="entry : ${assetsByClass}">
+                <h3 class="muted" th:text="${#strings.replace(entry.key, '_', ' ')}">SOURCE CLASS</h3>
+                <div class="turns">
+                    <div class="turn" th:each="a : ${entry.value}">
+                        <div class="turn-head">
+                            <strong th:text="${a.title}">Asset title</strong>
+                            <div class="turn-ops">
+                                <a class="btn--ghost btn--sm"
+                                   th:if="${a.externalUrl != null or a.uploadStatus.name() == 'STORED'}"
+                                   th:href="@{/intake/assets/{id}/preview(id=${a.id})}" target="_blank" rel="noopener">Preview</a>
+                                <form method="post" class="inline-form"
+                                      th:action="@{/intake/assets/{id}/delete(id=${a.id})}"
+                                      data-confirm="This deletes the asset record and any stored bytes. This cannot be undone."
+                                      data-confirm-title="Delete this asset?" data-confirm-ok="Delete" data-confirm-danger>
+                                    <button class="btn--danger btn--sm" type="submit">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="turn-body">
+                            <div class="row-actions">
+                                <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(a.modality)}" th:text="${a.modality}">MODALITY</span>
+                                <span class="badge" th:text="${a.contentType}">CONTENT_TYPE</span>
+                                <span class="badge badge--muted" th:if="${a.relationship.name() != 'UNKNOWN'}" th:text="${#strings.toLowerCase(a.relationship)}">rel</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(a.consentStatus),'_','-')}" th:text="${a.consentStatus}">CONSENT</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(a.authenticityPrior)}"
+                                      th:text="${'prior ' + a.authenticityPrior + (a.authenticityPriorOverridden ? ' ·override' : '')}">prior</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(a.uploadStatus),'_','-')}" th:text="${a.uploadStatus}">STATUS</span>
+                            </div>
+                            <p class="muted" th:if="${a.externalUrl != null}" style="margin:0;">
+                                <code class="copyable" th:text="${a.externalUrl}">url</code>
+                            </p>
+
+                            <details>
+                                <summary><span class="link">Edit</span></summary>
+                                <form method="post" th:action="@{/intake/assets/{id}/edit(id=${a.id})}" class="form" style="max-width:none; margin-top:0.6rem;">
+                                    <label>Title
+                                        <input type="text" name="title" th:value="${a.title}"/>
+                                    </label>
+                                    <div class="form-row">
+                                        <label>Content type
+                                            <select name="contentType">
+                                                <option th:each="ct : ${contentTypes}" th:value="${ct}" th:text="${ct}" th:selected="${ct == a.contentType}">CT</option>
+                                            </select>
+                                        </label>
+                                        <label>Relationship
+                                            <select name="relationship">
+                                                <option th:each="r : ${relationships}" th:value="${r}" th:text="${r}" th:selected="${r == a.relationship}">REL</option>
+                                            </select>
+                                        </label>
+                                        <label>Authenticity prior <span class="muted">(overrides derived)</span>
+                                            <select name="authenticityPrior">
+                                                <option value="" th:text="'derived (' + ${a.authenticityPrior} + ')'">derived</option>
+                                                <option th:each="t : ${authenticityTiers}" th:value="${t}" th:text="${t}"
+                                                        th:selected="${a.authenticityPriorOverridden and t == a.authenticityPrior}">TIER</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <div class="form-row">
+                                        <label>Consent
+                                            <select name="consentStatus">
+                                                <option th:each="c : ${consentStatuses}" th:value="${c}" th:text="${c}" th:selected="${c == a.consentStatus}">CONSENT</option>
+                                            </select>
+                                        </label>
+                                        <label>Consent note
+                                            <input type="text" name="consentNote" th:value="${a.consentNote}"/>
+                                        </label>
+                                    </div>
+                                    <div class="form-row">
+                                        <label>Capture date
+                                            <input type="date" name="captureDate" th:value="${a.captureDate}"/>
+                                        </label>
+                                        <label>Claimed event date
+                                            <input type="date" name="claimedEventDate" th:value="${a.claimedEventDate}"/>
+                                        </label>
+                                        <label>Source name
+                                            <input type="text" name="sourceName" th:value="${a.sourceName}"/>
+                                        </label>
+                                    </div>
+                                    <label>Labels <span class="muted">(comma-separated)</span>
+                                        <input type="text" name="labels" th:value="${#strings.listJoin(a.labels, ', ')}"/>
+                                    </label>
+                                    <label>Notes
+                                        <textarea name="notes" th:text="${a.notes}"></textarea>
+                                    </label>
+                                    <button type="submit" class="secondary">Save asset</button>
+                                </form>
+                            </details>
+                        </div>
+                    </div>
+                </div>
+            </th:block>
+
+            <!-- Add external link (no bytes) -->
+            <div class="panel" style="margin-top:1.5rem;">
+                <h3>Add external link</h3>
+                <p class="muted">LinkedIn / GitHub / website / social — registered as a PUBLIC_PROFILE
+                    asset with no stored bytes.</p>
+                <form method="post" th:action="@{/intake/{id}/links(id=${subject.id})}" class="form">
+                    <label>Title
+                        <input type="text" name="title" placeholder="GitHub profile" required/>
+                    </label>
+                    <div class="form-row">
+                        <label>Content type
+                            <select name="contentType" required>
+                                <option th:each="ct : ${linkContentTypes}" th:value="${ct}" th:text="${ct}">CT</option>
+                            </select>
+                        </label>
+                        <label>Relationship
+                            <select name="relationship">
+                                <option th:each="r : ${relationships}" th:value="${r}" th:text="${r}" th:selected="${r.name() == 'SELF'}">REL</option>
+                            </select>
+                        </label>
+                    </div>
+                    <label>URL
+                        <input type="text" name="externalUrl" placeholder="https://github.com/ada" required/>
+                    </label>
+                    <div class="form-row">
+                        <label>Consent
+                            <select name="consentStatus">
+                                <option th:each="c : ${consentStatuses}" th:value="${c}" th:text="${c}" th:selected="${c.name() == 'NOT_REQUIRED'}">CONSENT</option>
+                            </select>
+                        </label>
+                        <label>Labels <span class="muted">(comma-separated)</span>
+                            <input type="text" name="labels" placeholder="oss, portfolio"/>
+                        </label>
+                    </div>
+                    <button type="submit">Add link</button>
+                </form>
+            </div>
+        </section>
+
+        <aside class="editor-side">
+            <!-- Manifest / seal readiness -->
+            <div class="panel">
+                <h3>Manifest</h3>
+                <div class="tiles" style="margin-top:0.5rem; grid-template-columns:1fr 1fr;">
+                    <div class="tile">
+                        <span class="tile-value" th:text="${manifest.assetIds.size()}">0</span>
+                        <span class="tile-label">assets</span>
+                    </div>
+                    <div class="tile">
+                        <span class="tile-value" th:text="${manifest.countsByModality.size()}">0</span>
+                        <span class="tile-label">modalities</span>
+                    </div>
+                </div>
+
+                <p class="muted" style="margin:1rem 0 0.3rem;">Consent</p>
+                <div class="row-actions">
+                    <span th:if="${manifest.consentSummary.isEmpty()}" class="muted">—</span>
+                    <span th:each="c : ${manifest.consentSummary}" class="badge"
+                          th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(c.key),'_','-')}"
+                          th:text="${c.value + ' ' + #strings.toLowerCase(c.key)}">2 granted</span>
+                </div>
+
+                <div th:if="${manifest.sealed}" style="margin-top:1rem;">
+                    <span class="badge badge--success">SEALED</span>
+                    <p class="muted" style="margin:0.4rem 0 0;">
+                        by <span th:text="${manifest.sealedBy ?: 'unknown'}">who</span>,
+                        <time class="js-ts" th:datetime="${manifest.sealedAt}" th:text="${manifest.sealedAt}">when</time>
+                    </p>
+                </div>
+
+                <div th:unless="${manifest.sealed}" style="margin-top:1rem;">
+                    <ul class="errors" th:if="${!manifest.sealBlockers.isEmpty()}">
+                        <li th:each="b : ${manifest.sealBlockers}" th:text="${b}">blocker</li>
+                    </ul>
+                    <form method="post" th:action="@{/intake/{id}/seal(id=${subject.id})}" class="inline-form">
+                        <button type="submit" th:disabled="${!manifest.sealBlockers.isEmpty()}"
+                                th:title="${manifest.sealBlockers.isEmpty()} ? 'Ready to seal' : ${#strings.listJoin(manifest.sealBlockers, '; ')}">
+                            Seal manifest
+                        </button>
+                    </form>
+                </div>
+
+                <form method="post" th:action="@{/intake/{id}/reconcile(id=${subject.id})}" class="inline-form" style="margin-top:0.6rem;">
+                    <button type="submit" class="btn--ghost btn--sm">Reconcile stuck uploads</button>
+                </form>
+            </div>
+
+            <!-- Subject settings -->
+            <div class="panel">
+                <h3>Subject</h3>
+                <form method="post" th:action="@{/intake/{id}/edit(id=${subject.id})}" class="form" style="max-width:none;">
+                    <label>Display name
+                        <input type="text" name="displayName" th:value="${subject.displayName}"/>
+                    </label>
+                    <label>Handle
+                        <input type="text" name="handle" th:value="${subject.handle}"/>
+                    </label>
+                    <label>Status
+                        <select name="status">
+                            <option value="ACTIVE" th:selected="${subject.status.name() == 'ACTIVE'}">ACTIVE</option>
+                            <option value="ARCHIVED" th:selected="${subject.status.name() == 'ARCHIVED'}">ARCHIVED</option>
+                        </select>
+                    </label>
+                    <label>Notes
+                        <textarea name="notes" th:text="${subject.notes}"></textarea>
+                    </label>
+                    <button type="submit" class="secondary">Save subject</button>
+                </form>
+                <form method="post" th:action="@{/intake/{id}/delete(id=${subject.id})}" class="inline-form" style="margin-top:0.8rem;"
+                      data-confirm="This purges every asset (bytes + records) and the manifest, then deletes the subject. This cannot be undone."
+                      data-confirm-title="Delete this subject?" data-confirm-ok="Delete subject" data-confirm-danger>
+                    <button class="btn--danger btn--sm" type="submit">Delete subject</button>
+                </form>
+            </div>
+        </aside>
+    </div>
+</main>
+</body>
+</html>

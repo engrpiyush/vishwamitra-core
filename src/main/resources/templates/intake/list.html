@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <div class="page-head">
+            <h1>Intake subjects</h1>
+            <p class="muted">Each subject is a person a Neo model is built for. Register assets and
+                links, then seal the manifest to hand off to Stage 2.</p>
+        </div>
+    </div>
+
+    <table class="grid">
+        <thead><tr><th>Subject</th><th>Handle</th><th>Assets</th><th>Consent</th><th>Manifest</th><th>Updated</th></tr></thead>
+        <tbody>
+        <tr th:each="s : ${subjects}" class="clickable" th:attr="data-href=@{/intake/{id}(id=${s.id})}"
+            th:with="m=${manifests.get(s.id)}">
+            <td>
+                <strong th:text="${s.displayName}">Name</strong>
+                <span class="badge badge--archived" th:if="${s.status.name() == 'ARCHIVED'}">ARCHIVED</span>
+            </td>
+            <td class="muted" th:text="${s.handle != null ? '@' + s.handle : '—'}">@handle</td>
+            <td th:text="${m != null ? m.assetIds.size() : 0}">0</td>
+            <td>
+                <span th:if="${m == null or m.consentSummary.isEmpty()}" class="muted">—</span>
+                <span th:each="c : ${m != null ? m.consentSummary : null}" class="badge"
+                      th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(c.key),'_','-')}"
+                      th:text="${c.value + ' ' + #strings.toLowerCase(c.key)}">2 granted</span>
+            </td>
+            <td>
+                <span class="badge badge--success" th:if="${m != null and m.sealed}">SEALED</span>
+                <span class="badge badge--warning" th:if="${m != null and !m.sealed and !m.sealBlockers.isEmpty()}"
+                      th:text="${m.sealBlockers.size() + ' blocker(s)'}">blockers</span>
+                <span class="badge badge--ready" th:if="${m != null and !m.sealed and m.sealBlockers.isEmpty()}">READY</span>
+            </td>
+            <td class="muted"><time class="js-ts" th:datetime="${s.updatedAt}" th:text="${s.updatedAt}">ts</time></td>
+        </tr>
+        <tr th:if="${subjects.isEmpty()}"><td colspan="6"><div class="empty-state">No subjects yet — create one below.</div></td></tr>
+        </tbody>
+    </table>
+
+    <div class="panel">
+        <h3>New subject</h3>
+        <form method="post" th:action="@{/intake}" class="form">
+            <label>Display name
+                <input type="text" name="displayName" placeholder="Ada Lovelace" required/>
+            </label>
+            <label>Handle <span class="muted">(optional slug)</span>
+                <input type="text" name="handle" placeholder="ada"/>
+            </label>
+            <label>Notes <span class="muted">(optional)</span>
+                <textarea name="notes" placeholder="Pilot subject"></textarea>
+            </label>
+            <button type="submit">Create subject</button>
+        </form>
+    </div>
+</main>
+</body>
+</html>
