@@ -389,6 +389,15 @@ textarea { resize: vertical; min-height: 64px; }
 .dropzone .dz-text { margin: 0 0 0.4rem; }
 .dropzone .dz-file { margin: 0; font-size: 0.85rem; }
 
+/* ---- Upload progress (signed-URL asset uploader) ------------------------- */
+.upload-progress { display: flex; align-items: center; gap: 0.6rem; margin: 0.8rem 0; }
+.upload-progress .upload-track {
+    flex: 1; height: 6px; background: var(--surface-2); border-radius: var(--radius-pill); overflow: hidden;
+}
+.upload-progress .upload-bar {
+    height: 100%; width: 0; background: var(--accent); transition: width 0.15s var(--ease);
+}
+
 /* ---- Chips --------------------------------------------------------------- */
 .chip {
     display: inline-flex; align-items: center; gap: 0.3rem; background: var(--surface-2);

@@ -421,6 +421,9 @@ class IntakeService(
     fun storeLocalBytes(objectPath: String, bytes: ByteArray) =
         storage.writeLocalBytes(objectPath, bytes)
 
+    /** Local-dev byte source backing GET /api/intake/dev/download (mirrors [storeLocalBytes]). */
+    fun localFile(objectPath: String): java.nio.file.Path? = storage.localObjectFile(objectPath)
+
     /**
      * A retrievable URL for an asset's content: its external URL for links, otherwise a short-lived
      * signed GET URL for the stored bytes. Null when there is nothing to retrieve yet.

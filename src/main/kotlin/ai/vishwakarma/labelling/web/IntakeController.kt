@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.ContentType
@@ -102,6 +103,11 @@ class IntakeController(
         model.addAttribute("relationships", Relationship.entries)
         model.addAttribute("consentStatuses", ConsentStatus.entries)
         model.addAttribute("authenticityTiers", AuthenticityTier.entries)
+        // Upload form: pickable modalities (LINK has no bytes — it uses the links form).
+        model.addAttribute(
+            "modalities",
+            AssetModality.entries.filter { it != AssetModality.LINK },
+        )
         return "intake/detail"
     }
 

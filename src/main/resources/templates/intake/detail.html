@@ -20,12 +20,76 @@
     <div class="editor-grid">
         <section class="editor-main">
 
-            <!-- Deferred: browser→GCS signed-URL uploader (collapsible inline panel). -->
-            <div class="panel" style="border-style: dashed;">
-                <h3>Add asset <span class="badge badge--draft">coming next</span></h3>
-                <p class="muted">Binary/text upload (audio, video, images, documents) uploads straight
-                    to storage via a signed URL — it ships in the next pass. For now, register external
-                    links below, or use the API. The collapsible upload panel will live here.</p>
+            <!-- Add asset — browser→GCS signed-URL upload, JS-driven (static/js/intake-upload.js).
+                 Hidden while sealed; the backend also 409s a register/re-mint on a sealed manifest. -->
+            <div class="panel" th:unless="${manifest.sealed}" id="uploadPanel"
+                 th:attr="data-subject-id=${subject.id}">
+                <details>
+                    <summary><span class="link">Add asset</span>
+                        <span class="muted">— upload audio, video, image, document, text or archive</span>
+                    </summary>
+                    <div style="margin-top:0.9rem;">
+                        <div class="dropzone" id="upDropzone">
+                            <input type="file" id="upFile" hidden/>
+                            <p class="dz-text">Drag &amp; drop a file here, or
+                                <button type="button" class="link" id="upBrowse">browse</button>.</p>
+                            <p class="dz-file muted" id="upFileName">No file selected.</p>
+                        </div>
+
+                        <div class="form" style="max-width:none; margin-top:0.9rem;">
+                            <label>Title <span class="muted">(defaults to the file name)</span>
+                                <input type="text" id="upTitle"/>
+                            </label>
+                            <div class="form-row">
+                                <label>Modality
+                                    <select id="upModality">
+                                        <option th:each="m : ${modalities}" th:value="${m}" th:text="${m}">AUDIO</option>
+                                    </select>
+                                </label>
+                                <label>Content type
+                                    <select id="upContentType">
+                                        <option th:each="ct : ${contentTypes}" th:value="${ct}" th:text="${ct}">CT</option>
+                                    </select>
+                                </label>
+                                <label>Relationship
+                                    <select id="upRelationship">
+                                        <option th:each="r : ${relationships}" th:value="${r}" th:text="${r}"
+                                                th:selected="${r.name() == 'SELF'}">REL</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <p class="muted" style="margin:0;">Derived authenticity prior:
+                                <span id="upPrior">—</span></p>
+                            <div class="form-row">
+                                <label>Consent
+                                    <select id="upConsent">
+                                        <option th:each="c : ${consentStatuses}" th:value="${c}" th:text="${c}"
+                                                th:selected="${c.name() == 'PENDING'}">CONSENT</option>
+                                    </select>
+                                </label>
+                                <label>Source name
+                                    <input type="text" id="upSourceName" placeholder="who/what produced it"/>
+                                </label>
+                            </div>
+                            <div class="form-row">
+                                <label>Capture date <input type="date" id="upCaptureDate"/></label>
+                                <label>Claimed event date <input type="date" id="upClaimedEventDate"/></label>
+                            </div>
+                            <label>Labels <span class="muted">(comma-separated)</span>
+                                <input type="text" id="upLabels" placeholder="interview, 2021"/>
+                            </label>
+                            <label>Notes <textarea id="upNotes"></textarea></label>
+
+                            <div class="upload-progress" id="upProgress" hidden>
+                                <div class="upload-track"><div class="upload-bar" id="upBar"></div></div>
+                                <span class="muted" id="upPct">0%</span>
+                            </div>
+                            <ul class="errors" id="upError" hidden></ul>
+
+                            <button type="button" id="upSubmit">Upload asset</button>
+                        </div>
+                    </div>
+                </details>
             </div>
 
             <h2>Assets <span class="muted" th:text="'(' + ${assetCount} + ')'">(0)</span></h2>
@@ -44,6 +108,9 @@
                                 <a class="btn--ghost btn--sm"
                                    th:if="${a.externalUrl != null or a.uploadStatus.name() == 'STORED'}"
                                    th:href="@{/intake/assets/{id}/preview(id=${a.id})}" target="_blank" rel="noopener">Preview</a>
+                                <button type="button" class="btn--ghost btn--sm js-retry-upload"
+                                        th:if="${!manifest.sealed and (a.uploadStatus.name() == 'AWAITING_UPLOAD' or a.uploadStatus.name() == 'FAILED')}"
+                                        th:attr="data-asset-id=${a.id}">Retry upload</button>
                                 <form th:unless="${manifest.sealed}" method="post" class="inline-form"
                                       th:action="@{/intake/assets/{id}/delete(id=${a.id})}"
                                       data-confirm="This deletes the asset record and any stored bytes. This cannot be undone."
@@ -268,5 +335,6 @@
         </aside>
     </div>
 </main>
+<script th:src="@{/js/intake-upload.js}" defer></script>
 </body>
 </html>

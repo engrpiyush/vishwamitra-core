@@ -17,8 +17,12 @@ import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.LinkRegistration
 import ai.vishwakarma.labelling.service.SubjectService
 import arrow.core.Either
+import java.nio.file.Files
 import java.time.LocalDate
+import org.springframework.core.io.FileSystemResource
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -265,6 +269,24 @@ class IntakeApiController(
     ): ResponseEntity<Any> {
         intake.storeLocalBytes(path, bytes ?: ByteArray(0))
         return ResponseEntity.ok(mapOf("status" to "ok", "bytes" to (bytes?.size ?: 0)))
+    }
+
+    /**
+     * Local-dev byte source for previews (used only when intake-bucket is blank; in prod
+     * [ai.vishwakarma.labelling.gcs.IntakeStorage.signedDownloadUrl] returns a real signed GCS URL
+     * and nothing links here). Streams the stored file inline so a browser can open it — a redirect
+     * to a `file://` URI can't be followed.
+     */
+    @GetMapping("/dev/download")
+    fun devDownload(@RequestParam path: String): ResponseEntity<Any> {
+        val file = intake.localFile(path) ?: return notFound("Object")
+        val contentType =
+            runCatching { Files.probeContentType(file) }.getOrNull() ?: "application/octet-stream"
+        val resource: Any = FileSystemResource(file)
+        return ResponseEntity.ok()
+            .contentType(MediaType.parseMediaType(contentType))
+            .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+            .body(resource)
     }
 
     // ---- helpers ----------------------------------------------------------

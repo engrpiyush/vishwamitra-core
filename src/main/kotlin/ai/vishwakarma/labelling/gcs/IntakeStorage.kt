@@ -101,7 +101,12 @@ class IntakeStorage(private val props: AppProperties) {
      * (no bucket) returns the `file://` URI of the stored bytes.
      */
     fun signedDownloadUrl(objectPath: String): String {
-        if (bucket.isBlank()) return localPath(objectPath).toUri().toString()
+        // Local dev: serve the bytes over http via the dev sink. A file:// URI can't be a redirect
+        // target (browsers block http→file://). objectPath is URL-safe ([A-Za-z0-9._/-]) so it
+        // needs
+        // no encoding — and must stay unencoded here: this URL is followed via a Spring redirect
+        // (IntakeController.preview), which would double-encode a %2F into %252F.
+        if (bucket.isBlank()) return "/api/intake/dev/download?path=$objectPath"
         val blobInfo = BlobInfo.newBuilder(BlobId.of(bucket, objectPath)).build()
         return storage()
             .signUrl(
@@ -139,5 +144,16 @@ class IntakeStorage(private val props: AppProperties) {
         Files.createDirectories(target.parent)
         Files.write(target, bytes)
         log.info("Stored intake asset locally: {}", target.toUri())
+    }
+
+    /**
+     * Local-dev only: the on-disk file for a stored object, or null if absent. Guards against path
+     * traversal — a `path` resolving outside `var/intake/` returns null rather than being read.
+     */
+    fun localObjectFile(objectPath: String): Path? {
+        val root = Path.of("var", "intake").toAbsolutePath().normalize()
+        val target = localPath(objectPath).toAbsolutePath().normalize()
+        if (!target.startsWith(root)) return null
+        return if (Files.exists(target)) target else null
     }
 }
