@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SealAction
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.gcs.IntakeStorage
 import ai.vishwakarma.labelling.gcs.SignedUpload
@@ -263,7 +264,7 @@ class IntakeServiceTest {
         seedSubject()
         seed(asset(consentStatus = ConsentStatus.PENDING, uploadStatus = AssetUploadStatus.STORED))
 
-        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai")
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
 
         assertTrue(result.errorOrNull() is DomainError.Conflict)
         assertTrue(result.errorOrNull()!!.message.contains("pending consent"))
@@ -279,7 +280,7 @@ class IntakeServiceTest {
             )
         )
 
-        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai")
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
 
         assertTrue(result.errorOrNull()!!.message.contains("not stored"))
     }
@@ -289,13 +290,120 @@ class IntakeServiceTest {
         seedSubject()
         seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
 
-        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai")
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
 
         val sealed = result.valueOrNull()
         assertTrue(sealed != null)
         assertTrue(sealed.sealed)
         assertEquals("reviewer@vishwakarma.ai", sealed.sealedBy)
         assertTrue(sealed.sealBlockers.isEmpty())
+    }
+
+    // ---- unsealManifest -------------------------------------------------------
+
+    @Test
+    fun `unsealManifest reverses a sealed manifest`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+
+        val result = service.unsealManifest("s1", "admin@vishwakarma.ai", "reopening for edits")
+
+        val unsealed = result.valueOrNull()
+        assertTrue(unsealed != null)
+        assertTrue(!unsealed.sealed)
+        assertEquals(null, unsealed.sealedBy)
+        assertEquals(null, unsealed.sealedAt)
+    }
+
+    @Test
+    fun `unsealManifest refuses when the manifest is not sealed`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+
+        val result = service.unsealManifest("s1", "admin@vishwakarma.ai", "reopening for edits")
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
+        assertTrue(result.errorOrNull()!!.message.contains("not sealed"))
+    }
+
+    @Test
+    fun `seal and unseal both require a non-blank note`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+
+        val sealResult = service.sealManifest("s1", "reviewer@vishwakarma.ai", "  ")
+        assertTrue(sealResult.errorOrNull() is DomainError.Invalid)
+
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+        val unsealResult = service.unsealManifest("s1", "admin@vishwakarma.ai", "")
+        assertTrue(unsealResult.errorOrNull() is DomainError.Invalid)
+    }
+
+    @Test
+    fun `seal and unseal append to the audit history with actor and note`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "all reviewed")
+        val unsealed =
+            service
+                .unsealManifest("s1", "admin@vishwakarma.ai", "subject wants edits")
+                .valueOrNull()!!
+
+        assertEquals(2, unsealed.sealEvents.size)
+        assertEquals(SealAction.SEAL, unsealed.sealEvents[0].action)
+        assertEquals("reviewer@vishwakarma.ai", unsealed.sealEvents[0].actor)
+        assertEquals("all reviewed", unsealed.sealEvents[0].note)
+        assertEquals(SealAction.UNSEAL, unsealed.sealEvents[1].action)
+        assertEquals("admin@vishwakarma.ai", unsealed.sealEvents[1].actor)
+        assertEquals("subject wants edits", unsealed.sealEvents[1].note)
+        // History survives a recompute (any asset read/change path).
+        assertEquals(2, service.manifest("s1").sealEvents.size)
+    }
+
+    @Test
+    fun `a sealed manifest blocks asset mutations until unsealed`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+
+        val update = service.updateAsset("a1", AssetPatch(title = "new title"))
+        assertTrue(update.errorOrNull() is DomainError.Conflict)
+        assertTrue(update.errorOrNull()!!.message.contains("sealed"))
+
+        val delete = service.deleteAsset("a1")
+        assertTrue(delete.errorOrNull() is DomainError.Conflict)
+
+        val link =
+            service.registerLink(
+                "s1",
+                "reviewer@vishwakarma.ai",
+                LinkRegistration(
+                    title = "GH",
+                    contentType = ContentType.GITHUB,
+                    externalUrl = "https://github.com/x",
+                ),
+            )
+        assertTrue(link.errorOrNull() is DomainError.Conflict)
+
+        // Unseal reopens editing.
+        service.unsealManifest("s1", "admin@vishwakarma.ai", "reopening")
+        assertTrue(service.updateAsset("a1", AssetPatch(title = "new title")).valueOrNull() != null)
+    }
+
+    @Test
+    fun `unsealManifest is refused permanently once Stage 2 has started`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+        // Simulate the future Stage 2 consumer stamping the manifest.
+        manifests.store["s1"] = manifests.store["s1"]!!.copy(stage2StartedAt = Instant.now())
+
+        val result = service.unsealManifest("s1", "admin@vishwakarma.ai", "please reopen")
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
+        assertTrue(result.errorOrNull()!!.message.contains("Stage 2"))
     }
 
     // ---- completeAsset size cap -------------------------------------------

@@ -44,7 +44,7 @@
                                 <a class="btn--ghost btn--sm"
                                    th:if="${a.externalUrl != null or a.uploadStatus.name() == 'STORED'}"
                                    th:href="@{/intake/assets/{id}/preview(id=${a.id})}" target="_blank" rel="noopener">Preview</a>
-                                <form method="post" class="inline-form"
+                                <form th:unless="${manifest.sealed}" method="post" class="inline-form"
                                       th:action="@{/intake/assets/{id}/delete(id=${a.id})}"
                                       data-confirm="This deletes the asset record and any stored bytes. This cannot be undone."
                                       data-confirm-title="Delete this asset?" data-confirm-ok="Delete" data-confirm-danger>
@@ -66,7 +66,7 @@
                                 <code class="copyable" th:text="${a.externalUrl}">url</code>
                             </p>
 
-                            <details>
+                            <details th:unless="${manifest.sealed}">
                                 <summary><span class="link">Edit</span></summary>
                                 <form method="post" th:action="@{/intake/assets/{id}/edit(id=${a.id})}" class="form" style="max-width:none; margin-top:0.6rem;">
                                     <label>Title
@@ -126,8 +126,8 @@
                 </div>
             </th:block>
 
-            <!-- Add external link (no bytes) -->
-            <div class="panel" style="margin-top:1.5rem;">
+            <!-- Add external link (no bytes) — hidden while sealed (backend also rejects). -->
+            <div class="panel" style="margin-top:1.5rem;" th:unless="${manifest.sealed}">
                 <h3>Add external link</h3>
                 <p class="muted">LinkedIn / GitHub / website / social — registered as a PUBLIC_PROFILE
                     asset with no stored bytes.</p>
@@ -194,19 +194,44 @@
                         by <span th:text="${manifest.sealedBy ?: 'unknown'}">who</span>,
                         <time class="js-ts" th:datetime="${manifest.sealedAt}" th:text="${manifest.sealedAt}">when</time>
                     </p>
+                    <p class="muted" th:if="${manifest.stage2StartedAt != null}" style="margin:0.4rem 0 0;">
+                        <span class="badge badge--danger">LOCKED</span> Stage 2 started — the seal is permanent.
+                    </p>
+                    <form sec:authorize="hasRole('ADMIN')" th:if="${manifest.stage2StartedAt == null}" method="post"
+                          th:action="@{/intake/{id}/unseal(id=${subject.id})}" class="form" style="margin-top:0.8rem; max-width:none;"
+                          data-confirm="Unsealing reopens the manifest and its assets for editing; it will need a fresh seal before the Stage 2 handoff."
+                          data-confirm-title="Unseal this manifest?" data-confirm-ok="Unseal">
+                        <label>Unseal reason <span class="muted">(required — recorded in the audit history)</span>
+                            <textarea name="note" required placeholder="e.g. Subject asked to replace the resume PDF."></textarea>
+                        </label>
+                        <button type="submit" class="btn--ghost btn--sm">Unseal (admin)</button>
+                    </form>
                 </div>
 
                 <div th:unless="${manifest.sealed}" style="margin-top:1rem;">
                     <ul class="errors" th:if="${!manifest.sealBlockers.isEmpty()}">
                         <li th:each="b : ${manifest.sealBlockers}" th:text="${b}">blocker</li>
                     </ul>
-                    <form method="post" th:action="@{/intake/{id}/seal(id=${subject.id})}" class="inline-form">
-                        <button type="submit" th:disabled="${!manifest.sealBlockers.isEmpty()}"
-                                th:title="${manifest.sealBlockers.isEmpty()} ? 'Ready to seal' : ${#strings.listJoin(manifest.sealBlockers, '; ')}">
-                            Seal manifest
-                        </button>
-                    </form>
+                    <a th:if="${manifest.sealBlockers.isEmpty()}" class="btn"
+                       th:href="@{/intake/{id}/seal(id=${subject.id})}" title="Review and seal">Review &amp; seal…</a>
+                    <button th:unless="${manifest.sealBlockers.isEmpty()}" type="button" disabled
+                            th:title="${#strings.listJoin(manifest.sealBlockers, '; ')}">
+                        Seal manifest
+                    </button>
                 </div>
+
+                <details th:if="${!manifest.sealEvents.isEmpty()}" style="margin-top:0.8rem;">
+                    <summary><span class="link" th:text="'Seal history (' + ${manifest.sealEvents.size()} + ')'">Seal history</span></summary>
+                    <ul class="comments" style="margin-top:0.5rem;">
+                        <li th:each="e : ${manifest.sealEvents}">
+                            <span class="badge" th:classappend="${e.action.name() == 'SEAL'} ? 'badge--success' : 'badge--warning'"
+                                  th:text="${e.action}">SEAL</span>
+                            <span th:text="${e.actor ?: 'unknown'}">who</span> ·
+                            <time class="js-ts" th:datetime="${e.at}" th:text="${e.at}">when</time>
+                            <p class="muted" style="margin:0.15rem 0 0;" th:text="${e.note}">note</p>
+                        </li>
+                    </ul>
+                </details>
 
                 <form method="post" th:action="@{/intake/{id}/reconcile(id=${subject.id})}" class="inline-form" style="margin-top:0.6rem;">
                     <button type="submit" class="btn--ghost btn--sm">Reconcile stuck uploads</button>

@@ -237,9 +237,64 @@ class IntakeController(
     }
 
     // ---- Manifest / reconcile --------------------------------------------
+    /**
+     * Seal review page: a read-only preview of everything registered for the subject, with
+     * per-asset confirmation checkboxes and a global approval checkbox (both UI-only — native
+     * `required` validation), plus the mandatory note the service records in the audit history.
+     */
+    @GetMapping("/{id}/seal")
+    fun sealReview(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
+        val subject =
+            subjectService.get(id)
+                ?: run {
+                    ra.addFlashAttribute("error", "Subject not found")
+                    return "redirect:/intake"
+                }
+        val manifest = intake.manifest(id)
+        if (manifest.sealed) {
+            ra.addFlashAttribute("error", "Manifest is already sealed")
+            return "redirect:/intake/$id"
+        }
+        if (manifest.sealBlockers.isNotEmpty()) {
+            ra.addFlashAttribute(
+                "error",
+                "Cannot seal yet: ${manifest.sealBlockers.joinToString("; ")}",
+            )
+            return "redirect:/intake/$id"
+        }
+        val assets = intake.listAssets(id)
+        model.addAttribute("pageTitle", "Seal · ${subject.displayName}")
+        model.addAttribute("subject", subject)
+        model.addAttribute("manifest", manifest)
+        model.addAttribute(
+            "assetsByClass",
+            SourceClass.entries
+                .associateWith { sc -> assets.filter { it.sourceClass == sc } }
+                .filterValues { it.isNotEmpty() },
+        )
+        model.addAttribute("assetCount", assets.size)
+        return "intake/seal"
+    }
+
     @PostMapping("/{id}/seal")
-    fun seal(@PathVariable id: String, ra: RedirectAttributes): String {
-        intake.sealManifest(id, actor()).notify(ra, "Manifest sealed")
+    fun seal(
+        @PathVariable id: String,
+        @RequestParam(required = false) note: String?,
+        ra: RedirectAttributes,
+    ): String {
+        intake.sealManifest(id, actor(), note ?: "").notify(ra, "Manifest sealed")
+        return "redirect:/intake/$id"
+    }
+
+    /** Reverse a seal — ADMIN-only (reviewers can seal but not unseal). Note is mandatory. */
+    @PostMapping("/{id}/unseal")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun unseal(
+        @PathVariable id: String,
+        @RequestParam(required = false) note: String?,
+        ra: RedirectAttributes,
+    ): String {
+        intake.unsealManifest(id, actor(), note ?: "").notify(ra, "Manifest unsealed")
         return "redirect:/intake/$id"
     }
 

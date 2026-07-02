@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Seal manifest
+            <span class="muted" th:text="'· ' + ${subject.displayName}">· name</span>
+        </h1>
+        <a th:href="@{/intake/{id}(id=${subject.id})}" class="muted">&larr; back to subject</a>
+    </div>
+    <p class="muted">Review everything registered for this subject. Sealing marks the intake
+        complete and hands the manifest to Stage 2 — confirm each asset, approve the whole set, and
+        leave a note for the audit trail. Once sealed, assets are locked until an admin unseals.</p>
+
+    <form method="post" th:action="@{/intake/{id}/seal(id=${subject.id})}" class="form" style="max-width:none;"
+          data-confirm="Sealing freezes this subject's assets and marks the manifest ready for Stage 2. Only an admin can unseal."
+          data-confirm-title="Seal this manifest?" data-confirm-ok="Seal">
+
+        <div class="panel">
+            <h3>Inventory <span class="muted" th:text="'(' + ${assetCount} + ' assets)'">(0)</span></h3>
+            <div class="row-actions" style="margin-bottom:0.75rem;">
+                <span th:each="c : ${manifest.consentSummary}" class="badge"
+                      th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(c.key),'_','-')}"
+                      th:text="${c.value + ' ' + #strings.toLowerCase(c.key)}">2 granted</span>
+                <span th:each="m : ${manifest.countsByModality}" class="badge badge--muted"
+                      th:text="${m.value + ' ' + #strings.toLowerCase(m.key)}">1 audio</span>
+            </div>
+
+            <th:block th:each="entry : ${assetsByClass}">
+                <h3 class="muted" th:text="${#strings.replace(entry.key, '_', ' ')}">SOURCE CLASS</h3>
+                <div class="turns" style="margin-bottom:1rem;">
+                    <div class="turn" th:each="a : ${entry.value}">
+                        <div class="turn-body">
+                            <label class="inline" style="display:flex; flex-direction:row; align-items:center; gap:0.6rem;">
+                                <!-- UI-only confirmation: required (blocks submit) but unnamed (never posted). -->
+                                <input type="checkbox" required
+                                       th:title="'Confirm ' + ${a.title}"/>
+                                <strong th:text="${a.title}">Asset title</strong>
+                            </label>
+                            <div class="row-actions">
+                                <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(a.modality)}" th:text="${a.modality}">MODALITY</span>
+                                <span class="badge" th:text="${a.contentType}">CONTENT_TYPE</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(a.consentStatus),'_','-')}" th:text="${a.consentStatus}">CONSENT</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(a.authenticityPrior)}" th:text="'prior ' + ${a.authenticityPrior}">prior</span>
+                                <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(a.uploadStatus),'_','-')}" th:text="${a.uploadStatus}">STATUS</span>
+                            </div>
+                            <p class="muted" th:if="${a.externalUrl != null}" style="margin:0;">
+                                <code th:text="${a.externalUrl}">url</code>
+                            </p>
+                            <p class="muted" th:if="${a.sourceName != null}" style="margin:0;"
+                               th:text="'Source: ' + ${a.sourceName}">source</p>
+                        </div>
+                    </div>
+                </div>
+            </th:block>
+        </div>
+
+        <div class="panel">
+            <h3>Confirmation</h3>
+            <label class="inline" style="display:flex; flex-direction:row; align-items:center; gap:0.6rem;">
+                <input type="checkbox" required/>
+                <span>I confirm and approve the content above: every asset is correctly classified,
+                    consent is resolved, and this inventory is complete for the Stage 2 handoff.</span>
+            </label>
+            <label style="margin-top:0.75rem;">Seal note <span class="muted">(required — recorded in the audit history)</span>
+                <textarea name="note" required
+                          placeholder="e.g. Reviewed all 12 assets with the subject on 2026-07-02; consent forms archived."></textarea>
+            </label>
+        </div>
+
+        <div class="row-actions">
+            <button type="submit">Seal manifest</button>
+            <a th:href="@{/intake/{id}(id=${subject.id})}" class="link">Cancel</a>
+        </div>
+    </form>
+</main>
+</body>
+</html>

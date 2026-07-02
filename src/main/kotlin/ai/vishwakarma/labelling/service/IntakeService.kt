@@ -9,6 +9,8 @@ import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SealAction
+import ai.vishwakarma.labelling.domain.SealEvent
 import ai.vishwakarma.labelling.domain.defaultPrior
 import ai.vishwakarma.labelling.domain.isAllowedFilename
 import ai.vishwakarma.labelling.domain.isValidExternalUrl
@@ -115,6 +117,9 @@ class IntakeService(
     ): Either<DomainError, AssetUpload> {
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
+        sealedGuard(subjectId)?.let {
+            return it.left()
+        }
         if (reg.title.isBlank()) return DomainError.Invalid("Asset title is required").left()
         if (reg.modality == AssetModality.LINK)
             return DomainError.Invalid("Use the links endpoint for LINK assets").left()
@@ -210,6 +215,9 @@ class IntakeService(
      */
     fun reissueUploadUrl(id: String): Either<DomainError, AssetUpload> {
         val asset = assets.findById(id) ?: return DomainError.NotFound("Asset $id not found").left()
+        sealedGuard(asset.subjectId)?.let {
+            return it.left()
+        }
         if (asset.modality == AssetModality.LINK)
             return DomainError.Invalid("LINK assets have no upload URL").left()
         if (asset.uploadStatus == AssetUploadStatus.STORED)
@@ -308,6 +316,9 @@ class IntakeService(
     ): Either<DomainError, Asset> {
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
+        sealedGuard(subjectId)?.let {
+            return it.left()
+        }
         if (reg.title.isBlank()) return DomainError.Invalid("Link title is required").left()
         if (!isValidExternalUrl(reg.externalUrl))
             return DomainError.Invalid("externalUrl must be a valid http(s) URL with a host").left()
@@ -345,6 +356,9 @@ class IntakeService(
 
     fun updateAsset(id: String, patch: AssetPatch): Either<DomainError, Asset> {
         val asset = assets.findById(id) ?: return DomainError.NotFound("Asset $id not found").left()
+        sealedGuard(asset.subjectId)?.let {
+            return it.left()
+        }
         val contentType = patch.contentType ?: asset.contentType
         val relationship = patch.relationship ?: asset.relationship
         // Prior: an explicit value overrides; otherwise re-derive only while not already
@@ -383,6 +397,9 @@ class IntakeService(
 
     fun deleteAsset(id: String): Either<DomainError, Unit> {
         val asset = assets.findById(id) ?: return DomainError.NotFound("Asset $id not found").left()
+        sealedGuard(asset.subjectId)?.let {
+            return it.left()
+        }
         asset.storedObjectPath?.let { storage.deleteObject(it) }
         assets.delete(id)
         recomputeManifest(asset.subjectId)
@@ -422,17 +439,82 @@ class IntakeService(
     /** The live manifest (counts recomputed from the current asset set). */
     fun manifest(subjectId: String): IntakeManifest = recomputeManifest(subjectId)
 
-    fun sealManifest(subjectId: String, actor: String?): Either<DomainError, IntakeManifest> {
+    /**
+     * Seal the manifest for the Stage 2 handoff. Gated by [IntakeManifest.sealBlockers]; requires a
+     * mandatory operator [note] (the confirmation justification), audited in
+     * [IntakeManifest.sealEvents].
+     */
+    fun sealManifest(
+        subjectId: String,
+        actor: String?,
+        note: String,
+    ): Either<DomainError, IntakeManifest> {
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
+        if (note.isBlank())
+            return DomainError.Invalid("A note is required when sealing a manifest").left()
         val current = recomputeManifest(subjectId)
+        if (current.sealed) return DomainError.Conflict("Manifest is already sealed").left()
         if (current.sealBlockers.isNotEmpty())
             return DomainError.Conflict("Cannot seal: ${current.sealBlockers.joinToString("; ")}")
                 .left()
         val now = Instant.now()
-        val sealed = current.copy(sealed = true, sealedBy = actor, sealedAt = now, updatedAt = now)
+        val sealed =
+            current.copy(
+                sealed = true,
+                sealEvents =
+                    current.sealEvents + SealEvent(SealAction.SEAL, actor, now, note.trim()),
+                updatedAt = now,
+            )
         manifests.save(sealed)
         return sealed.right()
+    }
+
+    /**
+     * Reverse a seal — reopens the manifest (and its assets) for editing and a later re-seal.
+     * Restricted to ADMIN at the web layer (seal itself is REVIEWER+). Requires a mandatory [note]
+     * (the unseal reason), audited in [IntakeManifest.sealEvents]. Refuses (409) if the manifest is
+     * not currently sealed, or — permanently — once Stage 2 has started consuming it.
+     */
+    fun unsealManifest(
+        subjectId: String,
+        actor: String?,
+        note: String,
+    ): Either<DomainError, IntakeManifest> {
+        subjects.findById(subjectId)
+            ?: return DomainError.NotFound("Subject $subjectId not found").left()
+        if (note.isBlank())
+            return DomainError.Invalid("A note is required when unsealing a manifest").left()
+        val current = recomputeManifest(subjectId)
+        if (!current.sealed) return DomainError.Conflict("Manifest is not sealed").left()
+        if (current.stage2StartedAt != null)
+            return DomainError.Conflict(
+                    "Manifest is locked: Stage 2 started consuming it at " +
+                        "${current.stage2StartedAt} — the seal is permanent"
+                )
+                .left()
+        val now = Instant.now()
+        val unsealed =
+            current.copy(
+                sealed = false,
+                sealEvents =
+                    current.sealEvents + SealEvent(SealAction.UNSEAL, actor, now, note.trim()),
+                updatedAt = now,
+            )
+        manifests.save(unsealed)
+        return unsealed.right()
+    }
+
+    /**
+     * A sealed manifest freezes its asset inventory: additions, edits, deletions and upload-URL
+     * re-mints are refused until an ADMIN unseals. Subject purge (delete-on-request) intentionally
+     * bypasses this — consent withdrawal must always be honorable.
+     */
+    private fun sealedGuard(subjectId: String): DomainError? {
+        val manifest = manifests.findBySubject(subjectId) ?: return null
+        return if (manifest.sealed)
+            DomainError.Conflict("Manifest is sealed — an ADMIN must unseal it before editing")
+        else null
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -448,10 +530,11 @@ class IntakeService(
                 countsByContentType = all.groupingBy { it.contentType.name }.eachCount(),
                 consentSummary = all.groupingBy { it.consentStatus.name }.eachCount(),
                 sealBlockers = computeSealBlockers(all),
-                // Preserve any existing seal; the seal action re-stamps it explicitly.
+                // Preserve seal state, its audit history, and the Stage 2 lock; only the explicit
+                // seal/unseal actions ever change them.
                 sealed = existing?.sealed ?: false,
-                sealedBy = existing?.sealedBy,
-                sealedAt = existing?.sealedAt,
+                sealEvents = existing?.sealEvents ?: emptyList(),
+                stage2StartedAt = existing?.stage2StartedAt,
                 updatedAt = Instant.now(),
             )
         manifests.save(manifest)

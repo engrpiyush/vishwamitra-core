@@ -1,6 +1,9 @@
 package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.IntakeManifest
+import ai.vishwakarma.labelling.domain.SealAction
+import ai.vishwakarma.labelling.domain.SealEvent
+import com.google.cloud.Timestamp
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
 import java.time.Instant
@@ -33,8 +36,16 @@ class IntakeManifestRepository(private val db: Firestore) {
             "consentSummary" to consentSummary,
             "sealBlockers" to sealBlockers,
             "sealed" to sealed,
-            "sealedBy" to sealedBy,
-            "sealedAt" to sealedAt.toTimestamp(),
+            "sealEvents" to
+                sealEvents.map {
+                    mapOf(
+                        "action" to it.action.name,
+                        "actor" to it.actor,
+                        "at" to it.at.toTimestamp(),
+                        "note" to it.note,
+                    )
+                },
+            "stage2StartedAt" to stage2StartedAt.toTimestamp(),
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
         )
 
@@ -49,10 +60,45 @@ class IntakeManifestRepository(private val db: Firestore) {
             consentSummary = intMap("consentSummary"),
             sealBlockers = (get("sealBlockers") as? List<String>) ?: emptyList(),
             sealed = getBoolean("sealed") ?: false,
-            sealedBy = getString("sealedBy"),
-            sealedAt = instant("sealedAt"),
+            sealEvents = sealEvents(),
+            stage2StartedAt = instant("stage2StartedAt"),
             updatedAt = instant("updatedAt"),
         )
+
+    /**
+     * Read the seal-event history. Tolerant: entries with an unknown action or missing timestamp
+     * are dropped. Legacy docs (pre-history schema) stored a single sealedBy/sealedAt pair — when
+     * the history field is absent but the doc is sealed, synthesize the equivalent SEAL event so
+     * the audit trail survives the schema change.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun DocumentSnapshot.sealEvents(): List<SealEvent> {
+        val raw = get("sealEvents") as? List<Map<String, Any?>>
+        if (raw != null)
+            return raw.mapNotNull { e ->
+                val action = SealAction.fromOrNull(e["action"] as? String) ?: return@mapNotNull null
+                val at = (e["at"] as? Timestamp)?.toDate()?.toInstant() ?: return@mapNotNull null
+                SealEvent(
+                    action = action,
+                    actor = e["actor"] as? String,
+                    at = at,
+                    note = (e["note"] as? String) ?: "",
+                )
+            }
+        // Legacy migration: pre-history sealed docs carry sealedBy/sealedAt at the top level.
+        if (getBoolean("sealed") == true) {
+            val at = instant("sealedAt") ?: return emptyList()
+            return listOf(
+                SealEvent(
+                    action = SealAction.SEAL,
+                    actor = getString("sealedBy"),
+                    at = at,
+                    note = "(migrated from legacy sealedBy/sealedAt)",
+                )
+            )
+        }
+        return emptyList()
+    }
 
     /** Firestore stores integers as Long; coerce a count map's values back to Int. */
     @Suppress("UNCHECKED_CAST")

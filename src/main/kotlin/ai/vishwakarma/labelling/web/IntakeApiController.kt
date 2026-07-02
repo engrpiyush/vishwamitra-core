@@ -203,9 +203,24 @@ class IntakeApiController(
     @GetMapping("/subjects/{id}/manifest")
     fun manifest(@PathVariable id: String) = ResponseEntity.ok(intake.manifest(id))
 
+    /** Seal for the Stage 2 handoff. Body: `{"note": "..."}` — the note is mandatory (400). */
     @PostMapping("/subjects/{id}/manifest/seal")
-    fun sealManifest(@PathVariable id: String): ResponseEntity<Any> =
-        intake.sealManifest(id, actor()).toResponse()
+    fun sealManifest(
+        @PathVariable id: String,
+        @RequestBody(required = false) body: SealNoteRequest?,
+    ): ResponseEntity<Any> = intake.sealManifest(id, actor(), body?.note ?: "").toResponse()
+
+    /**
+     * Reverse a seal. ADMIN-only (seal is REVIEWER+); reopens the manifest for editing. Body:
+     * `{"note": "..."}` — the note is mandatory (400). Refused permanently once Stage 2 has started
+     * consuming the manifest (409).
+     */
+    @PostMapping("/subjects/{id}/manifest/unseal")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun unsealManifest(
+        @PathVariable id: String,
+        @RequestBody(required = false) body: SealNoteRequest?,
+    ): ResponseEntity<Any> = intake.unsealManifest(id, actor(), body?.note ?: "").toResponse()
 
     // ---- Taxonomy (drives the future UI's dropdowns) ----------------------
     @GetMapping("/taxonomy")
@@ -327,6 +342,9 @@ class IntakeApiController(
         val labels: String? = null,
         val notes: String? = null,
     )
+
+    /** Operator note accompanying a seal/unseal action (mandatory at the service layer). */
+    data class SealNoteRequest(val note: String? = null)
 
     data class AssetPatchRequest(
         val title: String? = null,
