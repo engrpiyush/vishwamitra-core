@@ -14,6 +14,7 @@ data class AppProperties(
     val auth: Auth = Auth(),
     val comingSoon: ComingSoon = ComingSoon(),
     val intake: Intake = Intake(),
+    val stage2: Stage2 = Stage2(),
 ) {
     data class ComingSoon(
         /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
@@ -29,6 +30,12 @@ data class AppProperties(
         val servingBucket: String = "",
         /** Raw Stage 1 intake assets. Blank → IntakeStorage falls back to local disk. */
         val intakeBucket: String = "",
+        /**
+         * Vertex location for Gemini generateContent. Blank → [region]. Set to "global" to reach
+         * models not served regionally (e.g. gemini-2.5-pro is not in asia-southeast1) — trade-off:
+         * prompts are then processed outside the region.
+         */
+        val geminiLocation: String = "",
     )
 
     data class Tuning(
@@ -63,5 +70,24 @@ data class AppProperties(
          * How long an asset may sit in AWAITING_UPLOAD/FAILED before reconciliation gives up on it.
          */
         val staleUploadHours: Long = 24,
+    )
+
+    data class Stage2(
+        /** STT batchRecognize writes diarized transcripts here. Blank in dev (dry-run only). */
+        val transcriptsBucket: String = "",
+        /** STT v2 recognition model; diarization support varies by model and region. */
+        val sttModel: String = "long",
+        val sttLanguage: String = "en-US",
+        /** Diarization upper bound (self-interview 1–2 speakers; endorser calls 2+). */
+        val maxSpeakers: Int = 6,
+        /**
+         * Assumed source parameters when a container needs explicitDecodingConfig (AAC family — see
+         * SpeechToTextTranscriber). 48kHz stereo matches phone/screen recorders; override per
+         * environment if a different capture pipeline dominates.
+         */
+        val explicitSampleRateHertz: Int = 48000,
+        val explicitChannelCount: Int = 2,
+        /** Dev/test: return a canned diarized transcript instead of calling Speech-to-Text. */
+        val dryRun: Boolean = false,
     )
 }

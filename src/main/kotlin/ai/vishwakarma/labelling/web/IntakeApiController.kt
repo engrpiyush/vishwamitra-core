@@ -15,6 +15,7 @@ import ai.vishwakarma.labelling.service.AssetRegistration
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.LinkRegistration
+import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
 import arrow.core.Either
 import java.nio.file.Files
@@ -47,6 +48,7 @@ import org.springframework.web.bind.annotation.RestController
 class IntakeApiController(
     private val subjectService: SubjectService,
     private val intake: IntakeService,
+    private val stage2: Stage2Service,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -81,7 +83,9 @@ class IntakeApiController(
 
     @DeleteMapping("/subjects/{id}")
     fun deleteSubject(@PathVariable id: String): ResponseEntity<Any> {
-        // Purge assets (bytes + records) + manifest first, then the subject doc.
+        // Purge derived Stage 2 data (claims + jobs), assets (bytes + records) and the manifest
+        // first, then the subject doc — delete-on-request must reach everything derived.
+        stage2.purgeSubject(id)
         intake.purgeSubject(id)
         return subjectService.delete(id).toResponse()
     }

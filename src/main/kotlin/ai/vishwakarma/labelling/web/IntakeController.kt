@@ -14,6 +14,7 @@ import ai.vishwakarma.labelling.service.AssetPatch
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.LinkRegistration
+import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
 import java.time.LocalDate
 import org.springframework.security.access.prepost.PreAuthorize
@@ -38,6 +39,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes
 class IntakeController(
     private val subjectService: SubjectService,
     private val intake: IntakeService,
+    private val stage2: Stage2Service,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -128,7 +130,9 @@ class IntakeController(
 
     @PostMapping("/{id}/delete")
     fun deleteSubject(@PathVariable id: String, ra: RedirectAttributes): String {
-        // Purge assets (bytes + records) + manifest first, then the subject doc.
+        // Purge derived Stage 2 data (claims + jobs), assets (bytes + records) and the manifest
+        // first, then the subject doc — delete-on-request must reach everything derived.
+        stage2.purgeSubject(id)
         intake.purgeSubject(id)
         subjectService
             .delete(id)

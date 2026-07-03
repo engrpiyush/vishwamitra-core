@@ -46,12 +46,27 @@ app:
     # Raw Stage 1 intake assets (binary, possibly multi-GB A/V). Separate bucket/lifecycle from
     # the training JSONL. Browser uploads directly via V4 signed URLs (see IntakeStorage).
     intake-bucket: ${INTAKE_BUCKET:va-ai-intake-vishwakarma-ai-poc}
+    # Vertex location for Gemini calls. "global" reaches models not served regionally — Neo is a
+    # POC and wants the deepest judgment available (gemini-2.5-pro is not in asia-southeast1), so
+    # global is the default. Set blank/region to pin processing in-region.
+    gemini-location: ${GEMINI_LOCATION:global}
   intake:
     max-asset-size-bytes: ${INTAKE_MAX_ASSET_SIZE_BYTES:5368709120} # 5GB
     stale-upload-hours: ${INTAKE_STALE_UPLOAD_HOURS:24}
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}
+  # Stage 2 (A/V → Claims): managed transcription + Claude claim extraction.
+  stage2:
+    # STT batchRecognize writes diarized transcripts here (separate lifecycle from intake media).
+    transcripts-bucket: ${TRANSCRIPTS_BUCKET:va-ai-transcripts-vishwakarma-ai-poc}
+    # Diarization support varies by model and region; see SpeechToTextTranscriber.
+    stt-model: ${STAGE2_STT_MODEL:long}
+    stt-language: ${STAGE2_STT_LANGUAGE:en-US}
+    max-speakers: ${STAGE2_MAX_SPEAKERS:6}
+    # Assumed source parameters for containers that need explicitDecodingConfig (AAC family).
+    explicit-sample-rate-hertz: ${STAGE2_EXPLICIT_SAMPLE_RATE_HERTZ:48000}
+    explicit-channel-count: ${STAGE2_EXPLICIT_CHANNEL_COUNT:2}
   # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
   coming-soon:
     cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}
@@ -76,6 +91,9 @@ app:
   tuning:
     enabled: true     # allowed locally, but…
     dry-run: true     # …simulated — never calls Vertex / spends credits in dev
+  stage2:
+    transcripts-bucket: ""   # no GCP locally
+    dry-run: true            # canned diarized transcript — never calls Speech-to-Text in dev
 
 ---
 # Cloud Run production.
@@ -100,3 +118,5 @@ app:
     dev-bypass: false
   tuning:
     enabled: true   # real Vertex tuningJobs are submitted in prod
+  stage2:
+    dry-run: false  # real Speech-to-Text batchRecognize in prod

@@ -43,39 +43,6 @@ data class Turn(
     val resultJson: String? = null,
 )
 
-/**
- * The kind of Claim an example exercises — the Neo spine object's type. An advocate answer is built
- * around one of these.
- */
-enum class ClaimType {
-    IDENTITY,
-    EPISODE,
-    VALUE,
-    WEAKNESS,
-    SKILL;
-
-    companion object {
-        fun fromOrNull(raw: String?): ClaimType? =
-            raw?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { runCatching { valueOf(it.uppercase()) }.getOrNull() }
-    }
-}
-
-/** How well-corroborated the underlying Claim is; drives answer confidence (assertive → hedged). */
-enum class AuthenticityTier {
-    HIGH,
-    MEDIUM,
-    LOW;
-
-    companion object {
-        fun fromOrNull(raw: String?): AuthenticityTier? =
-            raw?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { runCatching { valueOf(it.uppercase()) }.getOrNull() }
-    }
-}
-
 /** Split a comma- (or newline-) separated label string into clean, de-duplicated labels. */
 fun splitLabels(raw: String?): List<String> =
     raw?.split(',', '\n')?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()

@@ -28,24 +28,42 @@ class GeminiDrafting(
     override fun available(): Boolean =
         providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false
 
-    private fun generate(prompt: String): String {
+    /**
+     * One-shot text completion against the configured gemini provider row (Vertex, ADC).
+     * [maxTokens] caps the response via generationConfig; null keeps the model default. Gemini 2.5
+     * models spend "thinking" tokens from the same budget — an unbounded (dynamic) thinker can
+     * consume nearly all of it before emitting a single output character (observed live 2026-07-04:
+     * JSON truncated mid-first object). [thinkingBudget] caps that spend so output space is
+     * guaranteed.
+     */
+    fun generate(prompt: String, maxTokens: Int? = null, thinkingBudget: Int? = null): String {
         val cfg = providers.get(id) ?: error("gemini not configured")
         val model = cfg.model.ifBlank { error("gemini model not set") }
-        val region = props.gcp.region
+        // "global" reaches models not served regionally (e.g. gemini-2.5-pro); blank = in-region.
+        val location = props.gcp.geminiLocation.ifBlank { props.gcp.region }
         val token =
             GoogleCredentials.getApplicationDefault()
                 .createScoped("https://www.googleapis.com/auth/cloud-platform")
                 .also { it.refreshIfExpired() }
                 .accessToken
                 .tokenValue
+        val host =
+            if (location == "global") "aiplatform.googleapis.com"
+            else "$location-aiplatform.googleapis.com"
         val url =
-            "https://$region-aiplatform.googleapis.com/v1/projects/${props.gcp.projectId}" +
-                "/locations/$region/publishers/google/models/$model:generateContent"
-        val body =
-            mapOf(
-                "contents" to
-                    listOf(mapOf("role" to "user", "parts" to listOf(mapOf("text" to prompt)))),
+            "https://$host/v1/projects/${props.gcp.projectId}" +
+                "/locations/$location/publishers/google/models/$model:generateContent"
+        val body = buildMap {
+            put(
+                "contents",
+                listOf(mapOf("role" to "user", "parts" to listOf(mapOf("text" to prompt)))),
             )
+            val generationConfig = buildMap {
+                maxTokens?.let { put("maxOutputTokens", it) }
+                thinkingBudget?.let { put("thinkingConfig", mapOf("thinkingBudget" to it)) }
+            }
+            if (generationConfig.isNotEmpty()) put("generationConfig", generationConfig)
+        }
         val response =
             rest
                 .post()

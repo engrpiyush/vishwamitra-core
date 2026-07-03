@@ -264,6 +264,9 @@
                     <p class="muted" th:if="${manifest.stage2StartedAt != null}" style="margin:0.4rem 0 0;">
                         <span class="badge badge--danger">LOCKED</span> Stage 2 started — the seal is permanent.
                     </p>
+                    <a class="btn" style="margin-top:0.8rem;"
+                       th:href="@{/intake/{id}/stage2(id=${subject.id})}"
+                       th:text="${manifest.stage2StartedAt != null} ? 'Stage 2 progress →' : 'Run Stage 2 →'">Stage 2 →</a>
                     <form sec:authorize="hasRole('ADMIN')" th:if="${manifest.stage2StartedAt == null}" method="post"
                           th:action="@{/intake/{id}/unseal(id=${subject.id})}" class="form" style="margin-top:0.8rem; max-width:none;"
                           data-confirm="Unsealing reopens the manifest and its assets for editing; it will need a fresh seal before the Stage 2 handoff."

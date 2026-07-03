@@ -109,6 +109,8 @@ class SecurityConfig {
                 // hidden token, and the uploader JS sends it from the <meta> as X-CSRF-TOKEN.
                 authorize("/intake/**", hasRole("REVIEWER"))
                 authorize("/api/intake/**", hasRole("REVIEWER"))
+                // Stage 2 (A/V → Claims) JSON API: REVIEWER+, CSRF on, same conventions as intake.
+                authorize("/api/stage2/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }
             // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).

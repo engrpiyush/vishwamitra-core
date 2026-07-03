@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Stage 2 <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}(id=${subject.id})}" class="muted">&larr; subject</a>
+    </div>
+    <p class="muted">Audio/video &rarr; diarized transcript &rarr; claim extraction &rarr; Claim Ledger.</p>
+
+    <!-- Gate 1: manifest not sealed yet — Stage 2 can't start. -->
+    <div class="panel" th:unless="${manifest.sealed}">
+        <p style="margin:0;">The manifest must be <strong>sealed</strong> before Stage 2 can run.</p>
+        <a class="btn" style="margin-top:0.8rem;" th:href="@{/intake/{id}(id=${subject.id})}">Back to intake &rarr;</a>
+    </div>
+
+    <!-- Gate 2: sealed but not started — the run button. -->
+    <div class="panel" th:if="${manifest.sealed and manifest.stage2StartedAt == null}">
+        <h3>Ready to process</h3>
+        <p class="muted">Starts transcription for every stored AUDIO/VIDEO asset whose consent allows
+            processing. Assets pending or revoked consent are skipped.</p>
+        <form method="post" th:action="@{/intake/{id}/stage2/process(id=${subject.id})}"
+              data-confirm="Starting Stage 2 makes the seal permanent — the manifest can never be unsealed again, not even by an admin."
+              data-confirm-title="Run Stage 2?" data-confirm-ok="Run Stage 2">
+            <button type="submit">Run Stage 2</button>
+        </form>
+    </div>
+
+    <!-- Started: status line. -->
+    <div class="panel" th:if="${manifest.stage2StartedAt != null}">
+        <div class="row-actions">
+            <span class="badge badge--danger">LOCKED</span>
+            <span class="muted">Stage 2 started
+                <time class="js-ts" th:datetime="${manifest.stage2StartedAt}" th:text="${manifest.stage2StartedAt}">when</time>
+                — the seal is permanent.</span>
+        </div>
+        <p class="muted" th:if="${activeCount > 0}" style="margin:0.6rem 0 0;">
+            <span th:text="${activeCount}">1</span> job(s) running — this page polls and refreshes
+            itself automatically while you keep it open.</p>
+    </div>
+
+    <!-- Jobs -->
+    <th:block th:if="${!jobs.isEmpty()}">
+        <div class="row-between" style="margin-top:1.2rem;">
+            <h2>Jobs <span class="muted" th:text="'(' + ${jobs.size()} + ')'">(0)</span></h2>
+            <form th:if="${activeCount > 0}" method="post" class="inline-form"
+                  th:action="@{/intake/{id}/stage2/poll(id=${subject.id})}">
+                <button type="submit" class="btn--ghost btn--sm">Poll all now</button>
+            </form>
+        </div>
+        <div id="stage2Jobs"
+             th:attr="data-subject-id=${subject.id},data-active-count=${activeCount},data-statuses=${jobStatuses}">
+            <table class="grid">
+                <thead>
+                <tr>
+                    <th>Asset</th>
+                    <th>Modality</th>
+                    <th>Status</th>
+                    <th>Claims</th>
+                    <th>Finished</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="j : ${jobs}">
+                    <td>
+                        <span th:text="${assetTitles[j.assetId] ?: j.assetId}">Asset</span>
+                        <p class="muted" th:if="${j.error != null}" style="margin:0.2rem 0 0;" th:text="${j.error}">error</p>
+                    </td>
+                    <td><span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(j.modality)}"
+                              th:text="${j.modality}">AUDIO</span></td>
+                    <td><span class="badge"
+                              th:classappend="${j.status.name() == 'COMPLETED'} ? 'badge--success' : (${j.status.name() == 'FAILED'} ? 'badge--danger' : (${j.status.name() == 'PENDING'} ? 'badge--muted' : 'badge--info'))"
+                              th:text="${j.status}">STATUS</span></td>
+                    <td th:text="${j.claimCount ?: '—'}">0</td>
+                    <td><time th:if="${j.finishedAt != null}" class="js-ts" th:datetime="${j.finishedAt}"
+                              th:text="${j.finishedAt}">when</time>
+                        <span th:if="${j.finishedAt == null}" class="muted">—</span></td>
+                    <td>
+                        <form th:if="${j.status.name() != 'COMPLETED' and j.status.name() != 'FAILED'}"
+                              method="post" class="inline-form"
+                              th:action="@{/intake/stage2/jobs/{jid}/poll(jid=${j.id})}">
+                            <button type="submit" class="btn--ghost btn--sm">Poll</button>
+                        </form>
+                        <form th:if="${j.status.name() == 'FAILED'}"
+                              method="post" class="inline-form"
+                              th:action="@{/intake/stage2/jobs/{jid}/retry(jid=${j.id})}">
+                            <button type="submit" class="btn--ghost btn--sm">Retry</button>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </th:block>
+
+    <!-- Claims -->
+    <th:block th:if="${manifest.stage2StartedAt != null}">
+        <h2 style="margin-top:1.2rem;">Claims <span class="muted" th:text="'(' + ${claims.size()} + ')'">(0)</span></h2>
+
+        <div th:if="${claims.isEmpty()}" class="empty-state">
+            No claims yet — they appear here as jobs complete.
+        </div>
+
+        <div class="turns" th:unless="${claims.isEmpty()}">
+            <div class="turn" th:each="c : ${claims}">
+                <div class="turn-head">
+                    <strong th:text="${c.text}">Claim text</strong>
+                </div>
+                <div class="turn-body">
+                    <div class="row-actions">
+                        <span class="badge" th:text="${c.claimType}">TYPE</span>
+                        <span class="badge" th:if="${c.authenticityTier != null}"
+                              th:classappend="'badge--' + ${#strings.toLowerCase(c.authenticityTier)}"
+                              th:text="${'prior ' + c.authenticityTier}">prior</span>
+                        <span class="badge badge--muted" th:if="${c.speaker != null}" th:text="${c.speaker}">speaker</span>
+                        <span class="badge badge--muted" th:if="${c.mediaStart != null and c.mediaEnd != null}"
+                              th:text="${c.mediaStart + 's – ' + c.mediaEnd + 's'}">0s – 5s</span>
+                        <span class="badge badge--muted" th:if="${c.claimedDate != null}" th:text="${c.claimedDate}">date</span>
+                        <span class="badge badge--muted" th:if="${c.extractionConfidence != null}"
+                              th:text="${'conf ' + c.extractionConfidence}">conf</span>
+                    </div>
+                    <p class="muted" th:if="${c.sourceExcerpt != null}" style="margin:0;">
+                        &ldquo;<span th:text="${c.sourceExcerpt}">excerpt</span>&rdquo;
+                        <span class="muted" th:text="'— ' + ${assetTitles[c.assetId] ?: c.assetId}">— asset</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </th:block>
+</main>
+<script th:src="@{/js/stage2-poll.js}" defer></script>
+</body>
+</html>
