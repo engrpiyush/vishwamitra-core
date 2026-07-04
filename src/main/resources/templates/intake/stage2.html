@@ -91,6 +91,28 @@
                               th:action="@{/intake/stage2/jobs/{jid}/retry(jid=${j.id})}">
                             <button type="submit" class="btn--ghost btn--sm">Retry</button>
                         </form>
+                        <th:block th:if="${j.status.name() == 'COMPLETED'}">
+                            <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>
+                            <dialog class="panel" style="max-width:26rem; border:none;">
+                                <h3 style="margin-top:0;">Re-run this asset?</h3>
+                                <p class="muted">Replaces this asset's existing claims — they are
+                                    deleted when the new run completes.</p>
+                                <form method="post" class="form" style="max-width:none;"
+                                      th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
+                                    <input type="hidden" name="mode" value="extract"/>
+                                    <button type="submit">Re-extract claims
+                                        <span class="muted">(fast — reuses the transcript)</span></button>
+                                </form>
+                                <form method="post" class="form" style="max-width:none; margin-top:0.5rem;"
+                                      th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
+                                    <input type="hidden" name="mode" value="full"/>
+                                    <button type="submit" class="secondary">Full re-run
+                                        <span class="muted">(re-transcribe first)</span></button>
+                                </form>
+                                <button type="button" class="btn--ghost btn--sm" style="margin-top:0.8rem;"
+                                        data-dialog-close>Cancel</button>
+                            </dialog>
+                        </th:block>
                     </td>
                 </tr>
                 </tbody>

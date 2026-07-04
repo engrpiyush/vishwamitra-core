@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -42,6 +43,16 @@ class Stage2ApiController(private val stage2: Stage2Service) {
     /** Retry a FAILED job: fresh transcription of the same asset. */
     @PostMapping("/jobs/{id}/retry")
     fun retry(@PathVariable id: String): ResponseEntity<Any> = stage2.retryJob(id).toResponse()
+
+    /**
+     * Re-run a COMPLETED job, replacing the asset's claims: re-extract from the stored transcript
+     * (default), or [full] re-transcription first.
+     */
+    @PostMapping("/jobs/{id}/rerun")
+    fun rerun(
+        @PathVariable id: String,
+        @RequestParam(required = false, defaultValue = "false") full: Boolean,
+    ): ResponseEntity<Any> = stage2.rerunJob(id, full).toResponse()
 
     @GetMapping("/jobs/{id}")
     fun job(@PathVariable id: String): ResponseEntity<Any> =

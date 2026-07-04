@@ -15,6 +15,7 @@ import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.stage2.ClaimExtractor
 import ai.vishwakarma.labelling.stage2.Transcriber
+import ai.vishwakarma.labelling.stage2.Transcript
 import ai.vishwakarma.labelling.stage2.TranscriptionPoll
 import arrow.core.Either
 import arrow.core.left
@@ -119,7 +120,49 @@ class Stage2Service(
         val asset =
             assets.findById(job.assetId)
                 ?: return DomainError.NotFound("Asset ${job.assetId} no longer exists").left()
-        return try {
+        return resubmit(job, asset)
+    }
+
+    /**
+     * Re-run a COMPLETED job — after a model/prompt change, or when claim quality disappoints.
+     * [full] re-transcribes from scratch; otherwise only extraction re-runs from the stored
+     * transcript (falling back to full when none was stored, e.g. dry-run-era jobs). Either way the
+     * asset's previous claims are REPLACED at completion, never appended.
+     */
+    fun rerunJob(jobId: String, full: Boolean): Either<DomainError, Stage2Job> {
+        val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        if (job.status != Stage2JobStatus.COMPLETED)
+            return DomainError.Conflict(
+                    "Only COMPLETED jobs can be re-run (job is ${job.status}; use Retry for FAILED)"
+                )
+                .left()
+        val asset =
+            assets.findById(job.assetId)
+                ?: return DomainError.NotFound("Asset ${job.assetId} no longer exists").left()
+        val transcriptUri = job.transcriptUri
+        if (full || transcriptUri == null) return resubmit(job, asset)
+        // Fetch BEFORE touching job state: a failed fetch leaves the job COMPLETED and its
+        // existing claims intact — nothing is lost by a re-run that couldn't start.
+        val transcript =
+            try {
+                transcriber.fetchTranscript(transcriptUri)
+            } catch (e: Exception) {
+                return DomainError.Invalid("Could not fetch stored transcript: ${e.message}").left()
+            }
+        val extracting =
+            job.copy(
+                    status = Stage2JobStatus.EXTRACTING,
+                    claimCount = null,
+                    error = null,
+                    finishedAt = null,
+                )
+                .also { jobs.save(it) }
+        return runExtraction(extracting, transcript).right()
+    }
+
+    /** Fresh transcription of [asset] on the same job record (Retry and full Re-run). */
+    private fun resubmit(job: Stage2Job, asset: Asset): Either<DomainError, Stage2Job> =
+        try {
             val op =
                 transcriber.submit(
                     job.subjectId,
@@ -140,9 +183,8 @@ class Stage2Service(
                 .also { jobs.save(it) }
                 .right()
         } catch (e: Exception) {
-            DomainError.Invalid("Retry submit failed: ${e.message}").left()
+            DomainError.Invalid("Re-submit failed: ${e.message}").left()
         }
-    }
 
     /** Delete-on-request cascade: claims and jobs derived from a subject die with it. */
     fun purgeSubject(subjectId: String) {
@@ -280,22 +322,25 @@ class Stage2Service(
             job.copy(status = Stage2JobStatus.EXTRACTING, transcriptUri = done.transcriptUri).also {
                 jobs.save(it)
             }
+        return runExtraction(extracting, done.transcript)
+    }
+
+    /**
+     * Shared completion for poll-arrival and re-extract: extract claims from [transcript] and
+     * REPLACE the asset's previous claims — a claim for this asset can only come from an earlier
+     * run of it, so replacement makes completion idempotent (kills crash-window duplicates too).
+     */
+    private fun runExtraction(job: Stage2Job, transcript: Transcript): Stage2Job {
         val asset =
             assets.findById(job.assetId)
-                ?: return extracting
-                    .copy(
-                        status = Stage2JobStatus.FAILED,
-                        error = "Asset ${job.assetId} no longer exists",
-                        finishedAt = Instant.now(),
-                    )
-                    .also { jobs.save(it) }
+                ?: return failJob(job, "Asset ${job.assetId} no longer exists")
         return try {
             val subjectName = subjects.findById(job.subjectId)?.displayName
-            val extracted = extractor.extract(job.subjectId, asset, done.transcript, subjectName)
+            val extracted = extractor.extract(job.subjectId, asset, transcript, subjectName)
+            claims.findByAsset(asset.id).forEach { claims.delete(it.id) }
             extracted.map { it.copy(id = claims.newId()) }.forEach { claims.save(it) }
             log.info("Job {} extracted {} claim(s) from asset {}", job.id, extracted.size, asset.id)
-            extracting
-                .copy(
+            job.copy(
                     status = Stage2JobStatus.COMPLETED,
                     claimCount = extracted.size,
                     finishedAt = Instant.now(),
@@ -303,8 +348,7 @@ class Stage2Service(
                 .also { jobs.save(it) }
         } catch (e: Exception) {
             log.warn("Claim extraction failed for job {}", job.id, e)
-            extracting
-                .copy(
+            job.copy(
                     status = Stage2JobStatus.FAILED,
                     error = "Claim extraction failed: ${e.message}",
                     finishedAt = Instant.now(),

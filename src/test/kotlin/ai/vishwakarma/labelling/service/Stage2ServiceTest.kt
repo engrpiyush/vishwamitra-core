@@ -132,6 +132,8 @@ private class StubTranscriber : Transcriber {
     var attemptLimit = Int.MAX_VALUE
     var pollThrows = false
     var pollResult: TranscriptionPoll = TranscriptionPoll.Running
+    var fetchedTranscript: Transcript? = null
+    var fetchThrows = false
     private var seq = 0
 
     override fun submit(
@@ -153,6 +155,11 @@ private class StubTranscriber : Transcriber {
     override fun poll(operationName: String): TranscriptionPoll {
         if (pollThrows) error("transport down")
         return pollResult
+    }
+
+    override fun fetchTranscript(transcriptUri: String): Transcript {
+        if (fetchThrows) error("transcript object missing")
+        return fetchedTranscript ?: error("no fetched transcript configured")
     }
 }
 
@@ -574,6 +581,112 @@ class Stage2ServiceTest {
     @Test
     fun `retryJob returns NotFound for an unknown job`() {
         assertTrue(service.retryJob("nope").errorOrNull() is DomainError.NotFound)
+    }
+
+    // ---- rerunJob -----------------------------------------------------------
+
+    private fun seedCompletedJob(transcriptUri: String? = "gs://t/s1/a1/out.json"): Stage2Job {
+        val job =
+            Stage2Job(
+                id = "j1",
+                subjectId = "s1",
+                assetId = "a1",
+                modality = AssetModality.VIDEO,
+                status = Stage2JobStatus.COMPLETED,
+                externalOperationId = "op-x",
+                transcriptUri = transcriptUri,
+                claimCount = 2,
+                createdAt = Instant.now(),
+                finishedAt = Instant.now(),
+            )
+        jobs.store["j1"] = job
+        return job
+    }
+
+    private fun seedOldClaim(id: String = "c-old") {
+        claims.store[id] =
+            Claim(
+                id = id,
+                subjectId = "s1",
+                assetId = "a1",
+                claimType = ClaimType.EPISODE,
+                text = "stale claim from the previous run",
+            )
+    }
+
+    @Test
+    fun `rerun re-extracts from the stored transcript and replaces the asset's claims`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+        seedOldClaim()
+        transcriber.fetchedTranscript = transcript()
+
+        val result = service.rerunJob("j1", full = false).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals(2, result.claimCount)
+        assertTrue(transcriber.attempts.isEmpty())
+        assertTrue(claims.store.keys.none { it == "c-old" })
+        assertEquals(2, claims.store.size)
+        assertTrue(claims.store.values.all { it.assetId == "a1" && it.id.isNotBlank() })
+    }
+
+    @Test
+    fun `rerun refuses jobs that are not COMPLETED`() {
+        seedTranscribingJob()
+
+        assertTrue(service.rerunJob("j1", full = false).errorOrNull() is DomainError.Conflict)
+    }
+
+    @Test
+    fun `rerun falls back to full re-transcription when no transcript is stored`() {
+        seed(avAsset("a1"))
+        seedCompletedJob(transcriptUri = null)
+
+        val result = service.rerunJob("j1", full = false).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.TRANSCRIBING, result.status)
+        assertEquals(0, result.decodingAttempt)
+        assertEquals(listOf(0), transcriber.attempts)
+        assertEquals(null, result.claimCount)
+    }
+
+    @Test
+    fun `full rerun re-transcribes even when a transcript is stored`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+
+        val result = service.rerunJob("j1", full = true).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.TRANSCRIBING, result.status)
+        assertEquals(listOf(0), transcriber.attempts)
+    }
+
+    @Test
+    fun `rerun with a failing transcript fetch leaves the job COMPLETED and its claims intact`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+        seedOldClaim()
+        transcriber.fetchThrows = true
+
+        val result = service.rerunJob("j1", full = false)
+
+        assertTrue(result.errorOrNull() is DomainError.Invalid)
+        assertEquals(Stage2JobStatus.COMPLETED, jobs.store["j1"]!!.status)
+        assertTrue(claims.store.containsKey("c-old"))
+    }
+
+    @Test
+    fun `poll completion replaces the asset's previous claims`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+        seedOldClaim()
+        transcriber.pollResult = TranscriptionPoll.Done(transcript(), null)
+
+        service.poll("j1")
+
+        assertTrue(claims.store.keys.none { it == "c-old" })
+        assertEquals(2, claims.store.size)
     }
 
     // ---- pollAll ------------------------------------------------------------

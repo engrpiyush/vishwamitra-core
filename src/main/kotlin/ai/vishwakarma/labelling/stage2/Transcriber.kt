@@ -60,4 +60,10 @@ interface Transcriber {
      * pollable); a terminal provider-side failure is reported as [TranscriptionPoll.Failed].
      */
     fun poll(operationName: String): TranscriptionPoll
+
+    /**
+     * Fetch + normalize a previously stored raw transcript — re-extraction without re-running ASR.
+     * Throws when the object is missing or unparseable.
+     */
+    fun fetchTranscript(transcriptUri: String): Transcript
 }

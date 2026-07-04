@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.servlet.mvc.support.RedirectAttributes
 
 /**
@@ -91,6 +92,30 @@ class Stage2Controller(
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
                 { ra.addFlashAttribute("ok", "Retrying — job is ${it.status}") },
+            )
+        return "redirect:/intake/$subjectId/stage2"
+    }
+
+    /**
+     * Re-run a COMPLETED job: mode=extract reuses the stored transcript, mode=full re-transcribes.
+     */
+    @PostMapping("/stage2/jobs/{jobId}/rerun")
+    fun rerunJob(
+        @PathVariable jobId: String,
+        @RequestParam(required = false, defaultValue = "extract") mode: String,
+        ra: RedirectAttributes,
+    ): String {
+        val subjectId =
+            stage2.job(jobId)?.subjectId
+                ?: run {
+                    ra.addFlashAttribute("error", "Job not found")
+                    return "redirect:/intake"
+                }
+        stage2
+            .rerunJob(jobId, full = mode == "full")
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Re-run — job is ${it.status}") },
             )
         return "redirect:/intake/$subjectId/stage2"
     }

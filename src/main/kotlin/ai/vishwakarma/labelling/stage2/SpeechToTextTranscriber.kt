@@ -254,6 +254,14 @@ class SpeechToTextTranscriber(private val props: AppProperties) : Transcriber {
         return TranscriptionPoll.Done(normalize(raw), uri)
     }
 
+    @Suppress("UNCHECKED_CAST")
+    override fun fetchTranscript(transcriptUri: String): Transcript {
+        val raw =
+            Json.parse(readGcsObject(transcriptUri)) as? Map<String, Any?>
+                ?: error("bad transcript file at $transcriptUri")
+        return normalize(raw)
+    }
+
     /**
      * Normalize STT v2 `BatchRecognizeResults` JSON. When word-level diarization is present,
      * consecutive words sharing a speaker label collapse into one segment; otherwise each result's

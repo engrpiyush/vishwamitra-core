@@ -14,6 +14,22 @@
 (function () {
     "use strict";
 
+    /* Re-run chooser dialogs (COMPLETED rows). Wired before the auto-poll early-returns —
+       a page with only terminal jobs still needs the dialogs to work. */
+    document.addEventListener("click", function (e) {
+        var open = e.target.closest("[data-rerun-open]");
+        if (open) {
+            var dlg = open.parentElement.querySelector("dialog");
+            if (dlg) dlg.showModal();
+            return;
+        }
+        var close = e.target.closest("[data-dialog-close]");
+        if (close) {
+            var d = close.closest("dialog");
+            if (d) d.close();
+        }
+    });
+
     var panel = document.getElementById("stage2Jobs");
     if (!panel) return;
     if (parseInt(panel.dataset.activeCount || "0", 10) === 0) return;
