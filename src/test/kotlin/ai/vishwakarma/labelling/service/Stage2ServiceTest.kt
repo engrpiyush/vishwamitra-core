@@ -23,6 +23,8 @@ import ai.vishwakarma.labelling.persistence.ProviderRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.stage2.ClaimExtractor
+import ai.vishwakarma.labelling.stage2.DocumentPayload
+import ai.vishwakarma.labelling.stage2.DocumentSource
 import ai.vishwakarma.labelling.stage2.Transcriber
 import ai.vishwakarma.labelling.stage2.Transcript
 import ai.vishwakarma.labelling.stage2.TranscriptSegment
@@ -164,6 +166,19 @@ private class StubTranscriber : Transcriber {
     }
 }
 
+private class FakeDocumentSource : DocumentSource(AppProperties()) {
+    var unsupported: String? = null
+    var readThrows = false
+    var payload = DocumentPayload("certificate bytes".toByteArray(), "image/png")
+
+    override fun supportError(asset: Asset): String? = unsupported
+
+    override fun read(asset: Asset): DocumentPayload {
+        check(!readThrows) { "stored document not found: ${asset.gcsUri}" }
+        return payload
+    }
+}
+
 private class FakeExtractor :
     ClaimExtractor(
         GeminiDrafting(
@@ -173,6 +188,38 @@ private class FakeExtractor :
         ExtractionPromptService(ExtractionPromptRepository(mock(Firestore::class.java)))
     ) {
     var throws = false
+    var lastDocumentMime: String? = null
+
+    override fun extractDocument(
+        subjectId: String,
+        asset: Asset,
+        bytes: ByteArray,
+        mimeType: String,
+        subjectName: String?,
+    ): List<Claim> {
+        if (throws) error("extraction blew up")
+        lastDocumentMime = mimeType
+        return listOf(
+            Claim(
+                id = "",
+                subjectId = subjectId,
+                assetId = asset.id,
+                claimType = ClaimType.EPISODE,
+                text = "Was awarded the Professional Cloud Architect certification",
+                sourceExcerpt = "Professional Cloud Architect",
+                authenticityTier = asset.authenticityPrior,
+            ),
+            Claim(
+                id = "",
+                subjectId = subjectId,
+                assetId = asset.id,
+                claimType = ClaimType.SKILL,
+                text = "Holds cloud architecture expertise",
+                sourceExcerpt = "Professional Cloud Architect",
+                authenticityTier = asset.authenticityPrior,
+            ),
+        )
+    }
 
     override fun extract(
         subjectId: String,
@@ -218,8 +265,9 @@ class Stage2ServiceTest {
     private val claims = FakeClaimRepo()
     private val transcriber = StubTranscriber()
     private val extractor = FakeExtractor()
+    private val documents = FakeDocumentSource()
     private val service =
-        Stage2Service(subjects, manifests, assets, jobs, claims, transcriber, extractor)
+        Stage2Service(subjects, manifests, assets, jobs, claims, transcriber, extractor, documents)
 
     private val actor = "reviewer@vishwakarma.ai"
 
@@ -344,14 +392,14 @@ class Stage2ServiceTest {
     }
 
     @Test
-    fun `process skips non-consented assets and non A_V modalities`() {
+    fun `process skips non-consented assets and unprocessable modalities`() {
         seedSubject()
         seedManifest()
         seed(
             avAsset("a1"),
             avAsset("a2", consentStatus = ConsentStatus.PENDING),
             avAsset("a3", consentStatus = ConsentStatus.REVOKED),
-            avAsset("a4", modality = AssetModality.DOCUMENT),
+            avAsset("a4", modality = AssetModality.TEXT),
             avAsset("a5", consentStatus = ConsentStatus.NOT_REQUIRED),
             avAsset("a6", uploadStatus = AssetUploadStatus.AWAITING_UPLOAD),
         )
@@ -365,7 +413,7 @@ class Stage2ServiceTest {
     fun `process with no eligible assets is refused without stamping the lock`() {
         seedSubject()
         seedManifest()
-        seed(avAsset(modality = AssetModality.DOCUMENT))
+        seed(avAsset(modality = AssetModality.TEXT))
 
         val result = service.process("s1", actor)
 
@@ -605,12 +653,12 @@ class Stage2ServiceTest {
         return job
     }
 
-    private fun seedOldClaim(id: String = "c-old") {
+    private fun seedOldClaim(id: String = "c-old", assetId: String = "a1") {
         claims.store[id] =
             Claim(
                 id = id,
                 subjectId = "s1",
-                assetId = "a1",
+                assetId = assetId,
                 claimType = ClaimType.EPISODE,
                 text = "stale claim from the previous run",
             )
@@ -741,5 +789,222 @@ class Stage2ServiceTest {
         assertTrue(result.errorOrNull() is DomainError.Invalid)
         assertEquals(Stage2JobStatus.TRANSCRIBING, jobs.store["j1"]!!.status)
         assertTrue(jobs.saves.isEmpty())
+    }
+
+    // ---- document lane (IMAGE/DOCUMENT — no transcription leg) ----------------
+
+    private fun docAsset(
+        id: String = "d1",
+        modality: AssetModality = AssetModality.IMAGE,
+        mimeType: String? = "image/png",
+    ) =
+        Asset(
+            id = id,
+            subjectId = "s1",
+            title = "Cloud architect certificate",
+            modality = modality,
+            sourceClass = ContentType.CERTIFICATE.sourceClass,
+            contentType = ContentType.CERTIFICATE,
+            relationship = Relationship.SELF,
+            authenticityPrior = AuthenticityTier.HIGH,
+            gcsUri = "gs://intake/s1/$id.png",
+            mimeType = mimeType,
+            sizeBytes = 1_234,
+            consentStatus = ConsentStatus.GRANTED,
+            uploadStatus = AssetUploadStatus.STORED,
+            createdAt = Instant.now(),
+            updatedAt = Instant.now(),
+        )
+
+    private fun seedDocJob(
+        id: String = "j1",
+        assetId: String = "d1",
+        status: Stage2JobStatus = Stage2JobStatus.PENDING,
+    ): Stage2Job {
+        val job =
+            Stage2Job(
+                id = id,
+                subjectId = "s1",
+                assetId = assetId,
+                modality = AssetModality.IMAGE,
+                status = status,
+                createdAt = Instant.now(),
+            )
+        jobs.store[id] = job
+        return job
+    }
+
+    @Test
+    fun `process creates PENDING document jobs without submitting transcription`() {
+        seedSubject()
+        seedManifest()
+        seed(
+            avAsset("a1"),
+            docAsset("d1"),
+            docAsset("d2", modality = AssetModality.DOCUMENT, mimeType = "application/pdf"),
+        )
+
+        val created = service.process("s1", actor).valueOrNull()!!
+
+        val byAsset = created.associateBy { it.assetId }
+        assertEquals(Stage2JobStatus.TRANSCRIBING, byAsset["a1"]!!.status)
+        assertEquals(Stage2JobStatus.PENDING, byAsset["d1"]!!.status)
+        assertEquals(Stage2JobStatus.PENDING, byAsset["d2"]!!.status)
+        assertTrue(byAsset["d1"]!!.externalOperationId == null)
+        assertEquals(listOf("a1"), transcriber.submitted)
+        assertTrue(manifests.store["s1"]!!.stage2StartedAt != null)
+    }
+
+    @Test
+    fun `process births a FAILED document job for an unsupported source and continues the rest`() {
+        seedSubject()
+        seedManifest()
+        seed(avAsset("a1"), docAsset("d1", mimeType = "application/msword"))
+        documents.unsupported =
+            "Unsupported document type for Gemini extraction: application/msword"
+
+        val created = service.process("s1", actor).valueOrNull()!!
+
+        val byAsset = created.associateBy { it.assetId }
+        assertEquals(Stage2JobStatus.FAILED, byAsset["d1"]!!.status)
+        assertEquals(documents.unsupported, byAsset["d1"]!!.error)
+        assertTrue(byAsset["d1"]!!.finishedAt != null)
+        assertEquals(Stage2JobStatus.TRANSCRIBING, byAsset["a1"]!!.status)
+    }
+
+    @Test
+    fun `poll runs document extraction and completes a PENDING document job`() {
+        seed(docAsset("d1"))
+        seedDocJob()
+        seedOldClaim(assetId = "d1")
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals(2, result.claimCount)
+        assertEquals(null, result.transcriptUri)
+        assertTrue(result.startedAt != null && result.finishedAt != null)
+        assertEquals("image/png", extractor.lastDocumentMime)
+        assertTrue(claims.store.keys.none { it == "c-old" })
+        val stored = claims.store.values.toList()
+        assertEquals(2, stored.size)
+        assertTrue(stored.all { it.id.isNotBlank() && it.assetId == "d1" })
+        assertTrue(stored.all { it.authenticityTier == AuthenticityTier.HIGH })
+        assertTrue(stored.all { it.speaker == null })
+    }
+
+    @Test
+    fun `poll leaves an EXTRACTING document job untouched`() {
+        seed(docAsset("d1"))
+        seedDocJob(status = Stage2JobStatus.EXTRACTING)
+
+        val result = service.poll("j1")
+
+        assertEquals(Stage2JobStatus.EXTRACTING, result.valueOrNull()!!.status)
+        assertTrue(jobs.saves.isEmpty())
+        assertTrue(claims.store.isEmpty())
+    }
+
+    @Test
+    fun `poll fails the document job verbatim when the bytes cannot be read`() {
+        seed(docAsset("d1"))
+        seedDocJob()
+        documents.readThrows = true
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.FAILED, result.status)
+        assertTrue(result.error!!.contains("stored document not found"))
+        assertTrue(claims.store.isEmpty())
+    }
+
+    @Test
+    fun `poll fails the document job when extraction throws`() {
+        seed(docAsset("d1"))
+        seedDocJob()
+        extractor.throws = true
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.FAILED, result.status)
+        assertTrue(result.error!!.contains("Document extraction failed"))
+        assertTrue(claims.store.isEmpty())
+    }
+
+    @Test
+    fun `poll re-checks document support before extracting`() {
+        seed(docAsset("d1"))
+        seedDocJob()
+        documents.unsupported = "Unsupported document type for Gemini extraction: unknown"
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.FAILED, result.status)
+        assertEquals(documents.unsupported, result.error)
+    }
+
+    @Test
+    fun `poll fails the document job when its asset no longer exists`() {
+        seedDocJob()
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.FAILED, result.status)
+        assertTrue(result.error!!.contains("no longer exists"))
+    }
+
+    @Test
+    fun `retryJob resets a FAILED document job to PENDING and the next poll completes it`() {
+        seed(docAsset("d1"))
+        seedDocJob(status = Stage2JobStatus.FAILED)
+        jobs.store["j1"] = jobs.store["j1"]!!.copy(error = "boom", finishedAt = Instant.now())
+
+        val retried = service.retryJob("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.PENDING, retried.status)
+        assertEquals(null, retried.error)
+        assertEquals(null, retried.finishedAt)
+        assertTrue(transcriber.attempts.isEmpty())
+
+        val polled = service.poll("j1").valueOrNull()!!
+        assertEquals(Stage2JobStatus.COMPLETED, polled.status)
+        assertEquals(2, polled.claimCount)
+    }
+
+    @Test
+    fun `rerun resets a COMPLETED document job to PENDING in both modes and keeps old claims until completion`() {
+        seed(docAsset("d1"))
+        seedDocJob(status = Stage2JobStatus.COMPLETED)
+        jobs.store["j1"] = jobs.store["j1"]!!.copy(claimCount = 2, finishedAt = Instant.now())
+        seedOldClaim(assetId = "d1")
+
+        val extractMode = service.rerunJob("j1", full = false).valueOrNull()!!
+        assertEquals(Stage2JobStatus.PENDING, extractMode.status)
+        assertEquals(null, extractMode.claimCount)
+        assertTrue(claims.store.containsKey("c-old"))
+
+        jobs.store["j1"] = jobs.store["j1"]!!.copy(status = Stage2JobStatus.COMPLETED)
+        val fullMode = service.rerunJob("j1", full = true).valueOrNull()!!
+        assertEquals(Stage2JobStatus.PENDING, fullMode.status)
+        assertTrue(transcriber.attempts.isEmpty())
+
+        service.poll("j1")
+        assertTrue(claims.store.keys.none { it == "c-old" })
+        assertEquals(2, claims.store.size)
+    }
+
+    @Test
+    fun `pollAll advances PENDING document jobs alongside A_V jobs`() {
+        seed(avAsset("a1"), docAsset("d1"))
+        seedTranscribingJob("j1", "a1")
+        seedDocJob("j2", "d1")
+        transcriber.pollResult = TranscriptionPoll.Done(transcript(), null)
+
+        val polled = service.pollAll("s1")
+
+        val byId = polled.associateBy { it.id }
+        assertEquals(Stage2JobStatus.COMPLETED, byId["j1"]!!.status)
+        assertEquals(Stage2JobStatus.COMPLETED, byId["j2"]!!.status)
+        assertEquals(4, claims.store.size)
     }
 }

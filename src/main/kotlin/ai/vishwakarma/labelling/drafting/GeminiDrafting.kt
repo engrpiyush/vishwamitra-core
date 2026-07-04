@@ -8,6 +8,7 @@ import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ProviderService
 import com.google.auth.oauth2.GoogleCredentials
+import java.util.Base64
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
@@ -36,7 +37,42 @@ class GeminiDrafting(
      * JSON truncated mid-first object). [thinkingBudget] caps that spend so output space is
      * guaranteed.
      */
-    fun generate(prompt: String, maxTokens: Int? = null, thinkingBudget: Int? = null): String {
+    fun generate(prompt: String, maxTokens: Int? = null, thinkingBudget: Int? = null): String =
+        generateContent(listOf(mapOf("text" to prompt)), maxTokens, thinkingBudget)
+
+    /**
+     * Multimodal one-shot: [bytes] ride inline (base64 `inlineData` part, placed before the text
+     * prompt per Google's single-media guidance) — OCR + extraction in one call for the
+     * IMAGE/DOCUMENT lane. Inline payloads share Vertex's ~20MB request cap with the rest of the
+     * body; callers guard size before handing bytes over.
+     */
+    fun generateWithInline(
+        prompt: String,
+        mimeType: String,
+        bytes: ByteArray,
+        maxTokens: Int? = null,
+        thinkingBudget: Int? = null,
+    ): String =
+        generateContent(
+            listOf(
+                mapOf(
+                    "inlineData" to
+                        mapOf(
+                            "mimeType" to mimeType,
+                            "data" to Base64.getEncoder().encodeToString(bytes),
+                        )
+                ),
+                mapOf("text" to prompt),
+            ),
+            maxTokens,
+            thinkingBudget,
+        )
+
+    private fun generateContent(
+        parts: List<Map<String, Any>>,
+        maxTokens: Int?,
+        thinkingBudget: Int?,
+    ): String {
         val cfg = providers.get(id) ?: error("gemini not configured")
         val model = cfg.model.ifBlank { error("gemini model not set") }
         // "global" reaches models not served regionally (e.g. gemini-2.5-pro); blank = in-region.
@@ -54,10 +90,7 @@ class GeminiDrafting(
             "https://$host/v1/projects/${props.gcp.projectId}" +
                 "/locations/$location/publishers/google/models/$model:generateContent"
         val body = buildMap {
-            put(
-                "contents",
-                listOf(mapOf("role" to "user", "parts" to listOf(mapOf("text" to prompt)))),
-            )
+            put("contents", listOf(mapOf("role" to "user", "parts" to parts)))
             val generationConfig = buildMap {
                 maxTokens?.let { put("maxOutputTokens", it) }
                 thinkingBudget?.let { put("thinkingConfig", mapOf("thinkingBudget" to it)) }

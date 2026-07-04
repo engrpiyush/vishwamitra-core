@@ -67,6 +67,8 @@ app:
     # Assumed source parameters for containers that need explicitDecodingConfig (AAC family).
     explicit-sample-rate-hertz: ${STAGE2_EXPLICIT_SAMPLE_RATE_HERTZ:48000}
     explicit-channel-count: ${STAGE2_EXPLICIT_CHANNEL_COUNT:2}
+    # IMAGE/DOCUMENT lane cap: bytes ride inline (base64) in the Gemini request (~20MB total).
+    max-document-bytes: ${STAGE2_MAX_DOCUMENT_BYTES:14680064}
   # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
   coming-soon:
     cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}

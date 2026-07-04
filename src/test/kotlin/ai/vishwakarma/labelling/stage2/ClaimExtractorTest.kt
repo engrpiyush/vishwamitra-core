@@ -4,10 +4,12 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AuthenticityTier
+import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.ProviderRepository
@@ -31,11 +33,26 @@ private open class StubGemini(private val canned: String) :
     ) {
 
     var lastPrompt: String? = null
+    var lastMime: String? = null
+    var lastBytes: ByteArray? = null
 
     override fun available(): Boolean = true
 
     override fun generate(prompt: String, maxTokens: Int?, thinkingBudget: Int?): String {
         lastPrompt = prompt
+        return canned
+    }
+
+    override fun generateWithInline(
+        prompt: String,
+        mimeType: String,
+        bytes: ByteArray,
+        maxTokens: Int?,
+        thinkingBudget: Int?,
+    ): String {
+        lastPrompt = prompt
+        lastMime = mimeType
+        lastBytes = bytes
         return canned
     }
 }
@@ -205,5 +222,124 @@ class ClaimExtractorTest {
         assertEquals("SKILL_DEMO", claim.extractionPromptId)
         assertEquals(3, claim.extractionPromptVersion)
         assertTrue(claim.extractionPromptHash!!.isNotBlank())
+    }
+
+    // ---- markers (§7.1.1) -----------------------------------------------------
+
+    @Test
+    fun `stamps denormalised source markers and defaults basis to STATED`() {
+        val claim =
+            ClaimExtractor(StubGemini(claimJson), promptService())
+                .extract("s1", asset(), transcript)
+                .single()
+
+        assertEquals(SourceClass.ENDORSEMENT, claim.sourceClass)
+        assertEquals(Relationship.MANAGER, claim.relationship)
+        assertEquals(ClaimBasis.STATED, claim.claimBasis)
+        assertFalse(claim.sensitive)
+    }
+
+    @Test
+    fun `parses basis INFERRED and the sensitive flag when the model emits them`() {
+        val json =
+            """[{"text":"Explains graph modelling","claimType":"SKILL","confidence":0.6,"basis":"INFERRED","sensitive":false},
+                {"text":"Reachable at a@b.com","claimType":"IDENTITY","confidence":1.0,"basis":"STATED","sensitive":true}]"""
+
+        val claims =
+            ClaimExtractor(StubGemini(json), promptService()).extract("s1", asset(), transcript)
+
+        assertEquals(ClaimBasis.INFERRED, claims[0].claimBasis)
+        assertFalse(claims[0].sensitive)
+        assertEquals(ClaimBasis.STATED, claims[1].claimBasis)
+        assertTrue(claims[1].sensitive)
+    }
+
+    // ---- extractDocument (IMAGE/DOCUMENT lane) --------------------------------
+
+    private fun docAsset(contentType: ContentType = ContentType.CERTIFICATE) =
+        Asset(
+            id = "d1",
+            subjectId = "s1",
+            title = "Cloud architect certificate",
+            modality = AssetModality.IMAGE,
+            sourceClass = contentType.sourceClass,
+            contentType = contentType,
+            relationship = Relationship.SELF,
+            authenticityPrior = AuthenticityTier.HIGH,
+            mimeType = "image/png",
+        )
+
+    private val documentJson =
+        """[{"text":"Was awarded the Professional Cloud Architect certification by Meridian Institute","claimType":"EPISODE","sourceExcerpt":"Professional Cloud Architect","claimedDate":"2024-03-12","confidence":0.95}]"""
+
+    @Test
+    fun `extractDocument sends the bytes inline under the resolved content-type block`() {
+        val gemini = StubGemini(documentJson)
+        val bytes = "scanned certificate".toByteArray()
+
+        val claims =
+            ClaimExtractor(gemini, promptService())
+                .extractDocument("s1", docAsset(), bytes, "image/png", "Test Subject")
+
+        assertEquals("image/png", gemini.lastMime)
+        assertTrue(gemini.lastBytes!!.contentEquals(bytes))
+        val prompt = gemini.lastPrompt!!
+        assertTrue(prompt.contains(ExtractionPrompt.builtinFor(ContentType.CERTIFICATE)))
+        assertTrue(prompt.contains("printed text"))
+        assertTrue(prompt.contains("Test Subject"))
+        assertFalse(prompt.contains("Transcript:"))
+
+        val claim = claims.single()
+        assertEquals(null, claim.speaker)
+        assertEquals(null, claim.mediaStart)
+        assertEquals(null, claim.mediaEnd)
+        assertEquals("Professional Cloud Architect", claim.sourceExcerpt)
+        assertEquals(LocalDate.parse("2024-03-12"), claim.claimedDate)
+        assertEquals(AuthenticityTier.HIGH, claim.authenticityTier)
+        assertEquals("CERTIFICATE", claim.extractionPromptId)
+        assertEquals(0, claim.extractionPromptVersion)
+        assertTrue(claim.extractionPromptHash!!.isNotBlank())
+        assertTrue(claim.id.isBlank())
+    }
+
+    @Test
+    fun `a stored prompt row drives extractDocument too`() {
+        val gemini = StubGemini(documentJson)
+        val row =
+            ExtractionPrompt(
+                id = ContentType.CERTIFICATE.name,
+                instructions = "Prefer the issuing body's registered name.",
+                version = 2,
+            )
+
+        val claims =
+            ClaimExtractor(gemini, promptService(row))
+                .extractDocument("s1", docAsset(), "bytes".toByteArray(), "application/pdf")
+
+        assertTrue(gemini.lastPrompt!!.contains("Prefer the issuing body's registered name."))
+        assertFalse(
+            gemini.lastPrompt!!.contains(ExtractionPrompt.builtinFor(ContentType.CERTIFICATE))
+        )
+        assertEquals(2, claims.single().extractionPromptVersion)
+    }
+
+    @Test
+    fun `extractDocument refuses when the gemini provider is unavailable`() {
+        assertFailsWith<IllegalStateException> {
+            ClaimExtractor(UnavailableGemini(), promptService())
+                .extractDocument("s1", docAsset(), "bytes".toByteArray(), "image/png")
+        }
+    }
+
+    @Test
+    fun `extractDocument stamps the source markers from a DOCUMENTARY asset`() {
+        val claim =
+            ClaimExtractor(StubGemini(documentJson), promptService())
+                .extractDocument("s1", docAsset(), "b".toByteArray(), "image/png")
+                .single()
+
+        assertEquals(SourceClass.DOCUMENTARY, claim.sourceClass)
+        assertEquals(Relationship.SELF, claim.relationship)
+        assertEquals(ClaimBasis.STATED, claim.claimBasis)
     }
 }

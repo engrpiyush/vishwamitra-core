@@ -14,6 +14,7 @@ import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.stage2.ClaimExtractor
+import ai.vishwakarma.labelling.stage2.DocumentSource
 import ai.vishwakarma.labelling.stage2.Transcriber
 import ai.vishwakarma.labelling.stage2.Transcript
 import ai.vishwakarma.labelling.stage2.TranscriptionPoll
@@ -25,12 +26,13 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 /**
- * Orchestrates the Stage 2 A/V → Claims slice: [process] consumes a sealed manifest (stamping
+ * Orchestrates Stage 2 → Claims: [process] consumes a sealed manifest (stamping
  * [ai.vishwakarma.labelling.domain.IntakeManifest.stage2StartedAt] — the permanent-seal lock) and
- * submits one transcription LRO per eligible AUDIO/VIDEO asset; [poll] drives each [Stage2Job] to a
- * terminal state, running Claude claim extraction when the transcript lands. Submit-then-poll
- * mirrors [TrainingService.pollJob] — there is no background scheduler; polling is
- * endpoint/UI-triggered.
+ * creates one [Stage2Job] per eligible asset; [poll] drives each job to a terminal state.
+ * AUDIO/VIDEO submit a transcription LRO and extract when the transcript lands; IMAGE/DOCUMENT have
+ * no transcription leg — they wait PENDING and one poll runs the multimodal (OCR + extraction)
+ * Gemini call synchronously. Submit-then-poll mirrors [TrainingService.pollJob] — there is no
+ * background scheduler; polling is endpoint/UI-triggered.
  */
 @Service
 class Stage2Service(
@@ -41,14 +43,16 @@ class Stage2Service(
     private val claims: ClaimRepository,
     private val transcriber: Transcriber,
     private val extractor: ClaimExtractor,
+    private val documents: DocumentSource,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
     /**
-     * Start Stage 2 for a subject: guard (sealed, not already started, has eligible A/V assets),
-     * stamp the permanent lock, then create + submit one job per eligible asset. A single asset's
-     * submit failure marks that job FAILED without aborting the others.
+     * Start Stage 2 for a subject: guard (sealed, not already started, has eligible assets), stamp
+     * the permanent lock, then create one job per eligible asset (A/V submit their LRO;
+     * IMAGE/DOCUMENT wait PENDING for the poll loop). A single asset's submit failure marks that
+     * job FAILED without aborting the others.
      */
     fun process(subjectId: String, actor: String?): Either<DomainError, List<Stage2Job>> {
         val subject =
@@ -66,20 +70,22 @@ class Stage2Service(
         // Refuse before stamping: the lock is permanent, so don't burn it on a no-op.
         if (eligible.isEmpty())
             return DomainError.Invalid(
-                    "No eligible AUDIO/VIDEO assets to process (must be STORED with consent)"
+                    "No eligible AUDIO/VIDEO/IMAGE/DOCUMENT assets to process " +
+                        "(must be STORED with consent)"
                 )
                 .left()
         val now = Instant.now()
         manifests.save(manifest.copy(stage2StartedAt = now, updatedAt = now))
-        log.info("Stage 2 started for subject {} — {} A/V asset(s)", subjectId, eligible.size)
+        log.info("Stage 2 started for subject {} — {} asset(s)", subjectId, eligible.size)
         val hints = nameHints(subject)
         return eligible.map { submitJob(subjectId, actor, it, hints) }.right()
     }
 
     /**
-     * Poll one job's transcription operation and advance it. Terminal jobs are a no-op; a transport
-     * error persists nothing (the job stays pollable). On transcript arrival: extract claims, write
-     * them to the ledger, complete the job.
+     * Advance one job. Terminal jobs are a no-op; a transport error persists nothing (the job stays
+     * pollable). A/V: check the transcription operation and, on transcript arrival, extract claims.
+     * IMAGE/DOCUMENT: run the multimodal extraction right here — one poll takes the job PENDING →
+     * EXTRACTING → terminal.
      */
     fun poll(jobId: String): Either<DomainError, Stage2Job> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
@@ -89,6 +95,17 @@ class Stage2Service(
         // concurrent poll (the UI auto-polls every few seconds) must not start a second extraction
         // — that duplicates claims (observed live: 4 overlapping polls → 4x claims).
         if (job.status == Stage2JobStatus.EXTRACTING) return job.right()
+        if (job.modality in DOC_MODALITIES) {
+            // PENDING is the only non-terminal doc state left; saving EXTRACTING here is the
+            // same double-run guard as above for overlapping poll-all requests.
+            val extracting =
+                job.copy(
+                        status = Stage2JobStatus.EXTRACTING,
+                        startedAt = job.startedAt ?: Instant.now(),
+                    )
+                    .also { jobs.save(it) }
+            return runDocumentExtraction(extracting).right()
+        }
         val op =
             job.externalOperationId
                 ?: return DomainError.Invalid("Job has no transcription operation").left()
@@ -120,6 +137,7 @@ class Stage2Service(
         val asset =
             assets.findById(job.assetId)
                 ?: return DomainError.NotFound("Asset ${job.assetId} no longer exists").left()
+        if (job.modality in DOC_MODALITIES) return resetToPending(job).right()
         return resubmit(job, asset)
     }
 
@@ -139,6 +157,11 @@ class Stage2Service(
         val asset =
             assets.findById(job.assetId)
                 ?: return DomainError.NotFound("Asset ${job.assetId} no longer exists").left()
+        // Documents have no transcript leg — re-extract and full are the same run ([full] is
+        // ignored). Deliberate delta vs the A/V extract-mode fetch-first behavior: a doc re-run
+        // that later fails leaves the job FAILED (old claims intact — replacement happens only at
+        // completion — and Retry is available).
+        if (job.modality in DOC_MODALITIES) return resetToPending(job).right()
         val transcriptUri = job.transcriptUri
         if (full || transcriptUri == null) return resubmit(job, asset)
         // Fetch BEFORE touching job state: a failed fetch leaves the job COMPLETED and its
@@ -159,6 +182,20 @@ class Stage2Service(
                 .also { jobs.save(it) }
         return runExtraction(extracting, transcript).right()
     }
+
+    /**
+     * IMAGE/DOCUMENT Retry/Re-run: back to PENDING on the same record — the auto-poll loop runs the
+     * extraction, the one execution path for the lane.
+     */
+    private fun resetToPending(job: Stage2Job): Stage2Job =
+        job.copy(
+                status = Stage2JobStatus.PENDING,
+                error = null,
+                claimCount = null,
+                startedAt = null,
+                finishedAt = null,
+            )
+            .also { jobs.save(it) }
 
     /** Fresh transcription of [asset] on the same job record (Retry and full Re-run). */
     private fun resubmit(job: Stage2Job, asset: Asset): Either<DomainError, Stage2Job> =
@@ -265,9 +302,9 @@ class Stage2Service(
 
     fun listClaims(subjectId: String): List<Claim> = claims.findBySubject(subjectId)
 
-    /** AUDIO/VIDEO, bytes present, and consent that permits processing. */
+    /** A processable modality, bytes present, and consent that permits processing. */
     private fun Asset.eligible(): Boolean =
-        modality in AV_MODALITIES &&
+        (modality in AV_MODALITIES || modality in DOC_MODALITIES) &&
             consentStatus !in BLOCKED_CONSENT &&
             uploadStatus == AssetUploadStatus.STORED &&
             !gcsUri.isNullOrBlank()
@@ -289,6 +326,20 @@ class Stage2Service(
                 createdAt = Instant.now(),
             )
         jobs.save(pending)
+        if (asset.modality in DOC_MODALITIES) {
+            // No LRO leg: a supportable document waits PENDING for the poll loop to extract it;
+            // an unsupportable one is born FAILED with the verbatim reason (the "Transcription
+            // submit failed" visibility, without burning a Gemini call).
+            val unsupported = documents.supportError(asset) ?: return pending
+            log.warn("Document job refused for asset {}: {}", asset.id, unsupported)
+            return pending
+                .copy(
+                    status = Stage2JobStatus.FAILED,
+                    error = unsupported,
+                    finishedAt = Instant.now(),
+                )
+                .also { jobs.save(it) }
+        }
         return try {
             val op =
                 transcriber.submit(
@@ -325,11 +376,7 @@ class Stage2Service(
         return runExtraction(extracting, done.transcript)
     }
 
-    /**
-     * Shared completion for poll-arrival and re-extract: extract claims from [transcript] and
-     * REPLACE the asset's previous claims — a claim for this asset can only come from an earlier
-     * run of it, so replacement makes completion idempotent (kills crash-window duplicates too).
-     */
+    /** A/V lane: extract claims from [transcript] (poll-arrival and re-extract Re-run). */
     private fun runExtraction(job: Stage2Job, transcript: Transcript): Stage2Job {
         val asset =
             assets.findById(job.assetId)
@@ -337,28 +384,67 @@ class Stage2Service(
         return try {
             val subjectName = subjects.findById(job.subjectId)?.displayName
             val extracted = extractor.extract(job.subjectId, asset, transcript, subjectName)
-            claims.findByAsset(asset.id).forEach { claims.delete(it.id) }
-            extracted.map { it.copy(id = claims.newId()) }.forEach { claims.save(it) }
-            log.info("Job {} extracted {} claim(s) from asset {}", job.id, extracted.size, asset.id)
-            job.copy(
-                    status = Stage2JobStatus.COMPLETED,
-                    claimCount = extracted.size,
-                    finishedAt = Instant.now(),
-                )
-                .also { jobs.save(it) }
+            completeWithClaims(job, asset.id, extracted)
         } catch (e: Exception) {
             log.warn("Claim extraction failed for job {}", job.id, e)
-            job.copy(
-                    status = Stage2JobStatus.FAILED,
-                    error = "Claim extraction failed: ${e.message}",
-                    finishedAt = Instant.now(),
-                )
-                .also { jobs.save(it) }
+            failJob(job, "Claim extraction failed: ${e.message}")
         }
+    }
+
+    /**
+     * IMAGE/DOCUMENT lane: read the stored bytes and run the multimodal (OCR + extraction) Gemini
+     * call synchronously inside this poll request. The support re-check covers Retry — the asset
+     * could have been unsupportable all along.
+     */
+    private fun runDocumentExtraction(job: Stage2Job): Stage2Job {
+        val asset =
+            assets.findById(job.assetId)
+                ?: return failJob(job, "Asset ${job.assetId} no longer exists")
+        documents.supportError(asset)?.let {
+            return failJob(job, it)
+        }
+        return try {
+            val payload = documents.read(asset)
+            val subjectName = subjects.findById(job.subjectId)?.displayName
+            val extracted =
+                extractor.extractDocument(
+                    job.subjectId,
+                    asset,
+                    payload.bytes,
+                    payload.mimeType,
+                    subjectName,
+                )
+            completeWithClaims(job, asset.id, extracted)
+        } catch (e: Exception) {
+            log.warn("Document extraction failed for job {}", job.id, e)
+            failJob(job, "Document extraction failed: ${e.message}")
+        }
+    }
+
+    /**
+     * REPLACE the asset's previous claims and complete the job — a claim for this asset can only
+     * come from an earlier run of it, so replacement makes completion idempotent (kills
+     * crash-window duplicates too).
+     */
+    private fun completeWithClaims(
+        job: Stage2Job,
+        assetId: String,
+        extracted: List<Claim>,
+    ): Stage2Job {
+        claims.findByAsset(assetId).forEach { claims.delete(it.id) }
+        extracted.map { it.copy(id = claims.newId()) }.forEach { claims.save(it) }
+        log.info("Job {} extracted {} claim(s) from asset {}", job.id, extracted.size, assetId)
+        return job.copy(
+                status = Stage2JobStatus.COMPLETED,
+                claimCount = extracted.size,
+                finishedAt = Instant.now(),
+            )
+            .also { jobs.save(it) }
     }
 
     companion object {
         private val AV_MODALITIES = setOf(AssetModality.AUDIO, AssetModality.VIDEO)
+        private val DOC_MODALITIES = setOf(AssetModality.IMAGE, AssetModality.DOCUMENT)
         private val BLOCKED_CONSENT = setOf(ConsentStatus.PENDING, ConsentStatus.REVOKED)
     }
 }

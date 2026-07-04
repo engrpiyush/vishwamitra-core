@@ -10,7 +10,8 @@
         <h1>Stage 2 <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
         <a th:href="@{/intake/{id}(id=${subject.id})}" class="muted">&larr; subject</a>
     </div>
-    <p class="muted">Audio/video &rarr; diarized transcript &rarr; claim extraction &rarr; Claim Ledger.</p>
+    <p class="muted">Audio/video &rarr; diarized transcript &rarr; claim extraction; images &amp; documents
+        &rarr; OCR + extraction in one step &rarr; Claim Ledger.</p>
 
     <!-- Gate 1: manifest not sealed yet — Stage 2 can't start. -->
     <div class="panel" th:unless="${manifest.sealed}">
@@ -21,8 +22,9 @@
     <!-- Gate 2: sealed but not started — the run button. -->
     <div class="panel" th:if="${manifest.sealed and manifest.stage2StartedAt == null}">
         <h3>Ready to process</h3>
-        <p class="muted">Starts transcription for every stored AUDIO/VIDEO asset whose consent allows
-            processing. Assets pending or revoked consent are skipped.</p>
+        <p class="muted">Processes every stored audio, video, image, and document asset whose consent
+            allows it — A/V is transcribed first; images and documents (scans, PDFs) go straight to
+            extraction. Assets pending or revoked consent are skipped.</p>
         <form method="post" th:action="@{/intake/{id}/stage2/process(id=${subject.id})}"
               data-confirm="Starting Stage 2 makes the seal permanent — the manifest can never be unsealed again, not even by an admin."
               data-confirm-title="Run Stage 2?" data-confirm-ok="Run Stage 2">
@@ -91,24 +93,34 @@
                               th:action="@{/intake/stage2/jobs/{jid}/retry(jid=${j.id})}">
                             <button type="submit" class="btn--ghost btn--sm">Retry</button>
                         </form>
-                        <th:block th:if="${j.status.name() == 'COMPLETED'}">
+                        <th:block th:if="${j.status.name() == 'COMPLETED'}"
+                                  th:with="isDoc=${j.modality.name() == 'IMAGE' or j.modality.name() == 'DOCUMENT'}">
                             <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>
                             <dialog class="panel" style="max-width:26rem; border:none;">
                                 <h3 style="margin-top:0;">Re-run this asset?</h3>
                                 <p class="muted">Replaces this asset's existing claims — they are
                                     deleted when the new run completes.</p>
-                                <form method="post" class="form" style="max-width:none;"
+                                <!-- Documents have no transcript leg: one re-run mode only. -->
+                                <form th:if="${isDoc}" method="post" class="form" style="max-width:none;"
                                       th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
                                     <input type="hidden" name="mode" value="extract"/>
-                                    <button type="submit">Re-extract claims
-                                        <span class="muted">(fast — reuses the transcript)</span></button>
+                                    <button type="submit">Re-extract from document
+                                        <span class="muted">(re-reads the file)</span></button>
                                 </form>
-                                <form method="post" class="form" style="max-width:none; margin-top:0.5rem;"
-                                      th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
-                                    <input type="hidden" name="mode" value="full"/>
-                                    <button type="submit" class="secondary">Full re-run
-                                        <span class="muted">(re-transcribe first)</span></button>
-                                </form>
+                                <th:block th:unless="${isDoc}">
+                                    <form method="post" class="form" style="max-width:none;"
+                                          th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
+                                        <input type="hidden" name="mode" value="extract"/>
+                                        <button type="submit">Re-extract claims
+                                            <span class="muted">(fast — reuses the transcript)</span></button>
+                                    </form>
+                                    <form method="post" class="form" style="max-width:none; margin-top:0.5rem;"
+                                          th:action="@{/intake/stage2/jobs/{jid}/rerun(jid=${j.id})}">
+                                        <input type="hidden" name="mode" value="full"/>
+                                        <button type="submit" class="secondary">Full re-run
+                                            <span class="muted">(re-transcribe first)</span></button>
+                                    </form>
+                                </th:block>
                                 <button type="button" class="btn--ghost btn--sm" style="margin-top:0.8rem;"
                                         data-dialog-close>Cancel</button>
                             </dialog>
@@ -139,6 +151,9 @@
                         <span class="badge" th:if="${c.authenticityTier != null}"
                               th:classappend="'badge--' + ${#strings.toLowerCase(c.authenticityTier)}"
                               th:text="${'prior ' + c.authenticityTier}">prior</span>
+                        <span class="badge badge--muted" th:if="${c.claimBasis != null}"
+                              th:text="${#strings.toLowerCase(c.claimBasis)}">basis</span>
+                        <span class="badge badge--danger" th:if="${c.sensitive}">sensitive</span>
                         <span class="badge badge--muted" th:if="${c.speaker != null}" th:text="${c.speaker}">speaker</span>
                         <span class="badge badge--muted" th:if="${c.mediaStart != null and c.mediaEnd != null}"
                               th:text="${c.mediaStart + 's – ' + c.mediaEnd + 's'}">0s – 5s</span>

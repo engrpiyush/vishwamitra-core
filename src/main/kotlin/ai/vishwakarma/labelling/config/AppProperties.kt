@@ -89,5 +89,11 @@ data class AppProperties(
         val explicitChannelCount: Int = 2,
         /** Dev/test: return a canned diarized transcript instead of calling Speech-to-Text. */
         val dryRun: Boolean = false,
+        /**
+         * IMAGE/DOCUMENT lane: refuse files larger than this. Bytes ride inline (base64, +33%)
+         * inside the Gemini generateContent request, which caps around 20MB total — 14MB raw leaves
+         * headroom for the prompt.
+         */
+        val maxDocumentBytes: Long = 14L * 1024 * 1024,
     )
 }

@@ -2,7 +2,10 @@ package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.Claim
+import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SourceClass
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
 import java.time.Instant
@@ -57,8 +60,12 @@ class ClaimRepository(private val db: Firestore) {
             "sourceExcerpt" to sourceExcerpt,
             "claimedDate" to claimedDate.toIsoDate(),
             "authenticityTier" to authenticityTier?.name,
+            "sourceClass" to sourceClass?.name,
+            "relationship" to relationship?.name,
             "authenticityScore" to authenticityScore,
             "extractionConfidence" to extractionConfidence,
+            "claimBasis" to claimBasis?.name,
+            "sensitive" to sensitive,
             "extractionPromptId" to extractionPromptId,
             "extractionPromptVersion" to extractionPromptVersion,
             "extractionPromptHash" to extractionPromptHash,
@@ -79,8 +86,12 @@ class ClaimRepository(private val db: Firestore) {
             sourceExcerpt = getString("sourceExcerpt"),
             claimedDate = localDate("claimedDate"),
             authenticityTier = AuthenticityTier.fromOrNull(getString("authenticityTier")),
+            sourceClass = SourceClass.fromOrNull(getString("sourceClass")),
+            relationship = Relationship.fromOrNull(getString("relationship")),
             authenticityScore = getDouble("authenticityScore"),
             extractionConfidence = getDouble("extractionConfidence"),
+            claimBasis = ClaimBasis.fromOrNull(getString("claimBasis")),
+            sensitive = getBoolean("sensitive") ?: false,
             extractionPromptId = getString("extractionPromptId"),
             extractionPromptVersion = getLong("extractionPromptVersion")?.toInt(),
             extractionPromptHash = getString("extractionPromptHash"),

@@ -122,15 +122,17 @@ CERTIFICATE: >-
   This is a certificate — a hard documentary anchor. Field fidelity matters most: extract
   issuer, credential name and level, holder identity, issue date, and expiry or validity
   exactly as printed, one atomic claim per fact, with claimedDate set from the printed
-  dates. Do not infer skills beyond what the credential certifies; if a field is illegible
-  or absent, simply omit it.
+  dates. Record what the credential certifies as the factual award (EPISODE or IDENTITY) —
+  do not emit SKILL claims; ability inference from a credential is a later stage's job. If
+  a field is illegible or absent, simply omit it.
 
 DEGREE_TRANSCRIPT: >-
   This is a degree certificate or academic transcript. Extract institution, degree and
-  field, dates, and printed distinctions (honours, rank, grades) exactly as recorded — one
-  claim per fact, claimedDate from the printed dates. Attainment evidences the certified
-  field: you may extract a SKILL claim at the document's face value, but never extrapolate
-  beyond what it states.
+  field, dates, and printed distinctions (honours, rank, grades, semester indices) exactly
+  as recorded — one claim per fact, claimedDate from the printed dates. A transcript proves
+  enrollment and completion, not mastery: record "completed course X (grade Y)" as the
+  EPISODE fact and never emit SKILL claims from course names or grades — ability inference
+  from academic records is a later stage's job.
 
 AWARD_HONOR: >-
   This documents an award or honour. Extract the awarding body, award name, category, date,
@@ -140,16 +142,16 @@ AWARD_HONOR: >-
 
 LICENSE_ACCREDITATION: >-
   This is a professional licence or accreditation. Extract the issuing authority, licence
-  type and scope, holder, and issue and validity dates exactly as recorded. The licence
-  evidences the certified capability at face value — extract the corresponding SKILL claim
-  tied to the accrediting body; omit registration numbers and other sensitive identifiers
-  from claim text.
+  type and scope, holder, and issue and validity dates exactly as recorded, as factual
+  EPISODE or IDENTITY claims — do not emit SKILL claims; ability inference from the
+  accreditation is a later stage's job. Omit registration numbers and other sensitive
+  identifiers from claim text.
 
 PATENT_PUBLICATION: >-
   This documents a patent or publication. Extract the title, venue or patent office, date,
-  and the subject's exact role — inventor or author position matters, copy it precisely.
-  The artifact evidences domain expertise: you may extract a SKILL claim for the covered
-  field, grounded in the document's subject matter.
+  and the subject's exact role — inventor or author position matters, copy it precisely —
+  as factual EPISODE and IDENTITY claims including the covered field. Do not emit SKILL
+  claims; expertise inference from the artifact is a later stage's job.
 
 PRESS_COVERAGE: >-
   This is press coverage about the subject. Distinguish voices: the journalist's assertions
