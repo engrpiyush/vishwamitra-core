@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('extraction-prompts')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Extraction prompts</h1>
+    <p class="muted">Per-content-type instruction block appended to the Stage 2 extraction prompt, read fresh on every run —
+        edits apply to the next run (or a job Re-run) with no deploy. Types without a saved override show the code default;
+        Save stores your edit as an override, Reset deletes it and returns to the code default.</p>
+
+    <section th:each="group : ${groups}">
+        <h2 th:text="${group.key}">SELF</h2>
+        <div th:each="r : ${group.value}" class="provider-card">
+            <!-- Reset posts separately (forms cannot nest); its button below joins via form="…". -->
+            <form th:id="'reset-' + ${r.contentType.name}" method="post"
+                  th:action="@{'/admin/extraction-prompts/' + ${r.contentType.name} + '/reset'}"
+                  data-confirm="This deletes the saved override; the code default applies from the next run."
+                  data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger></form>
+            <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.contentType.name}}">
+                <div class="form-row">
+                    <span class="provider-name" th:text="${r.contentType.name}">CONTENT_TYPE</span>
+                    <span class="muted" th:if="${r.prompt == null}">code default</span>
+                    <span class="muted" th:if="${r.prompt != null}"
+                          th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                </div>
+                <div class="prompt-editor">
+                    <textarea name="instructions" rows="5"
+                              th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                    <div class="prompt-actions">
+                        <button type="submit">Save</button>
+                        <button type="submit" class="btn--danger"
+                                th:attr="form='reset-' + ${r.contentType.name}">Reset to default</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </section>
+</main>
+</body>
+</html>

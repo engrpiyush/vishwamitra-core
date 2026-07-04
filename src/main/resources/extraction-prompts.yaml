@@ -1,0 +1,274 @@
+# Built-in per-content-type extraction instruction blocks (Stage 2, LLD §12.1).
+# Appended to the claim extractor's base contract when Firestore `extraction_prompts`
+# has no admin-edited row for the content type (admin page: /admin/extraction-prompts).
+# Keys are ContentType enum names. Edit HERE to circulate a new code default —
+# an admin row, when present, always overrides; "Reset to default" returns to this file.
+# Claims record which block ran via extractionPromptVersion (0 = this file) + hash.
+
+# --- SELF (subject-originated; low prior) ----------------------------------
+
+SELF_INTERVIEW: >-
+  This is the subject speaking about themselves in an interview setting. Prioritise
+  IDENTITY, VALUE, and WEAKNESS claims — self-interviews are the richest source for who
+  the person is and what drives them. Self-reported achievements are still claims (a later
+  stage corroborates them): extract them as stated, and let confidence reflect how directly
+  and specifically the subject states each fact, not how impressive it sounds.
+
+ACCOMPLISHMENT_STORY: >-
+  This is the subject recounting a specific accomplishment. Anchor every claim to the
+  concrete episode — extract the EPISODE itself (what, where, when, outcome) plus the roles
+  and collaborations mentioned inside it. A story told in convincing operational detail is
+  itself weak evidence of the underlying ability: you may ALSO extract SKILL claims for
+  capabilities the story demonstrates, marked as inferred with confidence 0.5–0.7, and
+  never invent capabilities the story doesn't evidence.
+
+RESUME_CV: >-
+  This is the subject's resume/CV — dense, structured self-report. Extract each role,
+  employer, tenure, qualification, and listed achievement as its own atomic claim (one
+  bullet often contains several). Copy titles, organisation names, and dates exactly as
+  written; set claimedDate whenever a date or range is stated. Do not extract bare
+  skill-section keywords as SKILL claims unless tied to evidence elsewhere in the document —
+  an unsupported keyword warrants confidence no higher than 0.5.
+
+PERSONAL_BIO_STATEMENT: >-
+  This is a self-authored bio or personal statement. Extract IDENTITY claims (background,
+  roles, affiliations) and VALUE claims (stated principles and motivations). Distinguish
+  fact from aspiration: "I am a certified architect" is a factual claim; "I strive to be a
+  leader" is a VALUE claim, not a SKILL — never convert aspirational language into
+  capability claims.
+
+WORK_SAMPLE_PORTFOLIO: >-
+  This describes work the subject actually produced. The artifact itself is evidence:
+  extract EPISODE claims for each concrete piece of work (what was built or made, for whom,
+  when) and you may ALSO extract SKILL claims for abilities the work visibly demonstrates,
+  marked as inferred with confidence 0.5–0.7. Tie every claim to a specific sample in
+  sourceExcerpt; never infer skills the samples don't actually show.
+
+SKILL_DEMO: >-
+  This recording is a demonstration: the subject exercising a capability (walking through a
+  workflow, presenting, teaching) is itself evidence. ALSO extract SKILL claims for
+  abilities the subject visibly demonstrates (e.g. "can clearly explain X", "works hands-on
+  with Y") — but mark these inferred claims with confidence 0.5–0.7, below claims the
+  transcript states outright, and never invent capabilities the transcript doesn't
+  evidence.
+
+AUTHORED_ARTICLE_BLOG: >-
+  This is an article or blog post the subject wrote. Authorship itself is evidence: you may
+  extract inferred SKILL claims for writing ability and for demonstrated command of the
+  subject matter, at confidence 0.5–0.7. Also extract factual claims the subject makes
+  about their own experience within the text (projects, roles, episodes). Do not extract
+  the article's general topic content as claims about the subject.
+
+AUTHORED_SOCIAL_POST: >-
+  This is a short, informal social post by the subject. Extract only clearly factual
+  self-statements (a new role announced, a shipped project, an award received). Be
+  conservative: ignore humour, hyperbole, memes, and engagement-bait phrasing, and keep
+  confidence moderate — brevity and informality leave little verification context.
+
+# --- ENDORSEMENT (third-party testimony; medium prior) ---------------------
+
+EXPERT_INTERVIEW: >-
+  A domain expert is speaking about the subject. Record their statements as third-party
+  testimony, never as the subject's self-report. Extract the expert's assessments of the
+  subject's abilities as SKILL claims and concrete collaborations or observed work as
+  EPISODE claims; where the expert states their basis for judging ("I supervised her
+  thesis"), keep that basis in the claim text — it is what makes the testimony weighty.
+
+PEER_ENDORSEMENT: >-
+  A peer or colleague is speaking about the subject. Prioritise concrete, first-hand
+  observations — shared projects, specific incidents, day-to-day working behaviour — over
+  general praise. Generic compliments ("great to work with") warrant lower confidence than
+  specific observed episodes; include the shared context (team, project, period) in the
+  claim when stated.
+
+MANAGER_ENDORSEMENT: >-
+  A current or former manager is speaking about the subject. Managerial testimony is
+  strongest on scope and performance: extract claims about responsibilities held, delivery
+  against goals, promotions, team impact, and growth over time. Anchor claims to the
+  management period when stated, and score directly observed behaviour higher than
+  second-hand or speculative remarks.
+
+MENTOR_TEACHER_ENDORSEMENT: >-
+  A mentor or teacher is speaking about the subject. Their vantage point is trajectory:
+  extract claims about demonstrated aptitude, learning speed, growth areas overcome (these
+  can be WEAKNESS claims with a positive arc), and standout work produced under their
+  guidance. Capture the teaching or mentoring context (course, programme, period) whenever
+  stated.
+
+CLIENT_TESTIMONIAL: >-
+  A client is speaking about work the subject delivered for them. Prioritise outcome
+  claims: what was delivered, the problem it solved, measurable results, and behaviour on
+  timeline and budget. Extract the engagement itself as an EPISODE claim and
+  delivered-capability statements as SKILL claims; concrete outcomes stated by a paying
+  client deserve higher confidence than general satisfaction language.
+
+PERSONAL_REFERENCE: >-
+  A personal acquaintance is vouching for the subject. This source is strongest for
+  character: extract VALUE claims (integrity, reliability, generosity) and life-context
+  IDENTITY claims. Personal references carry inherent goodwill bias — keep confidence
+  moderate for praise, higher only for specific factual events the referee personally
+  witnessed.
+
+RECOMMENDATION_LETTER: >-
+  This is a formal recommendation letter. Extract the verifiable skeleton plainly stated:
+  the relationship, roles, institutions, and dates. Recommendation letters are
+  conventionally superlative — extract ranking language ("top 1% of students I have
+  taught") as a claim, but calibrate confidence to the specificity of its supporting
+  detail, and prefer described episodes over adjectives.
+
+# --- DOCUMENTARY (hard anchors; high prior — field fidelity first) ---------
+
+CERTIFICATE: >-
+  This is a certificate — a hard documentary anchor. Field fidelity matters most: extract
+  issuer, credential name and level, holder identity, issue date, and expiry or validity
+  exactly as printed, one atomic claim per fact, with claimedDate set from the printed
+  dates. Do not infer skills beyond what the credential certifies; if a field is illegible
+  or absent, simply omit it.
+
+DEGREE_TRANSCRIPT: >-
+  This is a degree certificate or academic transcript. Extract institution, degree and
+  field, dates, and printed distinctions (honours, rank, grades) exactly as recorded — one
+  claim per fact, claimedDate from the printed dates. Attainment evidences the certified
+  field: you may extract a SKILL claim at the document's face value, but never extrapolate
+  beyond what it states.
+
+AWARD_HONOR: >-
+  This documents an award or honour. Extract the awarding body, award name, category, date,
+  and what it was conferred for, exactly as recorded. If selectivity context is stated
+  (finalists, pool size, national or international level), include it in the claim text —
+  it is what a later stage needs to weigh the achievement.
+
+LICENSE_ACCREDITATION: >-
+  This is a professional licence or accreditation. Extract the issuing authority, licence
+  type and scope, holder, and issue and validity dates exactly as recorded. The licence
+  evidences the certified capability at face value — extract the corresponding SKILL claim
+  tied to the accrediting body; omit registration numbers and other sensitive identifiers
+  from claim text.
+
+PATENT_PUBLICATION: >-
+  This documents a patent or publication. Extract the title, venue or patent office, date,
+  and the subject's exact role — inventor or author position matters, copy it precisely.
+  The artifact evidences domain expertise: you may extract a SKILL claim for the covered
+  field, grounded in the document's subject matter.
+
+PRESS_COVERAGE: >-
+  This is press coverage about the subject. Distinguish voices: the journalist's assertions
+  are third-party reporting, while quoted statements by the subject are self-report —
+  attribute accordingly. Extract the reported facts (what the subject did, when, where)
+  with the outlet's framing preserved in sourceExcerpt, and include the publication context
+  in EPISODE claims.
+
+COMPETITION_RESULT: >-
+  This documents a competition result. Extract the competition name, organiser, date, the
+  subject's placement, and the field they competed in, exactly as recorded. Include scale
+  context (number of participants; school, national, or international level) whenever
+  stated — placement plus scale is the claim's entire evidential weight.
+
+EMPLOYMENT_RECORD: >-
+  This is an official employment record (offer, relieving, or experience letter, HR
+  statement). Extract employer, titles, tenure dates, and any recorded responsibilities
+  exactly as written, one claim per fact with claimedDate from the stated dates. This is
+  documentary confirmation of the career skeleton — precision over interpretation, no
+  inference.
+
+# --- PUBLIC_PROFILE (online presence; verifiability varies) ----------------
+
+LINKEDIN: >-
+  This is the subject's LinkedIn profile — structured self-report. Extract roles,
+  employers, dates, education, and certifications as the career skeleton, exactly as
+  listed. Treat recommendation excerpts embedded in the profile as third-party testimony
+  and skill-section endorsements as weak crowd signals (low confidence); the subject's own
+  summary prose follows the same rules as a self-authored bio.
+
+GITHUB: >-
+  This is the subject's GitHub presence. Extract concrete, verifiable activity:
+  repositories owned or contributed to, languages and technologies used, notable projects,
+  and sustained activity patterns — reference the specific repository or contribution in
+  sourceExcerpt. Adoption signals shown on the page (stars, forks, downloads) strengthen
+  EPISODE claims; extract SKILL claims for technologies with visible, non-trivial usage, at
+  confidence proportional to the depth of evidence.
+
+PERSONAL_WEBSITE: >-
+  This is the subject's personal website — self-authored and self-curated. Extract the
+  factual skeleton (roles, projects, credentials listed) and treat showcased work like
+  portfolio samples: EPISODE claims for concrete pieces, inferred SKILL claims at 0.5–0.7
+  for what the work visibly demonstrates. Marketing self-description ("award-winning",
+  "world-class") is not a claim unless the underlying fact is stated.
+
+APP_STORE_LISTING: >-
+  This is an app-store listing for a product the subject built or owns. The shipped product
+  is the claim: extract what the product is, the platform, the subject's role, and stated
+  release history. Publicly displayed metrics (ratings, review counts, download bands) are
+  verifiable adoption evidence — include them in claim text when shown. Shipping a product
+  on the platform also supports an inferred SKILL claim at 0.5–0.7.
+
+SCHOLARLY_PROFILE: >-
+  This is a scholarly profile (Google Scholar, ORCID, or similar). Extract publications,
+  venues, co-authorship, affiliations, and citation metrics exactly as displayed — these
+  are externally maintained and highly verifiable. Citation counts and indices are adoption
+  evidence for research impact; extract domain SKILL claims for fields with a sustained
+  publication record.
+
+SOCIAL_PROFILE: >-
+  This is a general social-media profile. Extract only what is concretely evidenced: roles
+  or affiliations stated in the bio, and audience scale when displayed (follower counts as
+  reach evidence for creator or communicator claims). Be conservative with everything
+  else — social self-presentation is curated and unverified; keep confidence low to
+  moderate.
+
+PORTFOLIO_PLATFORM: >-
+  This is a profile on a portfolio platform (Behance, Dribbble, or similar). Extract
+  concrete published works (what, when, for whom if stated) as EPISODE claims and inferred
+  SKILL claims at 0.5–0.7 for capabilities the works visibly demonstrate. Platform signals
+  (features, likes, client reviews) strengthen confidence when displayed; named client work
+  outweighs self-initiated pieces.
+
+BLOG_PUBLICATION: >-
+  This is the subject's writing published on an external platform or publication. The venue
+  matters: publication in an edited or reputable outlet is stronger evidence than a
+  self-published post — include the venue in the claim. Extract inferred SKILL claims for
+  writing and demonstrated domain command at 0.5–0.7, plus any factual self-statements
+  about experience made within the piece.
+
+# --- EVENT_CAPTURE (A/V of a real moment; medium prior) --------------------
+
+AWARD_CEREMONY: >-
+  This captures an award ceremony. The footage evidences the award actually being
+  conferred: extract who conferred it, the award name, the occasion, and the date as
+  EPISODE claims — captured conferral deserves higher confidence than a mere mention.
+  Citations and introductions about the subject are third-party testimony; the subject's
+  acceptance remarks are self-report.
+
+SPEECH_TALK: >-
+  This captures the subject giving a talk or speech. Delivering the talk is itself
+  evidence: extract inferred SKILL claims for public speaking and for command of the
+  material presented, at confidence 0.5–0.7, never inventing expertise the content doesn't
+  show. Also extract the engagement itself (event, venue, topic, date) as an EPISODE claim,
+  plus any factual self-statements made during the talk.
+
+SPORTS_PERFORMANCE: >-
+  This captures the subject in athletic competition or performance. Extract what is
+  observable: the sport, the level of the event, the outcome if shown, and the date and
+  venue as EPISODE claims. You may extract inferred SKILL claims for athletic abilities
+  visibly demonstrated at 0.5–0.7; results announced or displayed on screen count as
+  stated, not inferred.
+
+ARTISTIC_PERFORMANCE: >-
+  This captures the subject performing (music, dance, theatre, other arts). The performance
+  is the evidence: extract the engagement (venue, event, role, date) as an EPISODE claim
+  and inferred SKILL claims at 0.5–0.7 for the artistic capabilities visibly demonstrated.
+  Audience or presenter remarks about the subject are third-party testimony.
+
+DEMO_PITCH: >-
+  This captures the subject pitching or demoing a product or venture. Two evidence layers:
+  extract factual claims about the venture as the subject states them (what it does,
+  traction, the subject's role — self-reported, so calibrate accordingly), and inferred
+  SKILL claims at 0.5–0.7 for capabilities the pitch visibly demonstrates (product
+  thinking, communication, technical fluency in the demo).
+
+TEACHING_SESSION: >-
+  This captures the subject teaching or training others. Teaching is a demonstration:
+  extract inferred SKILL claims at 0.5–0.7 both for the subject matter taught (command of
+  it is visible in the explanation) and for instructional ability itself. Also extract the
+  session as an EPISODE claim (audience, setting, topic) and any factual self-statements
+  made while teaching.

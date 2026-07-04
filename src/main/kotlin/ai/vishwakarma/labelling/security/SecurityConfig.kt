@@ -96,6 +96,7 @@ class SecurityConfig {
                 authorize("/actuator/health/**", permitAll)
                 authorize("/css/**", permitAll)
                 authorize("/js/**", permitAll)
+                authorize("/favicon.svg", permitAll)
                 authorize("/webjars/**", permitAll)
                 authorize("/login/**", permitAll)
                 authorize("/", permitAll)

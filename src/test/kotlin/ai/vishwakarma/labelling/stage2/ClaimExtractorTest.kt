@@ -6,15 +6,19 @@ import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ContentType
+import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.ProviderRepository
+import ai.vishwakarma.labelling.service.ExtractionPromptService
 import ai.vishwakarma.labelling.service.ProviderService
 import com.google.cloud.firestore.Firestore
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.mockito.Mockito.mock
 
@@ -26,14 +30,39 @@ private open class StubGemini(private val canned: String) :
         ProviderService(ProviderRepository(mock(Firestore::class.java)))
     ) {
 
+    var lastPrompt: String? = null
+
     override fun available(): Boolean = true
 
-    override fun generate(prompt: String, maxTokens: Int?, thinkingBudget: Int?): String = canned
+    override fun generate(prompt: String, maxTokens: Int?, thinkingBudget: Int?): String {
+        lastPrompt = prompt
+        return canned
+    }
 }
 
 private class UnavailableGemini : StubGemini("") {
     override fun available(): Boolean = false
 }
+
+private class FakePromptRepo : ExtractionPromptRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, ExtractionPrompt>()
+
+    override fun findById(id: String): ExtractionPrompt? = store[id]
+
+    override fun findAll(): List<ExtractionPrompt> = store.values.toList()
+
+    override fun save(prompt: ExtractionPrompt) {
+        store[prompt.id] = prompt
+    }
+
+    override fun delete(id: String) {
+        store.remove(id)
+    }
+}
+
+/** A real [ExtractionPromptService] over an in-memory repo, pre-loaded with [rows]. */
+private fun promptService(vararg rows: ExtractionPrompt): ExtractionPromptService =
+    ExtractionPromptService(FakePromptRepo().apply { rows.forEach { save(it) } })
 
 /** [ClaimExtractor]'s tolerant parse: fences stripped, bad rows dropped, prior seeded. */
 class ClaimExtractorTest {
@@ -45,14 +74,17 @@ class ClaimExtractorTest {
             language = "en-US",
         )
 
-    private fun asset(prior: AuthenticityTier = AuthenticityTier.MEDIUM) =
+    private fun asset(
+        prior: AuthenticityTier = AuthenticityTier.MEDIUM,
+        contentType: ContentType = ContentType.MANAGER_ENDORSEMENT,
+    ) =
         Asset(
             id = "a1",
             subjectId = "s1",
             title = "Endorser call",
             modality = AssetModality.AUDIO,
-            sourceClass = ContentType.MANAGER_ENDORSEMENT.sourceClass,
-            contentType = ContentType.MANAGER_ENDORSEMENT,
+            sourceClass = contentType.sourceClass,
+            contentType = contentType,
             relationship = Relationship.MANAGER,
             authenticityPrior = prior,
         )
@@ -73,7 +105,7 @@ class ClaimExtractorTest {
                 .trimIndent()
 
         val claims =
-            ClaimExtractor(StubGemini(response))
+            ClaimExtractor(StubGemini(response), promptService())
                 .extract("s1", asset(AuthenticityTier.HIGH), transcript)
 
         assertEquals(2, claims.size)
@@ -101,7 +133,9 @@ class ClaimExtractorTest {
               {"text":"Claim two","claimType":"EPISODE","confidence":0.9},
               {"text":"Truncated mid-prop"""
 
-        val claims = ClaimExtractor(StubGemini(truncated)).extract("s1", asset(), transcript)
+        val claims =
+            ClaimExtractor(StubGemini(truncated), promptService())
+                .extract("s1", asset(), transcript)
 
         assertEquals(2, claims.size)
         assertEquals("Claim one", claims[0].text)
@@ -110,7 +144,66 @@ class ClaimExtractorTest {
     @Test
     fun `refuses when the gemini provider is unavailable`() {
         assertFailsWith<IllegalStateException> {
-            ClaimExtractor(UnavailableGemini()).extract("s1", asset(), transcript)
+            ClaimExtractor(UnavailableGemini(), promptService()).extract("s1", asset(), transcript)
         }
+    }
+
+    private val claimJson =
+        """[{"text":"Explains graph modelling","claimType":"SKILL","confidence":0.6}]"""
+
+    @Test
+    fun `content without a row falls back to its code default with version 0 provenance`() {
+        val gemini = StubGemini(claimJson)
+
+        val claims =
+            ClaimExtractor(gemini, promptService())
+                .extract("s1", asset(contentType = ContentType.SKILL_DEMO), transcript)
+
+        assertTrue(
+            gemini.lastPrompt!!.contains(ExtractionPrompt.builtinFor(ContentType.SKILL_DEMO))
+        )
+        val claim = claims.single()
+        assertEquals("SKILL_DEMO", claim.extractionPromptId)
+        assertEquals(0, claim.extractionPromptVersion)
+        assertTrue(claim.extractionPromptHash!!.isNotBlank())
+    }
+
+    @Test
+    fun `each content type gets its own code default block`() {
+        val gemini = StubGemini(claimJson)
+
+        val claims = ClaimExtractor(gemini, promptService()).extract("s1", asset(), transcript)
+
+        val builtin = ExtractionPrompt.builtinFor(ContentType.MANAGER_ENDORSEMENT)
+        assertTrue(gemini.lastPrompt!!.contains(builtin))
+        assertFalse(
+            gemini.lastPrompt!!.contains(ExtractionPrompt.builtinFor(ContentType.SKILL_DEMO))
+        )
+        assertEquals("MANAGER_ENDORSEMENT", claims.single().extractionPromptId)
+        assertEquals(0, claims.single().extractionPromptVersion)
+    }
+
+    @Test
+    fun `a stored prompt row overrides the code default and stamps its version and hash`() {
+        val gemini = StubGemini(claimJson)
+        val row =
+            ExtractionPrompt(
+                id = ContentType.SKILL_DEMO.name,
+                instructions = "Weigh endorser seniority when scoring confidence.",
+                version = 3,
+            )
+
+        val claims =
+            ClaimExtractor(gemini, promptService(row))
+                .extract("s1", asset(contentType = ContentType.SKILL_DEMO), transcript)
+
+        assertTrue(gemini.lastPrompt!!.contains("Weigh endorser seniority"))
+        assertFalse(
+            gemini.lastPrompt!!.contains(ExtractionPrompt.builtinFor(ContentType.SKILL_DEMO))
+        )
+        val claim = claims.single()
+        assertEquals("SKILL_DEMO", claim.extractionPromptId)
+        assertEquals(3, claim.extractionPromptVersion)
+        assertTrue(claim.extractionPromptHash!!.isNotBlank())
     }
 }

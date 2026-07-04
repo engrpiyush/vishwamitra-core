@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.ToolParam
 import ai.vishwakarma.labelling.domain.ToolStatus
@@ -9,6 +10,7 @@ import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.CatalogService
 import ai.vishwakarma.labelling.service.DomainError
+import ai.vishwakarma.labelling.service.ExtractionPromptService
 import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.TaxonomyService
@@ -34,6 +36,7 @@ class AdminController(
     private val scenarios: ScenarioService,
     private val users: UserService,
     private val providers: ProviderService,
+    private val extractionPrompts: ExtractionPromptService,
 ) {
 
     private fun actor() = CurrentUser.email()
@@ -285,5 +288,49 @@ class AdminController(
         providers.update(id, enabled, model, actor())
         ra.addFlashAttribute("ok", "Provider '$id' updated")
         return "redirect:/admin/providers"
+    }
+
+    // ---- Extraction prompts --------------------------------------------------
+    @GetMapping("/extraction-prompts")
+    fun extractionPrompts(model: Model): String {
+        model.addAttribute("pageTitle", "Extraction prompts")
+        model.addAttribute("section", "extraction-prompts")
+        model.addAttribute("groups", extractionPrompts.list())
+        return "admin/extraction-prompts"
+    }
+
+    @PostMapping("/extraction-prompts/{id}")
+    fun updateExtractionPrompt(
+        @PathVariable id: String,
+        @RequestParam(required = false, defaultValue = "") instructions: String,
+        ra: RedirectAttributes,
+    ): String {
+        val contentType = ContentType.fromOrNull(id)
+        when {
+            contentType == null -> ra.addFlashAttribute("error", "Unknown content type '$id'")
+            instructions.isBlank() ->
+                ra.addFlashAttribute(
+                    "error",
+                    "Instructions cannot be blank — use Reset to revert ${contentType.name} " +
+                        "to the code default",
+                )
+            else -> {
+                val saved = extractionPrompts.update(contentType, instructions, actor())
+                ra.addFlashAttribute("ok", "${contentType.name} prompt saved (v${saved.version})")
+            }
+        }
+        return "redirect:/admin/extraction-prompts"
+    }
+
+    @PostMapping("/extraction-prompts/{id}/reset")
+    fun resetExtractionPrompt(@PathVariable id: String, ra: RedirectAttributes): String {
+        val contentType = ContentType.fromOrNull(id)
+        if (contentType == null) {
+            ra.addFlashAttribute("error", "Unknown content type '$id'")
+        } else {
+            extractionPrompts.reset(contentType)
+            ra.addFlashAttribute("ok", "${contentType.name} reverted to the code default")
+        }
+        return "redirect:/admin/extraction-prompts"
     }
 }

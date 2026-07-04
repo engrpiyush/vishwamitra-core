@@ -21,6 +21,7 @@
             } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
         })();
     </script>
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}"/>
     <link rel="stylesheet" th:href="@{/css/app.css}"/>
     <script th:src="@{/webjars/htmx.org/dist/htmx.min.js}" defer></script>
     <script th:src="@{/js/app.js}" defer></script>
@@ -81,6 +82,7 @@
     <a th:href="@{/admin/scenarios}"    th:classappend="${active == 'scenarios'} ? 'active'">Scenarios</a>
     <a th:href="@{/admin/users}"        th:classappend="${active == 'users'} ? 'active'">Users</a>
     <a th:href="@{/admin/providers}"    th:classappend="${active == 'providers'} ? 'active'">Providers</a>
+    <a th:href="@{/admin/extraction-prompts}" th:classappend="${active == 'extraction-prompts'} ? 'active'">Extraction prompts</a>
 </nav>
 </body>
 </html>

@@ -65,6 +65,12 @@ data class Claim(
     val authenticityScore: Double? = null,
     /** LLM self-reported extraction confidence (0..1). */
     val extractionConfidence: Double? = null,
+    /** [ContentType] name whose instruction block extracted this claim. */
+    val extractionPromptId: String? = null,
+    /** [ExtractionPrompt.version] used (0 = built-in default); Stage 3 compares like with like. */
+    val extractionPromptVersion: Int? = null,
+    /** Short hash of the exact instruction block used. */
+    val extractionPromptHash: String? = null,
     val createdAt: Instant? = null,
     val stage2ProcessedAt: Instant? = null,
 )

@@ -17,6 +17,7 @@ import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.ProviderRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
@@ -168,7 +169,8 @@ private class FakeExtractor :
         GeminiDrafting(
             AppProperties(),
             ProviderService(ProviderRepository(mock(Firestore::class.java)))
-        )
+        ),
+        ExtractionPromptService(ExtractionPromptRepository(mock(Firestore::class.java)))
     ) {
     var throws = false
 

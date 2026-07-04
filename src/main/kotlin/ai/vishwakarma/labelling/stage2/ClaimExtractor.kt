@@ -3,9 +3,10 @@ package ai.vishwakarma.labelling.stage2
 import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimType
-import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
 import java.time.Instant
 import java.time.LocalDate
 import org.springframework.stereotype.Component
@@ -14,11 +15,16 @@ import org.springframework.stereotype.Component
  * Shreds a diarized [Transcript] into atomic [Claim]s via Vertex AI Gemini (structured JSON output,
  * tolerant parse — the [ai.vishwakarma.labelling.drafting.DraftPrompts] idiom). Stays inside GCP:
  * [GeminiDrafting] calls the regional Vertex endpoint with the app SA's ADC token — no external API
- * or key. Claims come back with a blank id (the caller assigns via the repository) and their
- * authenticity tier seeded from the source asset's prior; Stage 3 refines it later.
+ * or key. The content-type instruction block is resolved per run from the admin-managed
+ * `extraction_prompts` rows (built-in fallback) and its version/hash stamped on every claim. Claims
+ * come back with a blank id (the caller assigns via the repository) and their authenticity tier
+ * seeded from the source asset's prior; Stage 3 refines it later.
  */
 @Component
-class ClaimExtractor(private val gemini: GeminiDrafting) {
+class ClaimExtractor(
+    private val gemini: GeminiDrafting,
+    private val prompts: ExtractionPromptService,
+) {
 
     fun extract(
         subjectId: String,
@@ -29,16 +35,17 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
         check(gemini.available()) {
             "Gemini extraction unavailable — enable the gemini provider with a Vertex model id"
         }
+        val resolved = prompts.resolve(asset.contentType)
         val lines = transcript.segments.map { it.render() }
         val now = Instant.now()
         return chunks(lines).flatMap { chunk ->
             val raw =
                 gemini.generate(
-                    prompt(asset, chunk, subjectName),
+                    prompt(asset, chunk, subjectName, resolved),
                     maxTokens = MAX_TOKENS,
                     thinkingBudget = THINKING_BUDGET,
                 )
-            parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now) }
+            parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now, resolved) }
         }
     }
 
@@ -64,7 +71,12 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
         return out
     }
 
-    private fun prompt(asset: Asset, chunk: String, subjectName: String?): String = buildString {
+    private fun prompt(
+        asset: Asset,
+        chunk: String,
+        subjectName: String?,
+        resolved: ResolvedExtractionPrompt,
+    ): String = buildString {
         appendLine(
             "You are extracting atomic claims about a person (the \"subject\") from a diarized " +
                 "transcript, building an evidence ledger."
@@ -92,15 +104,8 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
                 "verifiable statement. Ignore small talk, questions, and statements not about the " +
                 "subject."
         )
-        if (asset.contentType in DEMONSTRATION_CONTENT) {
-            appendLine(
-                "This recording is a demonstration: the subject exercising a capability " +
-                    "(walking through a workflow, presenting, teaching) is itself evidence. ALSO " +
-                    "extract SKILL claims for abilities the subject visibly demonstrates (e.g. " +
-                    "\"can clearly explain X\", \"works hands-on with Y\") — but mark these " +
-                    "inferred claims with confidence 0.5–0.7, below claims the transcript states " +
-                    "outright, and never invent capabilities the transcript doesn't evidence."
-            )
+        if (resolved.instructions.isNotBlank()) {
+            appendLine(resolved.instructions)
         }
         appendLine()
         appendLine("Claim types:")
@@ -148,7 +153,12 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
         return runCatching { Json.parse(json.substring(0, cut + 1) + "]") as? List<*> }.getOrNull()
     }
 
-    private fun Map<*, *>.toClaim(subjectId: String, asset: Asset, now: Instant): Claim? {
+    private fun Map<*, *>.toClaim(
+        subjectId: String,
+        asset: Asset,
+        now: Instant,
+        resolved: ResolvedExtractionPrompt,
+    ): Claim? {
         val text = (this["text"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val claimType = ClaimType.fromOrNull(this["claimType"] as? String) ?: return null
         return Claim(
@@ -168,6 +178,9 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
             authenticityTier = asset.authenticityPrior,
             authenticityScore = null,
             extractionConfidence = (this["confidence"] as? Number)?.toDouble(),
+            extractionPromptId = asset.contentType.name,
+            extractionPromptVersion = resolved.version,
+            extractionPromptHash = resolved.hash,
             createdAt = now,
             stage2ProcessedAt = now,
         )
@@ -184,21 +197,6 @@ class ClaimExtractor(private val gemini: GeminiDrafting) {
     }
 
     companion object {
-        /**
-         * Content where the subject demonstrating an ability is itself evidence — extraction may
-         * infer SKILL claims from what the subject does, not only what is said (at reduced
-         * confidence, so Stage 3 can discount inferred vs stated claims).
-         */
-        private val DEMONSTRATION_CONTENT =
-            setOf(
-                ContentType.SKILL_DEMO,
-                ContentType.WORK_SAMPLE_PORTFOLIO,
-                ContentType.ACCOMPLISHMENT_STORY,
-                ContentType.DEMO_PITCH,
-                ContentType.TEACHING_SESSION,
-                ContentType.SPEECH_TALK,
-            )
-
         /** Per-prompt transcript budget (~15k tokens); split on segment boundaries. */
         const val CHUNK_CHARS = 60_000
         /**

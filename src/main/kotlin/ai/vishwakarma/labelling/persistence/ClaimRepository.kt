@@ -59,6 +59,9 @@ class ClaimRepository(private val db: Firestore) {
             "authenticityTier" to authenticityTier?.name,
             "authenticityScore" to authenticityScore,
             "extractionConfidence" to extractionConfidence,
+            "extractionPromptId" to extractionPromptId,
+            "extractionPromptVersion" to extractionPromptVersion,
+            "extractionPromptHash" to extractionPromptHash,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
             "stage2ProcessedAt" to stage2ProcessedAt.toTimestamp(),
         )
@@ -78,6 +81,9 @@ class ClaimRepository(private val db: Firestore) {
             authenticityTier = AuthenticityTier.fromOrNull(getString("authenticityTier")),
             authenticityScore = getDouble("authenticityScore"),
             extractionConfidence = getDouble("extractionConfidence"),
+            extractionPromptId = getString("extractionPromptId"),
+            extractionPromptVersion = getLong("extractionPromptVersion")?.toInt(),
+            extractionPromptHash = getString("extractionPromptHash"),
             createdAt = instant("createdAt"),
             stage2ProcessedAt = instant("stage2ProcessedAt"),
         )
