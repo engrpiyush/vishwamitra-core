@@ -231,6 +231,23 @@ class IntakeController(
         return "redirect:/intake/${subjectId ?: ""}"
     }
 
+    /**
+     * Revoke consent for one asset — works even after the manifest is sealed/locked (§12.7): marks
+     * it REVOKED, deletes its bytes + any derived claims/jobs, updates the manifest; never unseals.
+     */
+    @PostMapping("/assets/{assetId}/revoke-consent")
+    fun revokeConsent(
+        @PathVariable assetId: String,
+        @RequestParam(required = false) note: String?,
+        ra: RedirectAttributes,
+    ): String {
+        val subjectId = intake.getAsset(assetId)?.subjectId
+        val result = intake.revokeAssetConsent(assetId, note ?: "")
+        result.fold({}, { stage2.purgeAssetDerived(it.subjectId, assetId) })
+        result.notify(ra, "Consent revoked — bytes and derived claims removed")
+        return "redirect:/intake/${subjectId ?: ""}"
+    }
+
     /** Plain, no-JS preview: 302 to the external URL or a short-lived signed GET. */
     @GetMapping("/assets/{assetId}/preview")
     fun preview(@PathVariable assetId: String, ra: RedirectAttributes): String {

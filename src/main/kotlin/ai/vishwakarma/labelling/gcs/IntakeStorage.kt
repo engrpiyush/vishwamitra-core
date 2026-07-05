@@ -10,6 +10,8 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -128,9 +130,35 @@ class IntakeStorage(private val props: AppProperties) {
         return storage().get(BlobId.of(bucket, objectPath))?.size
     }
 
+    /**
+     * Content hash (base64-encoded MD5) of a stored object, or null if it isn't present yet. Used
+     * to catch the same bytes uploaded under two content types (§12.7 cross-asset dedup). Prod
+     * returns the MD5 GCS already computed for the object; local dev hashes the file. Checksums are
+     * only ever compared within one environment, so the shared base64-MD5 shape is all that
+     * matters.
+     */
+    fun objectChecksum(objectPath: String): String? {
+        if (bucket.isBlank()) {
+            val target = localPath(objectPath)
+            if (!Files.exists(target)) return null
+            val digest = MessageDigest.getInstance("MD5")
+            Files.newInputStream(target).use { input ->
+                val buf = ByteArray(8192)
+                while (true) {
+                    val read = input.read(buf)
+                    if (read < 0) break
+                    digest.update(buf, 0, read)
+                }
+            }
+            return Base64.getEncoder().encodeToString(digest.digest())
+        }
+        return storage().get(BlobId.of(bucket, objectPath))?.md5
+    }
+
     /** Best-effort delete of a stored object (missing object is not an error). */
     fun deleteObject(objectPath: String) {
         if (bucket.isBlank()) {
+            0
             Files.deleteIfExists(localPath(objectPath))
             return
         }

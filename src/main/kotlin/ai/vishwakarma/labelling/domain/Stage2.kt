@@ -52,4 +52,6 @@ data class Stage2Job(
     val startedAt: Instant? = null,
     /** When the job reached a terminal state. */
     val finishedAt: Instant? = null,
+    /** When the job entered EXTRACTING — the clock for stuck-job reclaim (§12.7 hardening). */
+    val extractingSince: Instant? = null,
 )

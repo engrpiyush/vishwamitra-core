@@ -31,6 +31,7 @@ import ai.vishwakarma.labelling.stage2.TranscriptSegment
 import ai.vishwakarma.labelling.stage2.TranscriptionPoll
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
+import java.time.Duration
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -267,7 +268,17 @@ class Stage2ServiceTest {
     private val extractor = FakeExtractor()
     private val documents = FakeDocumentSource()
     private val service =
-        Stage2Service(subjects, manifests, assets, jobs, claims, transcriber, extractor, documents)
+        Stage2Service(
+            subjects,
+            manifests,
+            assets,
+            jobs,
+            claims,
+            transcriber,
+            extractor,
+            documents,
+            AppProperties(),
+        )
 
     private val actor = "reviewer@vishwakarma.ai"
 
@@ -539,6 +550,35 @@ class Stage2ServiceTest {
     }
 
     @Test
+    fun `poll reclaims a job stuck in EXTRACTING past the timeout`() {
+        seed(avAsset("a1"))
+        jobs.store["j1"] =
+            seedTranscribingJob()
+                .copy(
+                    status = Stage2JobStatus.EXTRACTING,
+                    extractingSince = Instant.now().minus(Duration.ofHours(1)),
+                )
+
+        val result = service.poll("j1")
+
+        assertEquals(Stage2JobStatus.FAILED, result.valueOrNull()!!.status)
+        assertTrue(result.valueOrNull()!!.error!!.contains("stranded in EXTRACTING"))
+    }
+
+    @Test
+    fun `poll leaves a recently-EXTRACTING job untouched`() {
+        seed(avAsset("a1"))
+        jobs.store["j1"] =
+            seedTranscribingJob()
+                .copy(status = Stage2JobStatus.EXTRACTING, extractingSince = Instant.now())
+
+        val result = service.poll("j1")
+
+        assertEquals(Stage2JobStatus.EXTRACTING, result.valueOrNull()!!.status)
+        assertTrue(jobs.saves.isEmpty())
+    }
+
+    @Test
     fun `process passes the subject's name as a transcription hint`() {
         seedSubject()
         seedManifest()
@@ -662,6 +702,21 @@ class Stage2ServiceTest {
                 claimType = ClaimType.EPISODE,
                 text = "stale claim from the previous run",
             )
+    }
+
+    @Test
+    fun `purgeAssetDerived deletes only the target asset's claims and jobs`() {
+        seedOldClaim(id = "c1", assetId = "a1")
+        seedOldClaim(id = "c2", assetId = "a2")
+        seedTranscribingJob(id = "j1", assetId = "a1")
+        seedTranscribingJob(id = "j2", assetId = "a2")
+
+        service.purgeAssetDerived("s1", "a1")
+
+        assertTrue(claims.store["c1"] == null)
+        assertTrue(claims.store["c2"] != null)
+        assertTrue(jobs.store["j1"] == null)
+        assertTrue(jobs.store["j2"] != null)
     }
 
     @Test

@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
@@ -21,6 +22,7 @@ import ai.vishwakarma.labelling.stage2.TranscriptionPoll
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import java.time.Duration
 import java.time.Instant
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -44,6 +46,7 @@ class Stage2Service(
     private val transcriber: Transcriber,
     private val extractor: ClaimExtractor,
     private val documents: DocumentSource,
+    private val props: AppProperties,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -94,7 +97,7 @@ class Stage2Service(
         // Extraction runs synchronously inside whichever poll request saw the transcript land; a
         // concurrent poll (the UI auto-polls every few seconds) must not start a second extraction
         // — that duplicates claims (observed live: 4 overlapping polls → 4x claims).
-        if (job.status == Stage2JobStatus.EXTRACTING) return job.right()
+        if (job.status == Stage2JobStatus.EXTRACTING) return maybeReclaimStuck(job).right()
         if (job.modality in DOC_MODALITIES) {
             // PENDING is the only non-terminal doc state left; saving EXTRACTING here is the
             // same double-run guard as above for overlapping poll-all requests.
@@ -102,6 +105,7 @@ class Stage2Service(
                 job.copy(
                         status = Stage2JobStatus.EXTRACTING,
                         startedAt = job.startedAt ?: Instant.now(),
+                        extractingSince = Instant.now(),
                     )
                     .also { jobs.save(it) }
             return runDocumentExtraction(extracting).right()
@@ -178,6 +182,7 @@ class Stage2Service(
                     claimCount = null,
                     error = null,
                     finishedAt = null,
+                    extractingSince = Instant.now(),
                 )
                 .also { jobs.save(it) }
         return runExtraction(extracting, transcript).right()
@@ -227,6 +232,19 @@ class Stage2Service(
     fun purgeSubject(subjectId: String) {
         claims.findBySubject(subjectId).forEach { claims.delete(it.id) }
         jobs.findBySubject(subjectId).forEach { jobs.delete(it.id) }
+    }
+
+    /**
+     * Per-asset analogue of [purgeSubject]: delete the claims and job(s) derived from one asset —
+     * used when consent for that asset is revoked (§12.7 hardening), so the withdrawal reaches
+     * everything derived. Idempotent (safe with no claims/jobs yet).
+     */
+    fun purgeAssetDerived(subjectId: String, assetId: String) {
+        claims.findByAsset(assetId).forEach { claims.delete(it.id) }
+        jobs
+            .findBySubject(subjectId)
+            .filter { it.assetId == assetId }
+            .forEach { jobs.delete(it.id) }
     }
 
     /**
@@ -368,11 +386,36 @@ class Stage2Service(
         }
     }
 
+    /**
+     * A crash mid-extraction strands a job in EXTRACTING forever — the guard in [poll] makes every
+     * later poll a no-op, and there is no scheduler. Reclaim it to FAILED once it has been
+     * EXTRACTING longer than [AppProperties.Stage2.extractingTimeout] so operator Retry can re-run
+     * it. That threshold must exceed the Cloud Run request timeout: a live extraction runs
+     * synchronously inside one request, so anything older can only be a crash, never an in-flight
+     * run. Jobs from before [Stage2Job.extractingSince] existed fall back to startedAt/createdAt.
+     */
+    private fun maybeReclaimStuck(job: Stage2Job): Stage2Job {
+        val since = job.extractingSince ?: job.startedAt ?: job.createdAt ?: return job
+        if (Duration.between(since, Instant.now()) <= props.stage2.extractingTimeout) return job
+        log.warn("Reclaiming job {} stranded in EXTRACTING since {}", job.id, since)
+        return job.copy(
+                status = Stage2JobStatus.FAILED,
+                error =
+                    "Extraction stranded in EXTRACTING for over ${props.stage2.extractingTimeout} " +
+                        "(likely a crash mid-extraction); Retry to re-extract.",
+                finishedAt = Instant.now(),
+            )
+            .also { jobs.save(it) }
+    }
+
     private fun extractClaims(job: Stage2Job, done: TranscriptionPoll.Done): Stage2Job {
         val extracting =
-            job.copy(status = Stage2JobStatus.EXTRACTING, transcriptUri = done.transcriptUri).also {
-                jobs.save(it)
-            }
+            job.copy(
+                    status = Stage2JobStatus.EXTRACTING,
+                    transcriptUri = done.transcriptUri,
+                    extractingSince = Instant.now(),
+                )
+                .also { jobs.save(it) }
         return runExtraction(extracting, done.transcript)
     }
 

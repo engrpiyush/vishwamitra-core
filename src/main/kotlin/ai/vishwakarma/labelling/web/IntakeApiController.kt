@@ -202,6 +202,21 @@ class IntakeApiController(
     fun deleteAsset(@PathVariable assetId: String): ResponseEntity<Any> =
         intake.deleteAsset(assetId).toResponse()
 
+    /**
+     * Revoke consent for one asset — honored even through a sealed/locked manifest (§12.7): marks
+     * it REVOKED, deletes its bytes + derived claims/jobs, updates the manifest; never unseals.
+     * Body: `{"note": "..."}` (mandatory).
+     */
+    @PostMapping("/assets/{assetId}/revoke-consent")
+    fun revokeConsent(
+        @PathVariable assetId: String,
+        @RequestBody(required = false) body: SealNoteRequest?,
+    ): ResponseEntity<Any> {
+        val result = intake.revokeAssetConsent(assetId, body?.note ?: "")
+        result.fold({}, { stage2.purgeAssetDerived(it.subjectId, assetId) })
+        return result.toResponse()
+    }
+
     /** A retrievable URL for the asset (external link, or a short-lived signed GET) for preview. */
     @GetMapping("/assets/{assetId}/download-url")
     fun downloadUrl(@PathVariable assetId: String): ResponseEntity<Any> =

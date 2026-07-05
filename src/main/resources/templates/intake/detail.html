@@ -129,6 +129,20 @@
                                       th:text="${'prior ' + a.authenticityPrior + (a.authenticityPriorOverridden ? ' ·override' : '')}">prior</span>
                                 <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(a.uploadStatus),'_','-')}" th:text="${a.uploadStatus}">STATUS</span>
                             </div>
+                            <details th:if="${a.consentStatus.name() != 'REVOKED'}" style="margin-top:0.4rem;">
+                                <summary><span class="link">Revoke consent</span></summary>
+                                <form method="post" class="form" style="max-width:none; margin-top:0.6rem;"
+                                      th:action="@{/intake/assets/{id}/revoke-consent(id=${a.id})}">
+                                    <p class="muted" style="margin:0 0 0.4rem;">
+                                        Withdraws consent and removes the stored bytes and any claims already
+                                        extracted from this asset. Works even after sealing; cannot be undone.
+                                    </p>
+                                    <label>Reason (recorded)
+                                        <input type="text" name="note" required
+                                               placeholder="Why consent is being withdrawn"/></label>
+                                    <button class="btn--danger btn--sm" type="submit" style="margin-top:0.4rem;">Revoke consent</button>
+                                </form>
+                            </details>
                             <p class="muted" th:if="${a.externalUrl != null}" style="margin:0;">
                                 <code class="copyable" th:text="${a.externalUrl}">url</code>
                             </p>

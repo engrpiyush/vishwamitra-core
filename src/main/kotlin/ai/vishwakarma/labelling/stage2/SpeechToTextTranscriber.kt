@@ -21,7 +21,8 @@ import org.springframework.web.client.RestClient
  * without GCP.
  */
 @Component
-class SpeechToTextTranscriber(private val props: AppProperties) : Transcriber {
+class SpeechToTextTranscriber(private val props: AppProperties, private val probe: Mp4AudioProbe) :
+    Transcriber {
 
     private val log = LoggerFactory.getLogger(javaClass)
     private val rest = RestClient.create()
@@ -51,7 +52,7 @@ class SpeechToTextTranscriber(private val props: AppProperties) : Transcriber {
             props.stage2.transcriptsBucket.ifBlank {
                 error("app.stage2.transcripts-bucket not set")
             }
-        val attempts = decodingAttempts(mimeType)
+        val attempts = decodingAttempts(mimeType, gcsUri)
         require(attempt in attempts.indices) {
             "decoding attempts exhausted for mimeType=$mimeType " +
                 "(attempt $attempt, ${attempts.size} available)"
@@ -76,21 +77,37 @@ class SpeechToTextTranscriber(private val props: AppProperties) : Transcriber {
      * operation RUNS, not at submit — [poll] flags them retryable and the caller resubmits with the
      * next [submit] attempt index.
      */
-    private fun decodingAttempts(mimeType: String?): List<Map<String, Any>> {
+    private fun decodingAttempts(mimeType: String?, gcsUri: String): List<Map<String, Any>> {
         val normalized = mimeType?.substringBefore(';')?.trim()?.lowercase()
         val auto: Map<String, Any> = mapOf("autoDecodingConfig" to emptyMap<String, Any>())
         val aacEncoding = AAC_CONTAINER_ENCODINGS[normalized]
-        return if (aacEncoding != null) listOf(explicitDecoding(aacEncoding), auto)
-        else listOf(auto, explicitDecoding("MP4_AAC"))
+        if (aacEncoding == null) {
+            // Non-AAC leads with auto; the explicit MP4_AAC is only a last-resort guess for a
+            // mislabelled upload, so it keeps the configured defaults (no probe).
+            return listOf(auto, explicitDecoding("MP4_AAC", null))
+        }
+        // AAC container → explicit leads: probe the header for the real sample rate/channels so a
+        // non-48kHz/stereo capture decodes right (§12.7); config defaults are the fallback.
+        val probed = probe.probe(gcsUri)
+        if (probed != null)
+            log.info(
+                "Probed audio params for {}: {} Hz, {} channel(s)",
+                gcsUri,
+                probed.sampleRateHertz,
+                probed.channelCount,
+            )
+        return listOf(explicitDecoding(aacEncoding, probed), auto)
     }
 
-    private fun explicitDecoding(encoding: String): Map<String, Any> =
+    private fun explicitDecoding(encoding: String, probed: AudioParams?): Map<String, Any> =
         mapOf(
             "explicitDecodingConfig" to
                 mapOf(
                     "encoding" to encoding,
-                    "sampleRateHertz" to props.stage2.explicitSampleRateHertz,
-                    "audioChannelCount" to props.stage2.explicitChannelCount,
+                    "sampleRateHertz" to
+                        (probed?.sampleRateHertz ?: props.stage2.explicitSampleRateHertz),
+                    "audioChannelCount" to
+                        (probed?.channelCount ?: props.stage2.explicitChannelCount),
                 )
         )
 

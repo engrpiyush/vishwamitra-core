@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.config
 
+import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /**
@@ -87,6 +88,12 @@ data class AppProperties(
          */
         val explicitSampleRateHertz: Int = 48000,
         val explicitChannelCount: Int = 2,
+        /**
+         * Probe the real sample rate / channel count from an AAC container's header (§12.7) and use
+         * them for explicitDecodingConfig, falling back to the explicit* defaults above when the
+         * probe can't read them. Set false to always use the fixed defaults.
+         */
+        val probeAudioParams: Boolean = true,
         /** Dev/test: return a canned diarized transcript instead of calling Speech-to-Text. */
         val dryRun: Boolean = false,
         /**
@@ -95,5 +102,13 @@ data class AppProperties(
          * headroom for the prompt.
          */
         val maxDocumentBytes: Long = 14L * 1024 * 1024,
+        /**
+         * A job that entered EXTRACTING longer ago than this is treated as crash-stranded and
+         * reclaimed to FAILED on the next poll (§12.7 hardening). MUST exceed the Cloud Run request
+         * timeout: extraction runs synchronously inside one request, so anything older can only be
+         * a crash, never a live run. Default 15m clears the 300s default request cap with wide
+         * margin.
+         */
+        val extractingTimeout: Duration = Duration.ofMinutes(15),
     )
 }

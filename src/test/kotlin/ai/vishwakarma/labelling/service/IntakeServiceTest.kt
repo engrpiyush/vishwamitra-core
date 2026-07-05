@@ -78,6 +78,9 @@ private class FakeManifestRepo : IntakeManifestRepository(mock(Firestore::class.
 private class FakeStorage(props: AppProperties) : IntakeStorage(props) {
     /** objectPath → bytes present (Long) or absent (null / missing key). */
     val sizes = mutableMapOf<String, Long>()
+
+    /** objectPath → content checksum returned by [objectChecksum]. */
+    val checksums = mutableMapOf<String, String>()
     val deleted = mutableListOf<String>()
 
     override fun signedUploadUrl(objectPath: String, contentType: String): SignedUpload =
@@ -88,6 +91,8 @@ private class FakeStorage(props: AppProperties) : IntakeStorage(props) {
         )
 
     override fun objectSize(objectPath: String): Long? = sizes[objectPath]
+
+    override fun objectChecksum(objectPath: String): String? = checksums[objectPath]
 
     override fun deleteObject(objectPath: String) {
         deleted += objectPath
@@ -125,6 +130,7 @@ class IntakeServiceTest {
         storedObjectPath: String? = path,
         mimeType: String? = "application/pdf",
         consentStatus: ConsentStatus = ConsentStatus.GRANTED,
+        checksum: String? = null,
         createdAt: Instant = Instant.now(),
     ) =
         Asset(
@@ -138,6 +144,7 @@ class IntakeServiceTest {
             authenticityPrior = AuthenticityTier.LOW,
             storedObjectPath = storedObjectPath,
             mimeType = mimeType,
+            checksum = checksum,
             consentStatus = consentStatus,
             uploadStatus = uploadStatus,
             createdAt = createdAt,
@@ -297,6 +304,132 @@ class IntakeServiceTest {
         assertTrue(sealed.sealed)
         assertEquals("reviewer@vishwakarma.ai", sealed.sealedBy)
         assertTrue(sealed.sealBlockers.isEmpty())
+    }
+
+    // ---- cross-asset dedup (§12.7 hardening, rank #1) --------------------------
+
+    @Test
+    fun `completeAsset stamps the content checksum from storage`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.AWAITING_UPLOAD))
+        storage.sizes[path] = 500
+        storage.checksums[path] = "md5-abc"
+
+        val result = service.completeAsset("a1")
+
+        assertEquals("md5-abc", result.valueOrNull()?.checksum)
+    }
+
+    @Test
+    fun `sealManifest refuses when two assets share a checksum (duplicate upload)`() {
+        seedSubject()
+        seed(
+            asset(
+                id = "a1",
+                storedObjectPath = "p1",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "same"
+            ),
+            asset(
+                id = "a2",
+                storedObjectPath = "p2",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "same"
+            ),
+        )
+
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
+        assertTrue(result.errorOrNull()!!.message.contains("same file"))
+    }
+
+    @Test
+    fun `sealManifest ignores distinct checksums`() {
+        seedSubject()
+        seed(
+            asset(
+                id = "a1",
+                storedObjectPath = "p1",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "h1"
+            ),
+            asset(
+                id = "a2",
+                storedObjectPath = "p2",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "h2"
+            ),
+        )
+
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+
+        assertTrue(result.valueOrNull()?.sealed == true)
+    }
+
+    @Test
+    fun `duplicate blocker clears once one copy is removed`() {
+        seedSubject()
+        seed(
+            asset(
+                id = "a1",
+                storedObjectPath = "p1",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "same"
+            ),
+            asset(
+                id = "a2",
+                storedObjectPath = "p2",
+                uploadStatus = AssetUploadStatus.STORED,
+                checksum = "same"
+            ),
+        )
+        assertTrue(service.sealManifest("s1", "reviewer@vishwakarma.ai", "x").errorOrNull() != null)
+
+        assets.store.remove("a2")
+
+        assertTrue(
+            service
+                .sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+                .valueOrNull()
+                ?.sealed == true
+        )
+    }
+
+    // ---- consent revocation (§12.7 hardening) ---------------------------------
+
+    @Test
+    fun `revokeAssetConsent marks REVOKED and deletes bytes, honored on a locked manifest`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED, consentStatus = ConsentStatus.GRANTED))
+        service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+        manifests.store["s1"] = manifests.store["s1"]!!.copy(stage2StartedAt = Instant.now())
+
+        val result = service.revokeAssetConsent("a1", "subject withdrew consent")
+
+        assertEquals(ConsentStatus.REVOKED, result.valueOrNull()?.consentStatus)
+        assertTrue(storage.deleted.contains(path))
+        // Revoke must not unlock — the permanent seal stands.
+        assertTrue(
+            service.unsealManifest("s1", "admin@vishwakarma.ai", "x").errorOrNull()
+                is DomainError.Conflict
+        )
+    }
+
+    @Test
+    fun `revokeAssetConsent requires a note`() {
+        seedSubject()
+        seed(asset())
+
+        assertTrue(service.revokeAssetConsent("a1", "  ").errorOrNull() is DomainError.Invalid)
+    }
+
+    @Test
+    fun `revokeAssetConsent refuses an already-revoked asset`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.REVOKED))
+
+        assertTrue(service.revokeAssetConsent("a1", "again").errorOrNull() is DomainError.Conflict)
     }
 
     // ---- unsealManifest -------------------------------------------------------

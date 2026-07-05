@@ -199,6 +199,7 @@ class IntakeService(
         val updated =
             asset.copy(
                 sizeBytes = size,
+                checksum = storage.objectChecksum(path),
                 uploadStatus = AssetUploadStatus.STORED,
                 updatedAt = Instant.now(),
             )
@@ -407,6 +408,39 @@ class IntakeService(
     }
 
     /**
+     * Revoke consent for a single asset and honor it through a sealed/locked manifest (§12.7
+     * hardening): delete the stored bytes, mark the asset REVOKED, and recompute the manifest so
+     * the (possibly locked) manifest's consent summary reflects the withdrawal. Deliberately
+     * bypasses [sealedGuard] and the permanent Stage 2 lock — consent withdrawal is always
+     * honorable, like [purgeSubject] — but never unseals: revoke ≠ unlock. The caller purges the
+     * asset's derived claims/jobs (Stage2Service.purgeAssetDerived).
+     */
+    fun revokeAssetConsent(assetId: String, note: String): Either<DomainError, Asset> {
+        if (note.isBlank())
+            return DomainError.Invalid("A note is required when revoking consent").left()
+        val asset =
+            assets.findById(assetId)
+                ?: return DomainError.NotFound("Asset $assetId not found").left()
+        if (asset.consentStatus == ConsentStatus.REVOKED)
+            return DomainError.Conflict("Consent for asset $assetId is already revoked").left()
+        asset.storedObjectPath?.let { storage.deleteObject(it) }
+        val revoked =
+            asset.copy(
+                consentStatus = ConsentStatus.REVOKED,
+                consentDate = Instant.now(),
+                consentNote = note.trim(),
+                // Bytes are gone; LINK assets never had any, so leave their status alone.
+                uploadStatus =
+                    if (asset.modality == AssetModality.LINK) asset.uploadStatus
+                    else AssetUploadStatus.FAILED,
+                updatedAt = Instant.now(),
+            )
+        assets.save(revoked)
+        recomputeManifest(asset.subjectId)
+        return revoked.right()
+    }
+
+    /**
      * Remove every asset (bytes + record) and the manifest for a subject. Used on subject delete.
      */
     fun purgeSubject(subjectId: String) {
@@ -545,7 +579,8 @@ class IntakeService(
     }
 
     /**
-     * Reasons sealing is blocked: pending consent, or bytes not yet stored. Empty = ready to seal.
+     * Reasons sealing is blocked: pending consent, bytes not yet stored, or a duplicate upload (the
+     * same file under two content types). Empty = ready to seal.
      */
     private fun computeSealBlockers(all: List<Asset>): List<String> {
         val blockers = mutableListOf<String>()
@@ -556,11 +591,24 @@ class IntakeService(
         val notStored =
             all.filter {
                 it.modality != AssetModality.LINK &&
+                    it.consentStatus != ConsentStatus.REVOKED &&
                     (it.uploadStatus == AssetUploadStatus.AWAITING_UPLOAD ||
                         it.uploadStatus == AssetUploadStatus.FAILED)
             }
         if (notStored.isNotEmpty())
             blockers += "${notStored.size} asset(s) not stored: ${notStored.joinToString { it.id }}"
+        // §12.7 cross-asset dedup: the same bytes uploaded under two content types get different
+        // assetIds, so per-asset claim replacement can't catch it — left in, a duplicate upload
+        // would corroborate itself in Stage 3. Block the seal until one copy is removed.
+        all.filter { it.uploadStatus == AssetUploadStatus.STORED && !it.checksum.isNullOrBlank() }
+            .groupBy { it.checksum }
+            .values
+            .filter { it.size > 1 }
+            .forEach { group ->
+                blockers +=
+                    "${group.size} assets are the same file (identical bytes): " +
+                        "${group.joinToString { it.id }} — remove all but one before sealing"
+            }
         return blockers
     }
 

@@ -51,6 +51,7 @@ class Stage2JobRepository(private val db: Firestore) {
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
             "startedAt" to startedAt.toTimestamp(),
             "finishedAt" to finishedAt.toTimestamp(),
+            "extractingSince" to extractingSince.toTimestamp(),
         )
 
     private fun DocumentSnapshot.toStage2Job(): Stage2Job =
@@ -69,6 +70,7 @@ class Stage2JobRepository(private val db: Firestore) {
             createdAt = instant("createdAt"),
             startedAt = instant("startedAt"),
             finishedAt = instant("finishedAt"),
+            extractingSince = instant("extractingSince"),
         )
 
     companion object {
