@@ -6,6 +6,8 @@ import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ConsentStatus
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
+import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.domain.Stage2Job
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.domain.Subject
@@ -16,6 +18,8 @@ import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.stage2.ClaimExtractor
 import ai.vishwakarma.labelling.stage2.DocumentSource
+import ai.vishwakarma.labelling.stage2.SpeakerAttribution
+import ai.vishwakarma.labelling.stage2.SpeakerResolution
 import ai.vishwakarma.labelling.stage2.Transcriber
 import ai.vishwakarma.labelling.stage2.Transcript
 import ai.vishwakarma.labelling.stage2.TranscriptionPoll
@@ -45,6 +49,7 @@ class Stage2Service(
     private val claims: ClaimRepository,
     private val transcriber: Transcriber,
     private val extractor: ClaimExtractor,
+    private val speakerAttribution: SpeakerAttribution,
     private val documents: DocumentSource,
     private val props: AppProperties,
 ) {
@@ -98,6 +103,10 @@ class Stage2Service(
         // concurrent poll (the UI auto-polls every few seconds) must not start a second extraction
         // — that duplicates claims (observed live: 4 overlapping polls → 4x claims).
         if (job.status == Stage2JobStatus.EXTRACTING) return maybeReclaimStuck(job).right()
+        // Parked for operator speaker-selection (§12.4) — the auto-poll loop must not advance it;
+        // it
+        // waits for resolveSpeakers to supply the confirmed subject label(s).
+        if (job.status == Stage2JobStatus.AWAITING_SPEAKER_SELECTION) return job.right()
         if (job.modality in DOC_MODALITIES) {
             // PENDING is the only non-terminal doc state left; saving EXTRACTING here is the
             // same double-run guard as above for overlapping poll-all requests.
@@ -189,6 +198,35 @@ class Stage2Service(
     }
 
     /**
+     * §12.4 Phase B: replace a COMPLETED A/V job's operator speaker→role binding, then re-extract
+     * from the stored transcript so the corrected attribution re-weights the claims (SUBJECT →
+     * self-report, ENDORSER → third-party, INTERVIEWER/OTHER dropped). Delegates to [rerunJob]'s
+     * re-extract path, which reuses the just-saved binding (rather than re-resolving) and — because
+     * claims are replaced only at completion — leaves the old claims intact if the transcript fetch
+     * fails. An empty binding clears attribution, so the next re-extract re-resolves it afresh.
+     */
+    fun updateSpeakerRoles(
+        jobId: String,
+        roles: Map<String, SpeakerAssignment>,
+    ): Either<DomainError, Stage2Job> {
+        val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        if (job.modality !in AV_MODALITIES)
+            return DomainError.Conflict("Speaker roles apply to audio/video jobs only").left()
+        if (job.status != Stage2JobStatus.COMPLETED)
+            return DomainError.Conflict(
+                    "Speaker roles can be edited only on a COMPLETED job (job is ${job.status})"
+                )
+                .left()
+        if (job.transcriptUri == null)
+            return DomainError.Invalid(
+                    "No stored transcript to re-extract from — run a full Re-run first"
+                )
+                .left()
+        jobs.save(job.copy(speakerRoles = roles.ifEmpty { null }))
+        return rerunJob(jobId, full = false)
+    }
+
+    /**
      * IMAGE/DOCUMENT Retry/Re-run: back to PENDING on the same record — the auto-poll loop runs the
      * extraction, the one execution path for the lane.
      */
@@ -221,6 +259,11 @@ class Stage2Service(
                     claimCount = null,
                     startedAt = Instant.now(),
                     finishedAt = null,
+                    // Fresh transcription may re-diarize with different labels, so the old
+                    // speaker→role binding no longer applies — clear it and re-resolve on arrival
+                    // (§12.4). Re-extract Re-run does NOT come through here, so it keeps the
+                    // binding.
+                    speakerRoles = null,
                 )
                 .also { jobs.save(it) }
                 .right()
@@ -408,31 +451,154 @@ class Stage2Service(
             .also { jobs.save(it) }
     }
 
+    /**
+     * Transcript landed: stamp it, then run §12.4 speaker attribution once. Single-speaker /
+     * unresolvable → extract at asset level. Confident (≥ threshold) → auto-extract with the
+     * binding. Unsure → park in AWAITING_SPEAKER_SELECTION for the operator to tag self.
+     */
     private fun extractClaims(job: Stage2Job, done: TranscriptionPoll.Done): Stage2Job {
-        val extracting =
+        // Claim the job (EXTRACTING) before the slow attribution call so a concurrent poll can't
+        // double-run attribution + extraction (§9.1 concurrency guard); then attribute and either
+        // extract (confident / single-speaker) or park for operator speaker-selection.
+        val claimed =
             job.copy(
                     status = Stage2JobStatus.EXTRACTING,
                     transcriptUri = done.transcriptUri,
                     extractingSince = Instant.now(),
                 )
                 .also { jobs.save(it) }
-        return runExtraction(extracting, done.transcript)
+        val asset =
+            assets.findById(job.assetId)
+                ?: return failJob(claimed, "Asset ${job.assetId} no longer exists")
+        val subjectName = subjects.findById(job.subjectId)?.displayName
+        val resolution = speakerAttribution.resolve(asset, done.transcript, subjectName)
+        if (resolution == null)
+            return runExtraction(claimed.copy(speakerRoles = null), done.transcript)
+        // Multi-speaker: keep per-speaker samples on the job through completion so BOTH the gate
+        // and
+        // the post-completion Speakers editor can show "who said what" while re-assigning roles.
+        val withSamples = claimed.copy(speakerSamples = speakerSamples(done.transcript))
+        return if (resolution.confidence >= props.stage2.attributionConfidenceThreshold) {
+            log.info(
+                "Job {}: attribution confident ({}) — auto-extracting",
+                job.id,
+                resolution.confidence,
+            )
+            runExtraction(withSamples.copy(speakerRoles = resolution.binding), done.transcript)
+        } else {
+            parkForSpeakerSelection(withSamples, resolution)
+        }
     }
 
-    /** A/V lane: extract claims from [transcript] (poll-arrival and re-extract Re-run). */
+    /** Park a low-confidence multi-speaker job for operator speaker-selection (§12.4). */
+    private fun parkForSpeakerSelection(job: Stage2Job, resolution: SpeakerResolution): Stage2Job {
+        log.info(
+            "Job {}: attribution low-confidence ({}) — awaiting speaker selection",
+            job.id,
+            resolution.confidence,
+        )
+        return job.copy(
+                status = Stage2JobStatus.AWAITING_SPEAKER_SELECTION,
+                speakerRoles = resolution.binding, // the model's proposal, editable by the operator
+            )
+            .also { jobs.save(it) }
+    }
+
+    /**
+     * §12.4 gate resolution: the operator tagged which diarized label(s) are the subject (self).
+     * Selected labels become SUBJECT (self-report); every other speaker takes the asset's declared
+     * relationship (third-party). No labels selected = the subject is not on this call. Then
+     * extract from the stored transcript.
+     */
+    fun resolveSpeakers(jobId: String, selfLabels: List<String>): Either<DomainError, Stage2Job> {
+        val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        if (job.status != Stage2JobStatus.AWAITING_SPEAKER_SELECTION)
+            return DomainError.Conflict(
+                    "Job is not awaiting speaker selection (it is ${job.status})"
+                )
+                .left()
+        val asset =
+            assets.findById(job.assetId)
+                ?: return DomainError.NotFound("Asset ${job.assetId} no longer exists").left()
+        val transcriptUri =
+            job.transcriptUri
+                ?: return DomainError.Invalid("Job has no stored transcript to extract").left()
+        val transcript =
+            try {
+                transcriber.fetchTranscript(transcriptUri)
+            } catch (e: Exception) {
+                return DomainError.Invalid("Could not fetch stored transcript: ${e.message}").left()
+            }
+        val selected = selfLabels.toSet()
+        val binding =
+            transcript.segments
+                .mapNotNull { it.speaker?.takeIf { s -> s.isNotBlank() } }
+                .distinct()
+                .associateWith { label ->
+                    if (label in selected) SpeakerAssignment(SpeakerRole.SUBJECT)
+                    else SpeakerAssignment(SpeakerRole.ENDORSER, asset.relationship)
+                }
+        // Keep speakerSamples so the post-completion Speakers editor can still show each speaker's
+        // transcript when re-assigning roles.
+        val bound = job.copy(speakerRoles = binding).also { jobs.save(it) }
+        return runExtraction(bound, transcript).right()
+    }
+
+    /**
+     * A/V lane: set EXTRACTING and extract [transcript] using the job's resolved speaker binding.
+     */
     private fun runExtraction(job: Stage2Job, transcript: Transcript): Stage2Job {
         val asset =
             assets.findById(job.assetId)
                 ?: return failJob(job, "Asset ${job.assetId} no longer exists")
+        val subjectName = subjects.findById(job.subjectId)?.displayName
+        val extracting =
+            job.copy(status = Stage2JobStatus.EXTRACTING, extractingSince = Instant.now()).also {
+                jobs.save(it)
+            }
         return try {
-            val subjectName = subjects.findById(job.subjectId)?.displayName
-            val extracted = extractor.extract(job.subjectId, asset, transcript, subjectName)
-            completeWithClaims(job, asset.id, extracted)
+            val extracted =
+                extractor.extract(
+                    extracting.subjectId,
+                    asset,
+                    transcript,
+                    subjectName,
+                    extracting.speakerRoles,
+                )
+            completeWithClaims(extracting, asset.id, extracted)
         } catch (e: Exception) {
-            log.warn("Claim extraction failed for job {}", job.id, e)
-            failJob(job, "Claim extraction failed: ${e.message}")
+            log.warn("Claim extraction failed for job {}", extracting.id, e)
+            failJob(extracting, "Claim extraction failed: ${e.message}")
         }
     }
+
+    /**
+     * Per-speaker transcript for the §12.4 selection UIs (the gate and the Speakers editor) — the
+     * stored [Stage2Job.speakerSamples] when present, else fetched + computed from the job's stored
+     * transcript. The fallback covers jobs completed before samples were kept, so "View transcript"
+     * works on any diarized job. Null when there's no transcript or the fetch fails.
+     */
+    fun speakerSamples(job: Stage2Job): Map<String, String>? {
+        job.speakerSamples?.let {
+            return it
+        }
+        val uri = job.transcriptUri ?: return null
+        return try {
+            speakerSamples(transcriber.fetchTranscript(uri)).ifEmpty { null }
+        } catch (e: Exception) {
+            log.warn("Could not load speaker samples for job {}: {}", job.id, e.message)
+            null
+        }
+    }
+
+    /**
+     * Each diarized speaker's concatenated words (capped at [SAMPLE_CHARS]) for the selection UIs.
+     */
+    private fun speakerSamples(transcript: Transcript): Map<String, String> =
+        transcript.segments
+            .filter { !it.speaker.isNullOrBlank() }
+            .groupBy { it.speaker!! }
+            .mapValues { (_, segs) -> segs.joinToString(" ") { it.text }.take(SAMPLE_CHARS) }
 
     /**
      * IMAGE/DOCUMENT lane: read the stored bytes and run the multimodal (OCR + extraction) Gemini
@@ -489,5 +655,9 @@ class Stage2Service(
         private val AV_MODALITIES = setOf(AssetModality.AUDIO, AssetModality.VIDEO)
         private val DOC_MODALITIES = setOf(AssetModality.IMAGE, AssetModality.DOCUMENT)
         private val BLOCKED_CONSENT = setOf(ConsentStatus.PENDING, ConsentStatus.REVOKED)
+        /**
+         * Max stored per-speaker transcript length for the §12.4 selection gate (preview + full).
+         */
+        private const val SAMPLE_CHARS = 12_000
     }
 }

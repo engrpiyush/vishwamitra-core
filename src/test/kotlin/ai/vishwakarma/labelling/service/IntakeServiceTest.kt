@@ -552,4 +552,17 @@ class IntakeServiceTest {
         assertTrue(storage.deleted.contains(path))
         assertEquals(AssetUploadStatus.FAILED, assets.store["a1"]!!.uploadStatus)
     }
+
+    @Test
+    fun `completeAsset rejects an empty (0-byte) uploaded object and leaves it retryable`() {
+        seed(asset(uploadStatus = AssetUploadStatus.AWAITING_UPLOAD))
+        storage.sizes[path] = 0L
+
+        val result = service.completeAsset("a1")
+
+        assertTrue(result.errorOrNull() is DomainError.Invalid)
+        assertTrue(result.errorOrNull()!!.message.contains("empty"))
+        // Not marked STORED — the object is not a completed upload; the row can be retried.
+        assertEquals(AssetUploadStatus.AWAITING_UPLOAD, assets.store["a1"]!!.uploadStatus)
+    }
 }

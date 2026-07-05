@@ -10,6 +10,8 @@ import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.SourceClass
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
+import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.ProviderRepository
@@ -252,6 +254,79 @@ class ClaimExtractorTest {
         assertFalse(claims[0].sensitive)
         assertEquals(ClaimBasis.STATED, claims[1].claimBasis)
         assertTrue(claims[1].sensitive)
+    }
+
+    // ---- §12.4 multi-speaker re-weight ----------------------------------------
+
+    private val multiSpeakerJson =
+        """[
+          {"text":"Led the 2021 gateway migration","claimType":"EPISODE","speaker":"Speaker 2","confidence":0.9},
+          {"text":"Values delegating early","claimType":"VALUE","speaker":"Speaker 1","confidence":0.8},
+          {"text":"So what happened next?","claimType":"EPISODE","speaker":"Speaker 3","confidence":0.5}
+        ]"""
+
+    private fun binding() =
+        mapOf(
+            "Speaker 1" to SpeakerAssignment(SpeakerRole.SUBJECT),
+            "Speaker 2" to SpeakerAssignment(SpeakerRole.ENDORSER, Relationship.MANAGER),
+            "Speaker 3" to SpeakerAssignment(SpeakerRole.INTERVIEWER),
+        )
+
+    @Test
+    fun `re-weights each claim by its speaker role and drops interviewer spans`() {
+        val claims =
+            ClaimExtractor(StubGemini(multiSpeakerJson), promptService())
+                .extract(
+                    "s1",
+                    asset(prior = AuthenticityTier.MEDIUM),
+                    transcript,
+                    speakerRoles = binding()
+                )
+
+        // Speaker 3 (interviewer) is dropped even though the model emitted a row for it.
+        assertEquals(2, claims.size)
+        val bySpeaker = claims.associateBy { it.speaker }
+
+        val endorser = bySpeaker.getValue("Speaker 2")
+        assertEquals(SpeakerRole.ENDORSER, endorser.speakerRole)
+        assertEquals(SourceClass.ENDORSEMENT, endorser.sourceClass)
+        assertEquals(Relationship.MANAGER, endorser.relationship)
+        assertEquals(AuthenticityTier.MEDIUM, endorser.authenticityTier)
+
+        val subject = bySpeaker.getValue("Speaker 1")
+        assertEquals(SpeakerRole.SUBJECT, subject.speakerRole)
+        assertEquals(SourceClass.SELF, subject.sourceClass)
+        assertEquals(Relationship.SELF, subject.relationship)
+        assertEquals(AuthenticityTier.LOW, subject.authenticityTier)
+    }
+
+    @Test
+    fun `the resolved speaker roles are written into the extraction prompt`() {
+        val gemini = StubGemini(multiSpeakerJson)
+
+        ClaimExtractor(gemini, promptService())
+            .extract("s1", asset(), transcript, speakerRoles = binding())
+
+        val prompt = gemini.lastPrompt!!
+        assertTrue(prompt.contains("Speaker roles in this transcript"))
+        assertTrue(prompt.contains("Speaker 2: an ENDORSER (MANAGER)"))
+        assertTrue(prompt.contains("do NOT extract claims from this speaker")) // interviewer line
+    }
+
+    @Test
+    fun `without a binding claims keep asset-level provenance and a null speaker role`() {
+        val json =
+            """[{"text":"Led the migration","claimType":"EPISODE","speaker":"Speaker 2","confidence":0.9}]"""
+
+        val claim =
+            ClaimExtractor(StubGemini(json), promptService())
+                .extract("s1", asset(prior = AuthenticityTier.MEDIUM), transcript)
+                .single()
+
+        assertEquals(null, claim.speakerRole)
+        assertEquals(SourceClass.ENDORSEMENT, claim.sourceClass)
+        assertEquals(Relationship.MANAGER, claim.relationship)
+        assertEquals(AuthenticityTier.MEDIUM, claim.authenticityTier)
     }
 
     // ---- extractDocument (IMAGE/DOCUMENT lane) --------------------------------

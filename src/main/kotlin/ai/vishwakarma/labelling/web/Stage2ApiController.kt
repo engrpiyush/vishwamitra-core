@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.Stage2Service
@@ -10,6 +11,7 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -53,6 +55,26 @@ class Stage2ApiController(private val stage2: Stage2Service) {
         @PathVariable id: String,
         @RequestParam(required = false, defaultValue = "false") full: Boolean,
     ): ResponseEntity<Any> = stage2.rerunJob(id, full).toResponse()
+
+    /**
+     * §12.4 Phase B: replace a COMPLETED A/V job's speaker→role binding (keyed by diarization
+     * label) and re-extract, so operator corrections re-weight the claims.
+     */
+    @PostMapping("/jobs/{id}/speaker-roles")
+    fun updateSpeakerRoles(
+        @PathVariable id: String,
+        @RequestBody roles: Map<String, SpeakerAssignment>,
+    ): ResponseEntity<Any> = stage2.updateSpeakerRoles(id, roles).toResponse()
+
+    /**
+     * §12.4 selection gate: resolve an AWAITING_SPEAKER_SELECTION job — [selfLabels] are the
+     * diarized labels that are the subject (empty = subject not on the call) — then extract.
+     */
+    @PostMapping("/jobs/{id}/resolve-speakers")
+    fun resolveSpeakers(
+        @PathVariable id: String,
+        @RequestBody(required = false) selfLabels: List<String>?,
+    ): ResponseEntity<Any> = stage2.resolveSpeakers(id, selfLabels ?: emptyList()).toResponse()
 
     @GetMapping("/jobs/{id}")
     fun job(@PathVariable id: String): ResponseEntity<Any> =

@@ -184,6 +184,16 @@ class IntakeService(
         val size =
             storage.objectSize(path)
                 ?: return DomainError.Invalid("No uploaded bytes found for asset $id").left()
+        // An object that exists but is empty means the PUT reached storage with no body — accepting
+        // it would mark the asset STORED and only surface far downstream as an opaque provider
+        // error
+        // (Speech-to-Text: "Provided file is empty"). Reject it here so the upload can be retried.
+        if (size == 0L)
+            return DomainError.Invalid(
+                    "Uploaded object for asset $id is empty (0 bytes) — the file body did not reach " +
+                        "storage; retry the upload."
+                )
+                .left()
         if (size > props.intake.maxAssetSizeBytes) {
             storage.deleteObject(path)
             val failed =
@@ -285,7 +295,10 @@ class IntakeService(
                 assets.save(updated)
                 updated
             }
-            size != null -> {
+            // A present-but-empty object is not a completed upload — leave it AWAITING (or let it
+            // age out to FAILED below) so a retry re-mints and overwrites it, rather than marking a
+            // 0-byte asset STORED and failing later in Stage 2 ("Provided file is empty").
+            size != null && size > 0L -> {
                 val updated =
                     asset.copy(
                         sizeBytes = size,

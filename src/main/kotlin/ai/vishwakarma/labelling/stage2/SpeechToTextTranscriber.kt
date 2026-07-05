@@ -34,7 +34,14 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
             .accessToken
             .tokenValue
 
-    private fun base() = "https://${props.gcp.region}-speech.googleapis.com/v2"
+    /**
+     * STT batchRecognize location (§12.4): the configured `app.stage2.stt-location`, or the app
+     * region when blank (the in-region, single-region default). This is decoupled from the app's
+     * GCP region so diarization can run on a multi-region/global endpoint without moving the app.
+     */
+    private fun location(): String = props.stage2.sttLocation.ifBlank { props.gcp.region }
+
+    private fun base(): String = "https://${sttHost(location())}/v2"
 
     override fun submit(
         subjectId: String,
@@ -81,6 +88,16 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         val normalized = mimeType?.substringBefore(';')?.trim()?.lowercase()
         val auto: Map<String, Any> = mapOf("autoDecodingConfig" to emptyMap<String, Any>())
         val aacEncoding = AAC_CONTAINER_ENCODINGS[normalized]
+        // Chirp (USM) models auto-detect the container encoding — Google's chirp_3 sample uses
+        // autoDecodingConfig even for AAC (mp4/m4a/mov). Sending an explicit AAC config to Chirp
+        // both
+        // wastes an async attempt and risks the sample-rate/channel mismatch that surfaces as
+        // "Provided file is empty", so on Chirp lead with auto (explicit stays only as a defensive
+        // fallback for AAC). The explicit-first path below is a legacy long/conformer need (§11.2).
+        if (isChirpModel()) {
+            return if (aacEncoding == null) listOf(auto)
+            else listOf(auto, explicitDecoding(aacEncoding, probe.probe(gcsUri)))
+        }
         if (aacEncoding == null) {
             // Non-AAC leads with auto; the explicit MP4_AAC is only a last-resort guess for a
             // mislabelled upload, so it keeps the configured defaults (no probe).
@@ -98,6 +115,10 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
             )
         return listOf(explicitDecoding(aacEncoding, probed), auto)
     }
+
+    /** Chirp (USM) models auto-detect encoding; the explicit-AAC cascade is a legacy-model need. */
+    private fun isChirpModel(): Boolean =
+        props.stage2.sttModel.startsWith("chirp", ignoreCase = true)
 
     private fun explicitDecoding(encoding: String, probed: AudioParams?): Map<String, Any> =
         mapOf(
@@ -131,8 +152,9 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
                     e.responseBodyAsString.contains("Diarization is not currently supported")
             ) {
                 log.warn(
-                    "batchRecognize rejects diarization in {}; resubmitting without it",
-                    props.gcp.region,
+                    "batchRecognize rejects diarization in {}; resubmitting without it " +
+                        "(§12.4: point app.stage2.stt-location at a chirp_3 diarization endpoint)",
+                    location(),
                 )
                 submitBatch(
                     subjectId,
@@ -171,8 +193,10 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
             putAll(decoding)
             put("features", features)
             // Phrase hints (subject name): without them ASR garbles the one term every claim
-            // depends on. Boost 10 is Google's recommended starting strength (0–20).
-            if (hints.isNotEmpty()) {
+            // depends on. Boost 10 is Google's recommended starting strength (0–20). Gated by
+            // app.stage2.stt-phrase-hints because the USM-based chirp_3 model may reject model
+            // adaptation (§12.4 E1) — a chirp_3 deployment turns this off if the probe shows it.
+            if (hints.isNotEmpty() && props.stage2.sttPhraseHints) {
                 put(
                     "adaptation",
                     mapOf(
@@ -201,7 +225,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
                     ),
             )
         val url =
-            "${base()}/projects/${props.gcp.projectId}/locations/${props.gcp.region}" +
+            "${base()}/projects/${props.gcp.projectId}/locations/${location()}" +
                 "/recognizers/_:batchRecognize"
         log.info(
             "Submitting batchRecognize for asset {} ({}, diarization={})",
@@ -239,7 +263,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         if (map["done"] != true) return TranscriptionPoll.Running
         (map["error"] as? Map<String, Any?>)?.let {
             val message = it["message"] as? String ?: "batchRecognize failed"
-            return TranscriptionPoll.Failed(message, encodingRejected(message))
+            return TranscriptionPoll.Failed(message, isRetryableDecodeFailure(message))
         }
         val results =
             ((map["response"] as? Map<String, Any?>)?.get("results") as? Map<String, Any?>)
@@ -249,7 +273,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
                 ?: return TranscriptionPoll.Failed("batchRecognize response has no per-file result")
         (fileResult["error"] as? Map<String, Any?>)?.let {
             val message = it["message"] as? String ?: "transcription failed"
-            return TranscriptionPoll.Failed(message, encodingRejected(message))
+            return TranscriptionPoll.Failed(message, isRetryableDecodeFailure(message))
         }
         val inline =
             ((fileResult["inlineResult"] as? Map<String, Any?>)?.get("transcript")
@@ -333,9 +357,6 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         return Transcript(segments, language)
     }
 
-    /** "Audio data does not appear to be in a supported encoding" → try the next decoding. */
-    private fun encodingRejected(message: String): Boolean = message.contains("supported encoding")
-
     private fun speakerName(label: String?): String? =
         label?.let { if (it.startsWith("speaker", ignoreCase = true)) it else "Speaker $it" }
 
@@ -410,6 +431,33 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
 
     companion object {
         const val DRY_RUN_PREFIX = "dry-run/"
+
+        /**
+         * STT endpoint host for a location (§12.4). Regional and **multi-regional** locations
+         * (`us`, `eu`) use the `<loc>-speech.googleapis.com` form; the `global` location is the
+         * sole exception — it is served at the bare `speech.googleapis.com` host.
+         */
+        fun sttHost(location: String): String =
+            if (location == "global") "speech.googleapis.com" else "$location-speech.googleapis.com"
+
+        /**
+         * A batchRecognize failure where a *different* decoding candidate might still succeed, so
+         * [poll] flags it retryable and the service advances the cascade instead of failing
+         * outright:
+         * - "…supported encoding" — `autoDecodingConfig` rejecting an AAC container (§11.2), and
+         * - "Provided file is empty" — what **explicit** AAC decoding returns when the container's
+         *   real sample-rate/channels don't line up with the config we sent (observed on an iTunes
+         *   44.1 kHz mono m4a whose sample entry `Mp4AudioProbe` couldn't read, so it fell back to
+         *   the 48 kHz/stereo default). Auto-decoding may still read it, so cascade rather than
+         *   dead-end.
+         *
+         * A genuinely empty upload can't reach here — it is rejected at intake (IntakeService
+         * completeAsset), so an "empty" at transcription time is always a decoding mismatch.
+         */
+        fun isRetryableDecodeFailure(message: String): Boolean {
+            val m = message.lowercase()
+            return "supported encoding" in m || "file is empty" in m
+        }
 
         /** AAC-family containers that STT v2 only accepts with an explicit decoding config. */
         private val AAC_CONTAINER_ENCODINGS =

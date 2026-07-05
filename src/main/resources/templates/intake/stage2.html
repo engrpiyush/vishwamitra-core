@@ -83,7 +83,7 @@
                               th:text="${j.finishedAt}">when</time>
                         <span th:if="${j.finishedAt == null}" class="muted">—</span></td>
                     <td>
-                        <form th:if="${j.status.name() != 'COMPLETED' and j.status.name() != 'FAILED'}"
+                        <form th:if="${j.status.name() != 'COMPLETED' and j.status.name() != 'FAILED' and j.status.name() != 'AWAITING_SPEAKER_SELECTION'}"
                               method="post" class="inline-form"
                               th:action="@{/intake/stage2/jobs/{jid}/poll(jid=${j.id})}">
                             <button type="submit" class="btn--ghost btn--sm">Poll</button>
@@ -93,6 +93,56 @@
                               th:action="@{/intake/stage2/jobs/{jid}/retry(jid=${j.id})}">
                             <button type="submit" class="btn--ghost btn--sm">Retry</button>
                         </form>
+                        <!-- §12.4 selection gate: pick which diarized speaker(s) are the subject. -->
+                        <th:block th:if="${j.status.name() == 'AWAITING_SPEAKER_SELECTION'}"
+                                  th:with="samples=${speakerSamplesByJob[j.id]}">
+                            <button type="button" class="btn--sm"
+                                    th:attr="data-dialog-open='self-' + ${j.id}">Choose speaker</button>
+                            <dialog th:id="'self-' + ${j.id}" class="panel" style="max-width:44rem; border:none;">
+                                <!-- Selection view -->
+                                <div class="gate-main">
+                                    <h3 style="margin-top:0;">Which speaker is the subject?</h3>
+                                    <p class="muted">We couldn't confidently tell who the subject is from the
+                                        audio. Open each speaker's transcript to see who's who, then tick the
+                                        one(s) that are <strong>the subject</strong> — tick more than one if
+                                        diarization split the same person into two labels. Everyone else is the
+                                        other party. Tick none if the subject isn't on this call.</p>
+                                    <form method="post" class="form" style="max-width:none;"
+                                          th:action="@{/intake/stage2/jobs/{jid}/resolve-speakers(jid=${j.id})}">
+                                        <div th:each="sp,iter : ${samples}"
+                                             style="margin:0.5rem 0; padding:0.5rem 0.7rem; border:1px solid var(--border,#ddd); border-radius:6px;">
+                                            <div class="row-between">
+                                                <label style="cursor:pointer;">
+                                                    <input type="checkbox" name="self" th:value="${sp.key}"
+                                                           th:checked="${j.speakerRoles != null and j.speakerRoles.get(sp.key) != null and j.speakerRoles.get(sp.key).role.name() == 'SUBJECT'}"/>
+                                                    <strong th:text="${sp.key}">Speaker 0</strong>
+                                                    <span class="badge badge--muted"
+                                                          th:if="${j.speakerRoles != null and j.speakerRoles.get(sp.key) != null}"
+                                                          th:text="'guess: ' + ${#strings.toLowerCase(j.speakerRoles.get(sp.key).role)}">guess</span>
+                                                </label>
+                                                <button type="button" class="btn--ghost btn--sm"
+                                                        th:attr="data-speaker-view='txt-' + ${j.id} + '-' + ${iter.index}">
+                                                    View transcript &rarr;</button>
+                                            </div>
+                                            <p class="muted" style="margin:0.35rem 0 0; font-size:0.9em;"
+                                               th:text="'“' + ${#strings.abbreviate(sp.value, 180)} + '”'">preview</p>
+                                        </div>
+                                        <div class="row-actions" style="margin-top:0.8rem;">
+                                            <button type="submit">Confirm &amp; extract</button>
+                                            <button type="button" class="btn--ghost btn--sm" data-dialog-close>Cancel</button>
+                                        </div>
+                                    </form>
+                                </div>
+                                <!-- Per-speaker full-transcript views (screen-swapped in by JS). -->
+                                <div th:each="sp,iter : ${samples}" class="gate-speaker" style="display:none;"
+                                     th:id="'txt-' + ${j.id} + '-' + ${iter.index}">
+                                    <button type="button" class="btn--ghost btn--sm" data-speaker-back>&larr; Back</button>
+                                    <h3 style="margin:0.5rem 0;" th:text="${sp.key} + ' — full transcript'">Speaker — full transcript</h3>
+                                    <div style="max-height:24rem; overflow:auto; white-space:pre-wrap; font-size:0.92em; line-height:1.5;"
+                                         th:text="${sp.value}">full transcript text</div>
+                                </div>
+                            </dialog>
+                        </th:block>
                         <th:block th:if="${j.status.name() == 'COMPLETED'}"
                                   th:with="isDoc=${j.modality.name() == 'IMAGE' or j.modality.name() == 'DOCUMENT'}">
                             <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>
@@ -125,6 +175,77 @@
                                         data-dialog-close>Cancel</button>
                             </dialog>
                         </th:block>
+                        <!-- §12.4 Phase B: speaker→role editor for a multi-speaker A/V job. -->
+                        <th:block th:if="${j.status.name() == 'COMPLETED' and j.speakerRoles != null and !j.speakerRoles.isEmpty()}"
+                                  th:with="samples=${speakerSamplesByJob[j.id]}">
+                            <button type="button" class="btn--ghost btn--sm"
+                                    th:attr="data-dialog-open='speakers-' + ${j.id}">Speakers</button>
+                            <dialog th:id="'speakers-' + ${j.id}" class="panel" style="max-width:40rem; border:none;">
+                                <div class="gate-main">
+                                    <h3 style="margin-top:0;">Who is each speaker?</h3>
+                                    <p class="muted">Correct the diarized speakers, then re-extract. Use
+                                        <em>View transcript</em> to see who's who. Claims are re-weighted by
+                                        role — <strong>subject</strong> = self-report, <strong>endorser</strong>
+                                        = third-party testimony (tiered by relationship) — and an
+                                        <strong>interviewer</strong>'s questions are dropped. Replaces this
+                                        asset's claims.</p>
+                                    <form method="post" class="form" style="max-width:none;"
+                                          th:action="@{/intake/stage2/jobs/{jid}/speaker-roles(jid=${j.id})}">
+                                        <table class="grid">
+                                            <thead>
+                                            <tr><th>Speaker</th><th>Role</th><th>Relationship</th><th>Name</th><th>Action</th></tr>
+                                            </thead>
+                                            <tbody>
+                                            <tr th:each="sp,iter : ${j.speakerRoles}">
+                                                <td>
+                                                    <input type="hidden" name="label" th:value="${sp.key}"/>
+                                                    <span th:text="${sp.key}">Speaker 1</span>
+                                                </td>
+                                                <td>
+                                                    <select name="role">
+                                                        <option th:each="r : ${speakerRoleValues}" th:value="${r.name()}"
+                                                                th:text="${r.name().toLowerCase()}"
+                                                                th:selected="${sp.value.role == r}">role</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <select name="relationship">
+                                                        <option value="" th:selected="${sp.value.relationship == null}">—</option>
+                                                        <option th:each="rel : ${relationshipValues}" th:value="${rel.name()}"
+                                                                th:text="${rel.name().toLowerCase()}"
+                                                                th:selected="${sp.value.relationship == rel}">rel</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <input type="text" name="name" th:value="${sp.value.name}"
+                                                           placeholder="optional" style="width:100%;"/>
+                                                </td>
+                                                <td><button type="button" class="btn--ghost btn--sm" style="margin-top:0.25rem;"
+                                                            th:if="${samples != null and samples.get(sp.key) != null}"
+                                                            th:attr="data-speaker-view='stxt-' + ${j.id} + '-' + ${iter.index}">View transcript</button></td>
+                                            </tr>
+                                            </tbody>
+                                        </table>
+                                        <p class="muted" style="margin:0.6rem 0 0; font-size:0.85em;">Relationship
+                                            applies to endorsers only (EXPERT &rarr; high, MANAGER/MENTOR/PEER/CLIENT
+                                            &rarr; medium, else low).</p>
+                                        <div class="row-actions" style="margin-top:0.8rem;">
+                                            <button type="submit">Save &amp; re-extract</button>
+                                            <button type="button" class="btn--ghost btn--sm" data-dialog-close>Cancel</button>
+                                        </div>
+                                    </form>
+                                </div>
+                                <!-- Per-speaker full-transcript views (screen-swapped in by JS). -->
+                                <div th:each="sp,iter : ${j.speakerRoles}" class="gate-speaker" style="display:none;"
+                                     th:if="${samples != null and samples.get(sp.key) != null}"
+                                     th:id="'stxt-' + ${j.id} + '-' + ${iter.index}">
+                                    <button type="button" class="btn--ghost btn--sm" data-speaker-back>&larr; Back</button>
+                                    <h3 style="margin:0.5rem 0;" th:text="${sp.key} + ' — full transcript'">Speaker — full transcript</h3>
+                                    <div style="max-height:24rem; overflow:auto; white-space:pre-wrap; font-size:0.92em; line-height:1.5;"
+                                         th:text="${samples.get(sp.key)}">full transcript text</div>
+                                </div>
+                            </dialog>
+                        </th:block>
                     </td>
                 </tr>
                 </tbody>
@@ -155,6 +276,8 @@
                               th:text="${#strings.toLowerCase(c.claimBasis)}">basis</span>
                         <span class="badge badge--danger" th:if="${c.sensitive}">sensitive</span>
                         <span class="badge badge--muted" th:if="${c.speaker != null}" th:text="${c.speaker}">speaker</span>
+                        <span class="badge badge--info" th:if="${c.speakerRole != null}"
+                              th:text="${#strings.toLowerCase(c.speakerRole)}">role</span>
                         <span class="badge badge--muted" th:if="${c.mediaStart != null and c.mediaEnd != null}"
                               th:text="${c.mediaStart + 's – ' + c.mediaEnd + 's'}">0s – 5s</span>
                         <span class="badge badge--muted" th:if="${c.claimedDate != null}" th:text="${c.claimedDate}">date</span>

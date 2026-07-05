@@ -4,6 +4,9 @@ import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
+import ai.vishwakarma.labelling.domain.SpeakerRole
+import ai.vishwakarma.labelling.domain.claimProvenance
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
@@ -33,6 +36,7 @@ class ClaimExtractor(
         asset: Asset,
         transcript: Transcript,
         subjectName: String? = null,
+        speakerRoles: Map<String, SpeakerAssignment>? = null,
     ): List<Claim> {
         check(gemini.available()) {
             "Gemini extraction unavailable — enable the gemini provider with a Vertex model id"
@@ -43,11 +47,13 @@ class ClaimExtractor(
         return chunks(lines).flatMap { chunk ->
             val raw =
                 gemini.generate(
-                    prompt(asset, chunk, subjectName, resolved),
+                    prompt(asset, chunk, subjectName, resolved, speakerRoles),
                     maxTokens = MAX_TOKENS,
                     thinkingBudget = THINKING_BUDGET,
                 )
-            parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now, resolved) }
+            parseClaims(raw).mapNotNull {
+                it.toClaim(subjectId, asset, now, resolved, speakerRoles)
+            }
         }
     }
 
@@ -77,7 +83,8 @@ class ClaimExtractor(
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
             )
-        return parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now, resolved) }
+        // Documents have no diarized speakers → no binding; provenance stays asset-level.
+        return parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now, resolved, null) }
     }
 
     private fun TranscriptSegment.render(): String {
@@ -85,6 +92,17 @@ class ClaimExtractor(
         val range = if (start != null && end != null) " ($start–${end}s)" else ""
         return "[$who]$range $text"
     }
+
+    /** Human-readable role line for the extraction prompt's speaker-roles block (§12.4). */
+    private fun SpeakerAssignment.describe(): String =
+        when (role) {
+            SpeakerRole.SUBJECT -> "the SUBJECT speaking about themselves (self-report)"
+            SpeakerRole.ENDORSER ->
+                "an ENDORSER (${relationship?.name ?: "third party"}) speaking about the subject"
+            SpeakerRole.INTERVIEWER ->
+                "the INTERVIEWER — only asks questions; do NOT extract claims from this speaker"
+            SpeakerRole.OTHER -> "OTHER — do NOT extract claims from this speaker"
+        }
 
     /** Split rendered lines into chunks under [CHUNK_CHARS], never splitting a segment. */
     private fun chunks(lines: List<String>): List<String> {
@@ -107,6 +125,7 @@ class ClaimExtractor(
         chunk: String,
         subjectName: String?,
         resolved: ResolvedExtractionPrompt,
+        speakerRoles: Map<String, SpeakerAssignment>?,
     ): String = buildString {
         appendLine(
             "You are extracting atomic claims about a person (the \"subject\") from a diarized " +
@@ -129,6 +148,22 @@ class ClaimExtractor(
                 "(SELF means the subject speaks about themselves; anything else is a third party " +
                 "speaking about the subject)"
         )
+        // Multi-speaker (§12.4): roles are pre-resolved — tell the model who is who so it
+        // attributes
+        // claims to the right speaker and skips the interviewer's questions entirely.
+        speakerRoles
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { roles ->
+                appendLine()
+                appendLine(
+                    "Speaker roles in this transcript (already resolved — use them, do not re-guess):"
+                )
+                roles.forEach { (label, a) -> appendLine("- $label: ${a.describe()}") }
+                appendLine(
+                    "Only extract claims spoken by SUBJECT or ENDORSER speakers; never from an " +
+                        "INTERVIEWER or OTHER. Copy the exact speaker label onto each claim."
+                )
+            }
         appendLine()
         appendLine(
             "Extract every atomic, factual claim about the subject. One claim = one standalone " +
@@ -267,16 +302,27 @@ class ClaimExtractor(
         asset: Asset,
         now: Instant,
         resolved: ResolvedExtractionPrompt,
+        speakerRoles: Map<String, SpeakerAssignment>?,
     ): Claim? {
         val text = (this["text"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: return null
         val claimType = ClaimType.fromOrNull(this["claimType"] as? String) ?: return null
+        val speaker = this["speaker"] as? String
+        // §12.4 per-claim re-weight. No binding (single-speaker / document / non-diarized) → the
+        // claim keeps the asset's uniform provenance (pre-§12.4 behavior). An interviewer/other
+        // span
+        // is not evidence about the subject, so drop it (belt-and-suspenders with the prompt's own
+        // exclusion of interviewer speakers).
+        val assignment = speaker?.let { speakerRoles?.get(it) }
+        val provenance = claimProvenance(assignment, asset)
+        if (!provenance.keep) return null
         return Claim(
             id = "",
             subjectId = subjectId,
             assetId = asset.id,
             claimType = claimType,
             text = text,
-            speaker = this["speaker"] as? String,
+            speaker = speaker,
+            speakerRole = assignment?.role,
             mediaStart = (this["mediaStart"] as? Number)?.toDouble(),
             mediaEnd = (this["mediaEnd"] as? Number)?.toDouble(),
             sourceExcerpt = this["sourceExcerpt"] as? String,
@@ -284,9 +330,9 @@ class ClaimExtractor(
                 (this["claimedDate"] as? String)?.let {
                     runCatching { LocalDate.parse(it) }.getOrNull()
                 },
-            authenticityTier = asset.authenticityPrior,
-            sourceClass = asset.sourceClass,
-            relationship = asset.relationship,
+            authenticityTier = provenance.authenticityTier,
+            sourceClass = provenance.sourceClass,
+            relationship = provenance.relationship,
             authenticityScore = null,
             extractionConfidence = (this["confidence"] as? Number)?.toDouble(),
             claimBasis = ClaimBasis.fromOrNull(this["basis"] as? String) ?: ClaimBasis.STATED,

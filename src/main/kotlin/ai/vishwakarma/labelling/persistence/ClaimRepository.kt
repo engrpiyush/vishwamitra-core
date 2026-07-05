@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.SourceClass
+import ai.vishwakarma.labelling.domain.SpeakerRole
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
 import java.time.Instant
@@ -55,6 +56,7 @@ class ClaimRepository(private val db: Firestore) {
             "claimType" to claimType.name,
             "text" to text,
             "speaker" to speaker,
+            "speakerRole" to speakerRole?.name,
             "mediaStart" to mediaStart,
             "mediaEnd" to mediaEnd,
             "sourceExcerpt" to sourceExcerpt,
@@ -81,6 +83,7 @@ class ClaimRepository(private val db: Firestore) {
             claimType = ClaimType.fromOrNull(getString("claimType")) ?: ClaimType.EPISODE,
             text = getString("text") ?: "",
             speaker = getString("speaker"),
+            speakerRole = SpeakerRole.fromOrNull(getString("speakerRole")),
             mediaStart = getDouble("mediaStart"),
             mediaEnd = getDouble("mediaEnd"),
             sourceExcerpt = getString("sourceExcerpt"),

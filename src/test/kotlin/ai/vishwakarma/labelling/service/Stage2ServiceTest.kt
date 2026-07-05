@@ -11,6 +11,8 @@ import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
+import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.domain.Stage2Job
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.domain.Subject
@@ -25,6 +27,8 @@ import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.stage2.ClaimExtractor
 import ai.vishwakarma.labelling.stage2.DocumentPayload
 import ai.vishwakarma.labelling.stage2.DocumentSource
+import ai.vishwakarma.labelling.stage2.SpeakerAttribution
+import ai.vishwakarma.labelling.stage2.SpeakerResolution
 import ai.vishwakarma.labelling.stage2.Transcriber
 import ai.vishwakarma.labelling.stage2.Transcript
 import ai.vishwakarma.labelling.stage2.TranscriptSegment
@@ -222,13 +226,17 @@ private class FakeExtractor :
         )
     }
 
+    var lastSpeakerRoles: Map<String, SpeakerAssignment>? = null
+
     override fun extract(
         subjectId: String,
         asset: Asset,
         transcript: Transcript,
         subjectName: String?,
+        speakerRoles: Map<String, SpeakerAssignment>?,
     ): List<Claim> {
         if (throws) error("extraction blew up")
+        lastSpeakerRoles = speakerRoles
         return listOf(
             Claim(
                 id = "",
@@ -253,6 +261,29 @@ private class FakeExtractor :
 }
 
 /**
+ * Fake [SpeakerAttribution] — returns a configurable resolution (null = no attribution, default).
+ */
+private class FakeSpeakerAttribution :
+    SpeakerAttribution(
+        GeminiDrafting(
+            AppProperties(),
+            ProviderService(ProviderRepository(mock(Firestore::class.java)))
+        )
+    ) {
+    var resolution: SpeakerResolution? = null
+    var resolvedFor: String? = null
+
+    override fun resolve(
+        asset: Asset,
+        transcript: Transcript,
+        subjectName: String?,
+    ): SpeakerResolution? {
+        resolvedFor = asset.id
+        return resolution
+    }
+}
+
+/**
  * [Stage2Service] backed by in-memory fakes (no Spring context): the process guards + permanent
  * lock, per-asset job submission, and the poll state machine. JUnit5's per-method lifecycle gives
  * each test fresh fakes.
@@ -266,6 +297,7 @@ class Stage2ServiceTest {
     private val claims = FakeClaimRepo()
     private val transcriber = StubTranscriber()
     private val extractor = FakeExtractor()
+    private val speakerAttribution = FakeSpeakerAttribution()
     private val documents = FakeDocumentSource()
     private val service =
         Stage2Service(
@@ -276,6 +308,7 @@ class Stage2ServiceTest {
             claims,
             transcriber,
             extractor,
+            speakerAttribution,
             documents,
             AppProperties(),
         )
@@ -792,6 +825,230 @@ class Stage2ServiceTest {
 
         assertTrue(claims.store.keys.none { it == "c-old" })
         assertEquals(2, claims.store.size)
+    }
+
+    // ---- §12.4 speaker attribution wiring -----------------------------------
+
+    private fun endorserBinding() =
+        mapOf(
+            "Speaker 1" to SpeakerAssignment(SpeakerRole.INTERVIEWER),
+            "Speaker 2" to SpeakerAssignment(SpeakerRole.ENDORSER, Relationship.MANAGER),
+        )
+
+    private fun twoSpeakerTranscript() =
+        Transcript(
+            segments =
+                listOf(
+                    TranscriptSegment(
+                        "Speaker 0",
+                        0.0,
+                        5.0,
+                        "So what are you working on these days?"
+                    ),
+                    TranscriptSegment(
+                        "Speaker 1",
+                        5.0,
+                        12.0,
+                        "Mostly the payments platform migration."
+                    ),
+                ),
+            language = "en-US",
+        )
+
+    @Test
+    fun `poll resolves a speaker binding, persists it on the job, and passes it to extraction`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+        // High confidence → auto-extract, no gate.
+        speakerAttribution.resolution = SpeakerResolution(endorserBinding(), confidence = 0.95)
+        transcriber.pollResult = TranscriptionPoll.Done(transcript(), null)
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals("a1", speakerAttribution.resolvedFor)
+        assertEquals(endorserBinding(), result.speakerRoles)
+        assertEquals(endorserBinding(), extractor.lastSpeakerRoles)
+    }
+
+    @Test
+    fun `poll leaves speakerRoles null when attribution finds nothing (single-speaker)`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+        // FakeSpeakerAttribution.resolution defaults to null → asset-level provenance.
+        transcriber.pollResult = TranscriptionPoll.Done(transcript(), null)
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals(null, result.speakerRoles)
+        assertEquals(null, extractor.lastSpeakerRoles)
+    }
+
+    @Test
+    fun `re-extract reuses an existing binding without re-resolving`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+        jobs.store["j1"] = jobs.store["j1"]!!.copy(speakerRoles = endorserBinding())
+        transcriber.fetchedTranscript = transcript()
+        // A different binding is on offer — it must NOT be used (resolve should not be called).
+        speakerAttribution.resolution =
+            SpeakerResolution(mapOf("X" to SpeakerAssignment(SpeakerRole.SUBJECT)), 0.95)
+
+        val result = service.rerunJob("j1", full = false).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals(endorserBinding(), extractor.lastSpeakerRoles)
+        assertEquals(null, speakerAttribution.resolvedFor)
+    }
+
+    @Test
+    fun `full rerun clears the binding so a fresh transcription re-resolves`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+        jobs.store["j1"] = jobs.store["j1"]!!.copy(speakerRoles = endorserBinding())
+
+        val result = service.rerunJob("j1", full = true).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.TRANSCRIBING, result.status)
+        assertEquals(null, result.speakerRoles)
+    }
+
+    @Test
+    fun `updateSpeakerRoles saves the operator binding and re-extracts, reusing it (not re-resolving)`() {
+        seed(avAsset("a1"))
+        seedCompletedJob()
+        seedOldClaim()
+        transcriber.fetchedTranscript = transcript()
+        // Attribution would offer a different binding — it must NOT be consulted.
+        speakerAttribution.resolution =
+            SpeakerResolution(mapOf("X" to SpeakerAssignment(SpeakerRole.SUBJECT)), 0.95)
+
+        val result = service.updateSpeakerRoles("j1", endorserBinding()).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertEquals(endorserBinding(), result.speakerRoles)
+        assertEquals(endorserBinding(), extractor.lastSpeakerRoles)
+        assertEquals(null, speakerAttribution.resolvedFor)
+        assertTrue(claims.store.keys.none { it == "c-old" })
+        assertEquals(2, claims.store.size)
+    }
+
+    @Test
+    fun `updateSpeakerRoles refuses a job that is not COMPLETED`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+
+        val result = service.updateSpeakerRoles("j1", endorserBinding())
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
+    }
+
+    @Test
+    fun `updateSpeakerRoles refuses when no transcript is stored`() {
+        seed(avAsset("a1"))
+        seedCompletedJob(transcriptUri = null)
+
+        val result = service.updateSpeakerRoles("j1", endorserBinding())
+
+        assertTrue(result.errorOrNull() is DomainError.Invalid)
+    }
+
+    // ---- §12.4 speaker-selection gate ---------------------------------------
+
+    @Test
+    fun `poll parks a low-confidence multi-speaker job for speaker selection`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+        speakerAttribution.resolution =
+            SpeakerResolution(
+                mapOf("Speaker 1" to SpeakerAssignment(SpeakerRole.SUBJECT)),
+                confidence = 0.4,
+            )
+        transcriber.pollResult =
+            TranscriptionPoll.Done(twoSpeakerTranscript(), "gs://t/s1/a1/out.json")
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.AWAITING_SPEAKER_SELECTION, result.status)
+        assertEquals("gs://t/s1/a1/out.json", result.transcriptUri)
+        assertEquals(setOf("Speaker 0", "Speaker 1"), result.speakerSamples?.keys)
+        assertTrue(claims.store.isEmpty()) // no extraction until the operator resolves
+    }
+
+    @Test
+    fun `poll leaves a parked job untouched (waits for the operator)`() {
+        seed(avAsset("a1"))
+        jobs.store["j1"] =
+            seedTranscribingJob()
+                .copy(status = Stage2JobStatus.AWAITING_SPEAKER_SELECTION, transcriptUri = "gs://t")
+
+        val result = service.poll("j1").valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.AWAITING_SPEAKER_SELECTION, result.status)
+        assertTrue(jobs.saves.isEmpty())
+    }
+
+    @Test
+    fun `resolveSpeakers tags self, weights the rest as the asset relationship, and extracts`() {
+        seed(avAsset("a1")) // MANAGER_ENDORSEMENT → relationship MANAGER
+        jobs.store["j1"] =
+            seedTranscribingJob()
+                .copy(
+                    status = Stage2JobStatus.AWAITING_SPEAKER_SELECTION,
+                    transcriptUri = "gs://t/s1/a1/out.json",
+                    speakerSamples = mapOf("Speaker 0" to "…", "Speaker 1" to "…"),
+                )
+        transcriber.fetchedTranscript = twoSpeakerTranscript()
+
+        val result = service.resolveSpeakers("j1", listOf("Speaker 1")).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        val binding = extractor.lastSpeakerRoles!!
+        assertEquals(SpeakerRole.SUBJECT, binding["Speaker 1"]!!.role)
+        assertEquals(SpeakerRole.ENDORSER, binding["Speaker 0"]!!.role)
+        assertEquals(Relationship.MANAGER, binding["Speaker 0"]!!.relationship)
+        assertEquals(
+            setOf("Speaker 0", "Speaker 1"),
+            result.speakerSamples?.keys,
+        ) // kept for the post-completion Speakers editor
+    }
+
+    @Test
+    fun `resolveSpeakers with no self labels treats everyone as the other party (subject absent)`() {
+        seed(avAsset("a1"))
+        jobs.store["j1"] =
+            seedTranscribingJob()
+                .copy(
+                    status = Stage2JobStatus.AWAITING_SPEAKER_SELECTION,
+                    transcriptUri = "gs://t/s1/a1/out.json",
+                )
+        transcriber.fetchedTranscript = twoSpeakerTranscript()
+
+        val result = service.resolveSpeakers("j1", emptyList()).valueOrNull()!!
+
+        assertEquals(Stage2JobStatus.COMPLETED, result.status)
+        assertTrue(extractor.lastSpeakerRoles!!.values.all { it.role == SpeakerRole.ENDORSER })
+    }
+
+    @Test
+    fun `resolveSpeakers refuses a job that is not awaiting selection`() {
+        seed(avAsset("a1"))
+        seedTranscribingJob()
+
+        val result = service.resolveSpeakers("j1", listOf("Speaker 1"))
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
+    }
+
+    @Test
+    fun `updateSpeakerRoles refuses a document job`() {
+        seed(docAsset("d1"))
+        seedDocJob(status = Stage2JobStatus.COMPLETED)
+
+        val result = service.updateSpeakerRoles("j1", endorserBinding())
+
+        assertTrue(result.errorOrNull() is DomainError.Conflict)
     }
 
     // ---- pollAll ------------------------------------------------------------

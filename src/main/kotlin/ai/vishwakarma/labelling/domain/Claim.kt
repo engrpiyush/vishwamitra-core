@@ -71,6 +71,14 @@ data class Claim(
     val text: String,
     /** Diarization label as heard in the source (e.g. "Speaker 1"). */
     val speaker: String? = null,
+    /**
+     * Resolved role of [speaker] in a multi-speaker asset (§12.4): SUBJECT (self-report) vs
+     * ENDORSER (third-party testimony) vs INTERVIEWER/OTHER. Null for single-speaker / non-diarized
+     * claims. Denormalised like [relationship]/[sourceClass] so a claim is a self-contained
+     * evidence unit — this is *why* two claims from the same asset can carry different
+     * [relationship]/[sourceClass].
+     */
+    val speakerRole: SpeakerRole? = null,
     /** Seconds into the source A/V where the claim starts/ends. */
     val mediaStart: Double? = null,
     val mediaEnd: Double? = null,
@@ -106,3 +114,46 @@ data class Claim(
     val createdAt: Instant? = null,
     val stage2ProcessedAt: Instant? = null,
 )
+
+/**
+ * The source-provenance a claim inherits from its speaker's resolved role (§12.4 per-claim
+ * re-weight). Returned by [claimProvenance]; [keep] = false means the span is not evidence about
+ * the subject (an interviewer's question) and the claim is dropped at extraction.
+ */
+data class ClaimProvenance(
+    val sourceClass: SourceClass?,
+    val relationship: Relationship?,
+    val authenticityTier: AuthenticityTier?,
+    val keep: Boolean,
+)
+
+/**
+ * Resolve a claim's provenance from its speaker [assignment] (§12.4). With no binding ([assignment]
+ * null — single-speaker / non-diarized) the claim inherits the [asset]'s uniform provenance, the
+ * pre-§12.4 behavior. With a binding:
+ * - [SpeakerRole.SUBJECT] → self-report (SELF / SELF / LOW), *regardless* of the asset's
+ *   endorsement classification — this is the mis-attribution fix (a subject's self-praise no longer
+ *   inherits endorser weight).
+ * - [SpeakerRole.ENDORSER] → third-party testimony (ENDORSEMENT), refined by the endorser's
+ *   relationship via [endorsementPrior]; falls back to the asset's relationship when the assignment
+ *   carries none.
+ * - [SpeakerRole.INTERVIEWER] / [SpeakerRole.OTHER] → [keep] = false (dropped).
+ */
+fun claimProvenance(assignment: SpeakerAssignment?, asset: Asset): ClaimProvenance =
+    when (assignment?.role) {
+        null ->
+            ClaimProvenance(
+                asset.sourceClass,
+                asset.relationship,
+                asset.authenticityPrior,
+                keep = true,
+            )
+        SpeakerRole.SUBJECT ->
+            ClaimProvenance(SourceClass.SELF, Relationship.SELF, AuthenticityTier.LOW, keep = true)
+        SpeakerRole.ENDORSER -> {
+            val rel = assignment.relationship ?: asset.relationship
+            ClaimProvenance(SourceClass.ENDORSEMENT, rel, endorsementPrior(rel), keep = true)
+        }
+        SpeakerRole.INTERVIEWER,
+        SpeakerRole.OTHER -> ClaimProvenance(null, null, null, keep = false)
+    }

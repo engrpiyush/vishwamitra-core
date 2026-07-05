@@ -161,26 +161,38 @@ enum class ConsentStatus {
 }
 
 /**
- * Derive the default authenticity prior (handed to Stage 3) from the content type and the source's
- * relationship to the subject. Starts from [ContentType.basePrior] and only *refines* the
- * [SourceClass.ENDORSEMENT] case, where the relationship is the deciding factor:
+ * The authenticity prior for third-party [SourceClass.ENDORSEMENT] testimony, decided by the
+ * endorser's relationship to the subject:
  * - EXPERT → HIGH (a domain authority vouching)
  * - MANAGER / MENTOR / PEER / CLIENT → MEDIUM
  * - FAMILY / UNKNOWN / (anything else) → LOW
+ *
+ * Shared by [defaultPrior] (asset-level) and the §12.4 per-claim re-weight ([claimProvenance]), so
+ * an endorser speaker's claims are tiered the same way whether the whole asset is an endorsement or
+ * only one voice in a mixed call.
+ */
+fun endorsementPrior(relationship: Relationship?): AuthenticityTier =
+    when (relationship) {
+        Relationship.EXPERT -> AuthenticityTier.HIGH
+        Relationship.MANAGER,
+        Relationship.MENTOR,
+        Relationship.PEER,
+        Relationship.CLIENT -> AuthenticityTier.MEDIUM
+        else -> AuthenticityTier.LOW
+    }
+
+/**
+ * Derive the default authenticity prior (handed to Stage 3) from the content type and the source's
+ * relationship to the subject. Starts from [ContentType.basePrior] and only *refines* the
+ * [SourceClass.ENDORSEMENT] case (via [endorsementPrior]), where the relationship is the deciding
+ * factor.
  *
  * For every other source class the relationship doesn't move the needle, so the base prior stands
  * (DOCUMENTARY = HIGH, SELF = LOW, EVENT_CAPTURE = MEDIUM, PUBLIC_PROFILE = per content type).
  */
 fun defaultPrior(contentType: ContentType, relationship: Relationship?): AuthenticityTier =
     if (contentType.sourceClass == SourceClass.ENDORSEMENT) {
-        when (relationship) {
-            Relationship.EXPERT -> AuthenticityTier.HIGH
-            Relationship.MANAGER,
-            Relationship.MENTOR,
-            Relationship.PEER,
-            Relationship.CLIENT -> AuthenticityTier.MEDIUM
-            else -> AuthenticityTier.LOW
-        }
+        endorsementPrior(relationship)
     } else {
         contentType.basePrior
     }

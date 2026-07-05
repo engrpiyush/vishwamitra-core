@@ -1,5 +1,8 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.SpeakerAssignment
+import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.IntakeService
@@ -48,7 +51,23 @@ class Stage2Controller(
         model.addAttribute("jobs", jobs)
         model.addAttribute("claims", stage2.listClaims(id))
         model.addAttribute("assetTitles", intake.listAssets(id).associate { it.id to it.title })
-        model.addAttribute("activeCount", jobs.count { !it.status.terminal() })
+        // AWAITING_SPEAKER_SELECTION is non-terminal but *not* auto-advancing — it waits for the
+        // operator — so it must not keep the auto-poll loop spinning (§12.4).
+        model.addAttribute(
+            "activeCount",
+            jobs.count { !it.status.terminal() && it.status.name != "AWAITING_SPEAKER_SELECTION" },
+        )
+        // §12.4 Phase B: option lists for the per-job speaker→role editor.
+        model.addAttribute("speakerRoleValues", SpeakerRole.entries)
+        model.addAttribute("relationshipValues", Relationship.entries)
+        // §12.4: per-speaker transcript for the selection UIs (stored, else loaded on demand), so
+        // "View transcript" works even on jobs that completed before samples were kept.
+        model.addAttribute(
+            "speakerSamplesByJob",
+            jobs
+                .filter { it.speakerRoles != null }
+                .associate { it.id to stage2.speakerSamples(it) },
+        )
         // Fingerprint of the rendered job states; the auto-poll script reloads when it changes.
         model.addAttribute(
             "jobStatuses",
@@ -116,6 +135,87 @@ class Stage2Controller(
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
                 { ra.addFlashAttribute("ok", "Re-run — job is ${it.status}") },
+            )
+        return "redirect:/intake/$subjectId/stage2"
+    }
+
+    /**
+     * §12.4 Phase B: save the operator's speaker→role binding for a COMPLETED A/V job, then
+     * re-extract. The dialog posts parallel [label]/[role]/[relationship]/[name] arrays (one entry
+     * per diarized speaker); rows with a blank/invalid role are skipped, and a relationship is kept
+     * only for ENDORSER rows.
+     */
+    @PostMapping("/stage2/jobs/{jobId}/speaker-roles")
+    fun updateSpeakerRoles(
+        @PathVariable jobId: String,
+        @RequestParam label: List<String>,
+        @RequestParam role: List<String>,
+        @RequestParam(required = false) relationship: List<String>?,
+        @RequestParam(required = false) name: List<String>?,
+        ra: RedirectAttributes,
+    ): String {
+        val subjectId =
+            stage2.job(jobId)?.subjectId
+                ?: run {
+                    ra.addFlashAttribute("error", "Job not found")
+                    return "redirect:/intake"
+                }
+        val roles =
+            label.indices
+                .mapNotNull { i ->
+                    val r = SpeakerRole.fromOrNull(role.getOrNull(i)) ?: return@mapNotNull null
+                    label[i] to
+                        SpeakerAssignment(
+                            role = r,
+                            relationship =
+                                Relationship.fromOrNull(relationship?.getOrNull(i)).takeIf {
+                                    r == SpeakerRole.ENDORSER
+                                },
+                            name = name?.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() },
+                        )
+                }
+                .toMap()
+        stage2
+            .updateSpeakerRoles(jobId, roles)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Speaker roles saved — re-extracting (job is ${it.status})",
+                    )
+                },
+            )
+        return "redirect:/intake/$subjectId/stage2"
+    }
+
+    /**
+     * §12.4 selection gate: the operator tags which diarized speaker(s) are the subject (checked
+     * boxes → [self]); empty = subject not on the call. The service builds the binding and
+     * extracts.
+     */
+    @PostMapping("/stage2/jobs/{jobId}/resolve-speakers")
+    fun resolveSpeakers(
+        @PathVariable jobId: String,
+        @RequestParam(required = false) self: List<String>?,
+        ra: RedirectAttributes,
+    ): String {
+        val subjectId =
+            stage2.job(jobId)?.subjectId
+                ?: run {
+                    ra.addFlashAttribute("error", "Job not found")
+                    return "redirect:/intake"
+                }
+        stage2
+            .resolveSpeakers(jobId, self ?: emptyList())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Speaker selection saved — extracting (job is ${it.status})"
+                    )
+                },
             )
         return "redirect:/intake/$subjectId/stage2"
     }

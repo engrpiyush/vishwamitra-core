@@ -78,9 +78,35 @@ data class AppProperties(
         val transcriptsBucket: String = "",
         /** STT v2 recognition model; diarization support varies by model and region. */
         val sttModel: String = "long",
+        /**
+         * STT batchRecognize location (§12.4). Blank → [Gcp.region] (in-region, the pre-§12.4
+         * default). Single-region locations (e.g. asia-southeast1) reject diarization, so to enable
+         * the multi-speaker lane point this at a multi-region/global endpoint (`us` / `eu` /
+         * `global`) that serves `chirp_3` diarization and set [sttModel] to `chirp_3`. `global`
+         * uses the bare speech.googleapis.com host (handled in SpeechToTextTranscriber). Trade-off:
+         * audio is processed outside the region — accepted per the POC posture, as with
+         * gemini-location.
+         */
+        val sttLocation: String = "",
         val sttLanguage: String = "en-US",
         /** Diarization upper bound (self-interview 1–2 speakers; endorser calls 2+). */
         val maxSpeakers: Int = 6,
+        /**
+         * Send STT model-adaptation phrase hints (the subject's name — §9.2). The legacy `long`
+         * model supports it; the USM-based `chirp_3` model may reject or ignore model adaptation
+         * (§12.4 E1 — verify with a throwaway batchRecognize). Set false for a `chirp_3` deployment
+         * if the probe shows adaptation is rejected; claim text is still canonical-name-normalized
+         * at extraction, so the loss is transcript-cosmetic.
+         */
+        val sttPhraseHints: Boolean = true,
+        /**
+         * §12.4 speaker-attribution confidence gate (0..1). When the LLM's confidence in "which
+         * diarized speaker is the subject" is at least this, extraction runs automatically; below
+         * it, a multi-speaker job parks in AWAITING_SPEAKER_SELECTION for the operator to tag self.
+         * Explicit self-introductions score high; inferred guesses score low, so the default of 0.9
+         * gates everything without a clear self-ID.
+         */
+        val attributionConfidenceThreshold: Double = 0.9,
         /**
          * Assumed source parameters when a container needs explicitDecodingConfig (AAC family — see
          * SpeechToTextTranscriber). 48kHz stereo matches phone/screen recorders; override per
