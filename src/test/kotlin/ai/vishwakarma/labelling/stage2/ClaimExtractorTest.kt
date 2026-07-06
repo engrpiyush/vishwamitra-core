@@ -256,6 +256,25 @@ class ClaimExtractorTest {
         assertTrue(claims[1].sensitive)
     }
 
+    @Test
+    fun `parses favorability, clamps out-of-range values, and leaves it null when absent`() {
+        val json =
+            """[{"text":"Repeated an academic year","claimType":"EPISODE","confidence":0.9,"favorability":0.2},
+                {"text":"Won a national award","claimType":"EPISODE","confidence":0.9,"favorability":1.4},
+                {"text":"Documented a growth area","claimType":"WEAKNESS","confidence":0.9,"favorability":-0.3},
+                {"text":"Holds a plain factual role","claimType":"IDENTITY","confidence":0.9}]"""
+
+        val claims =
+            ClaimExtractor(StubGemini(json), promptService()).extract("s1", asset(), transcript)
+
+        assertEquals(0.2, claims[0].favorability)
+        // Out-of-range scores are clamped into 0..1, not dropped.
+        assertEquals(1.0, claims[1].favorability)
+        assertEquals(0.0, claims[2].favorability)
+        // Absent → null (review-required downstream, never silently auto-approved — §12.6).
+        assertEquals(null, claims[3].favorability)
+    }
+
     // ---- §12.4 multi-speaker re-weight ----------------------------------------
 
     private val multiSpeakerJson =

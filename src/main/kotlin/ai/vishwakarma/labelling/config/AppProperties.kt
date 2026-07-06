@@ -136,5 +136,13 @@ data class AppProperties(
          * margin.
          */
         val extractingTimeout: Duration = Duration.ofMinutes(15),
+        /**
+         * §12.6 review gate (0..1). A non-sensitive claim whose LLM-emitted [Claim.favorability] is
+         * below this is surfaced for operator review (approve-as-is or attach a sidecar
+         * justification); at/above it a STATED claim auto-approves. INFERRED claims are always
+         * reviewed regardless of favorability, and a null favorability is always review-required.
+         * 0.5 is the neutral midpoint, so the default reviews everything that reads as unfavorable.
+         */
+        val favorabilityThreshold: Double = 0.5,
     )
 }

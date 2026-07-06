@@ -183,7 +183,7 @@ class ClaimExtractor(
         appendLine()
         appendLine("Output ONLY a JSON array, no prose, no code fences. Each element:")
         appendLine(
-            """  {"text":"...","claimType":"IDENTITY|EPISODE|VALUE|WEAKNESS|SKILL","speaker":"Speaker 2","mediaStart":6.5,"mediaEnd":15.0,"sourceExcerpt":"...","claimedDate":"2021-06-01","confidence":0.9,"basis":"STATED","sensitive":false}"""
+            """  {"text":"...","claimType":"IDENTITY|EPISODE|VALUE|WEAKNESS|SKILL","speaker":"Speaker 2","mediaStart":6.5,"mediaEnd":15.0,"sourceExcerpt":"...","claimedDate":"2021-06-01","confidence":0.9,"basis":"STATED","sensitive":false,"favorability":0.5}"""
         )
         appendLine(
             "Rules: \"text\" is a standalone third-person statement about the subject. " +
@@ -244,7 +244,7 @@ class ClaimExtractor(
         appendLine()
         appendLine("Output ONLY a JSON array, no prose, no code fences. Each element:")
         appendLine(
-            """  {"text":"...","claimType":"IDENTITY|EPISODE|VALUE|WEAKNESS|SKILL","sourceExcerpt":"...","claimedDate":"2021-06-01","confidence":0.9,"basis":"STATED","sensitive":false}"""
+            """  {"text":"...","claimType":"IDENTITY|EPISODE|VALUE|WEAKNESS|SKILL","sourceExcerpt":"...","claimedDate":"2021-06-01","confidence":0.9,"basis":"STATED","sensitive":false,"favorability":0.5}"""
         )
         appendLine(
             "Rules: \"text\" is a standalone third-person statement about the subject. " +
@@ -263,7 +263,10 @@ class ClaimExtractor(
      * - `basis` marks STATED vs INFERRED so the distinction survives independently of the per-run
      *   `confidence` number (LLD §7.1.1);
      * - `sensitive` flags contact/identity PII, which is captured (legitimate for a personal
-     *   advocate) and gated for opt-in review approval, not dropped at extraction (LLD §12.6).
+     *   advocate) and gated for opt-in review approval, not dropped at extraction (LLD §12.6);
+     * - `favorability` scores how favorably the claim reflects on the subject (valence), driving
+     *   the §12.6 review gate — a Stage-2 marker judged from the claim's content, not its
+     *   evidential weight.
      */
     private fun claimDiscipline(): String =
         "A SKILL claim requires the source to demonstrate or attest the ability itself. " +
@@ -272,7 +275,12 @@ class ClaimExtractor(
             "Set \"basis\" to INFERRED for claims you infer from demonstrated behaviour rather " +
             "than ones the source states outright (the reduced-confidence demonstration claims); " +
             "otherwise STATED. Set \"sensitive\" to true when the claim's content is contact or " +
-            "identity data (email, phone, address, ID/registration/serial numbers), else false."
+            "identity data (email, phone, address, ID/registration/serial numbers), else false. " +
+            "\"favorability\" (0..1) is how favorably the claim reflects on the subject: 0.5 is " +
+            "neutral/factual, above 0.5 is positive (a strong endorsement ≈0.85, an award or " +
+            "top result ≈0.9), below 0.5 is unfavorable (a stated weakness ≈0.35, a multi-year " +
+            "resume gap ≈0.3, a repeated year or failed exam ≈0.2). Judge the content itself, " +
+            "not how confidently it is stated — an unfavorable fact can still be perfectly certain."
 
     private fun parseClaims(raw: String): List<Map<*, *>> {
         val json = stripFences(raw)
@@ -337,6 +345,7 @@ class ClaimExtractor(
             extractionConfidence = (this["confidence"] as? Number)?.toDouble(),
             claimBasis = ClaimBasis.fromOrNull(this["basis"] as? String) ?: ClaimBasis.STATED,
             sensitive = (this["sensitive"] as? Boolean) ?: false,
+            favorability = (this["favorability"] as? Number)?.toDouble()?.coerceIn(0.0, 1.0),
             extractionPromptId = asset.contentType.name,
             extractionPromptVersion = resolved.version,
             extractionPromptHash = resolved.hash,

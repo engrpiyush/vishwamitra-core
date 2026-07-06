@@ -105,6 +105,16 @@ data class Claim(
     val claimBasis: ClaimBasis? = null,
     /** Contact/identity PII — captured but held for opt-in approval by the §12.6 review layer. */
     val sensitive: Boolean = false,
+    /**
+     * How favorably the claim reflects on the subject (0..1): 0 = strongly unfavorable, 0.5 =
+     * neutral/factual, 1 = strongly favorable. LLM-emitted *valence toward the subject* — a Stage-2
+     * marker independent of [authenticityTier]/[authenticityScore] (a HIGH-authenticity fact can be
+     * very unfavorable, e.g. a verified low grade). Drives the §12.6 review gate: unfavorable
+     * claims (below `app.stage2.favorability-threshold`) are surfaced for approve/sidecar. Null =
+     * not scored (legacy / pre-marker claims) — treated as review-required, never silently
+     * auto-approved.
+     */
+    val favorability: Double? = null,
     /** [ContentType] name whose instruction block extracted this claim. */
     val extractionPromptId: String? = null,
     /** [ExtractionPrompt.version] used (0 = built-in default); Stage 3 compares like with like. */

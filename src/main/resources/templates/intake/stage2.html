@@ -274,6 +274,9 @@
                               th:text="${'prior ' + c.authenticityTier}">prior</span>
                         <span class="badge badge--muted" th:if="${c.claimBasis != null}"
                               th:text="${#strings.toLowerCase(c.claimBasis)}">basis</span>
+                        <span class="badge" th:if="${c.favorability != null}"
+                              th:classappend="${c.favorability &lt; 0.5} ? 'badge--danger' : 'badge--success'"
+                              th:text="${'favor ' + c.favorability}">favor</span>
                         <span class="badge badge--danger" th:if="${c.sensitive}">sensitive</span>
                         <span class="badge badge--muted" th:if="${c.speaker != null}" th:text="${c.speaker}">speaker</span>
                         <span class="badge badge--info" th:if="${c.speakerRole != null}"
