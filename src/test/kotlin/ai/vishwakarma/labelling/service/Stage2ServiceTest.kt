@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.Claim
+import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.ContentType
@@ -19,6 +20,7 @@ import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.ProviderRepository
@@ -129,6 +131,23 @@ private class FakeClaimRepo : ClaimRepository(mock(Firestore::class.java)) {
 
     override fun delete(id: String) {
         store.remove(id)
+    }
+}
+
+private class FakeStage2ReviewRepo : ClaimReviewRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, ClaimReview>()
+
+    override fun findByClaim(claimId: String): ClaimReview? = store[claimId]
+
+    override fun findBySubject(subjectId: String): List<ClaimReview> =
+        store.values.filter { it.subjectId == subjectId }
+
+    override fun save(review: ClaimReview) {
+        store[review.claimId] = review
+    }
+
+    override fun delete(claimId: String) {
+        store.remove(claimId)
     }
 }
 
@@ -295,6 +314,7 @@ class Stage2ServiceTest {
     private val assets = FakeStage2AssetRepo()
     private val jobs = FakeStage2JobRepo()
     private val claims = FakeClaimRepo()
+    private val reviews = FakeStage2ReviewRepo()
     private val transcriber = StubTranscriber()
     private val extractor = FakeExtractor()
     private val speakerAttribution = FakeSpeakerAttribution()
@@ -306,6 +326,7 @@ class Stage2ServiceTest {
             assets,
             jobs,
             claims,
+            reviews,
             transcriber,
             extractor,
             speakerAttribution,
@@ -354,6 +375,24 @@ class Stage2ServiceTest {
         )
 
     private fun seed(vararg a: Asset) = a.forEach { assets.store[it.id] = it }
+
+    @Test
+    fun `purgeSubject deletes the subject's claim reviews too (no orphaned reviews)`() {
+        claims.store["c1"] =
+            Claim(
+                id = "c1",
+                subjectId = "s1",
+                assetId = "a1",
+                claimType = ClaimType.EPISODE,
+                text = "x",
+            )
+        reviews.store["c1"] = ClaimReview(claimId = "c1", subjectId = "s1")
+
+        service.purgeSubject("s1")
+
+        assertTrue(reviews.store.isEmpty())
+        assertTrue(claims.store.isEmpty())
+    }
 
     private fun seedTranscribingJob(id: String = "j1", assetId: String = "a1"): Stage2Job {
         val job =

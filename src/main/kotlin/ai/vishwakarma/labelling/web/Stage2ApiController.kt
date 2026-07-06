@@ -1,7 +1,10 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.PiiChoice
+import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.SpeakerAssignment
 import ai.vishwakarma.labelling.security.CurrentUser
+import ai.vishwakarma.labelling.service.ClaimReviewService
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.Stage2Service
 import arrow.core.Either
@@ -16,6 +19,15 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
+/** JSON bodies for the §12.6 review endpoints. */
+data class ReviewRequest(
+    val decision: String,
+    val justification: String? = null,
+    val corroboratingClaimIds: List<String>? = null,
+)
+
+data class PiiRequest(val choice: String)
+
 /**
  * Stage 2 (A/V → Claims) JSON API. Same-origin, authenticated (REVIEWER+), CSRF on — the same
  * conventions as [IntakeApiController]. Submit-then-poll: `process` starts the run (and makes the
@@ -24,7 +36,10 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api/stage2")
 @PreAuthorize("hasRole('REVIEWER')")
-class Stage2ApiController(private val stage2: Stage2Service) {
+class Stage2ApiController(
+    private val stage2: Stage2Service,
+    private val reviewService: ClaimReviewService,
+) {
 
     private fun actor(): String? = CurrentUser.email()
 
@@ -76,6 +91,61 @@ class Stage2ApiController(private val stage2: Stage2Service) {
         @RequestBody(required = false) selfLabels: List<String>?,
     ): ResponseEntity<Any> = stage2.resolveSpeakers(id, selfLabels ?: emptyList()).toResponse()
 
+    // ---- §12.6 claim review ------------------------------------------------
+
+    /** Start the review flow: freezes the subject's claims (no more re-extraction). */
+    @PostMapping("/subjects/{id}/review/start")
+    fun startReview(@PathVariable id: String): ResponseEntity<Any> =
+        reviewService.startReview(id).toResponse()
+
+    /** Record a decision on one claim (approve / sidecar / contest). */
+    @PostMapping("/claims/{claimId}/review")
+    fun reviewClaim(
+        @PathVariable claimId: String,
+        @RequestBody body: ReviewRequest,
+    ): ResponseEntity<Any> {
+        val decision =
+            ReviewDecision.fromOrNull(body.decision)
+                ?: return badRequest("Invalid decision '${body.decision}'")
+        return reviewService
+            .reviewClaim(
+                claimId,
+                decision,
+                body.justification,
+                body.corroboratingClaimIds ?: emptyList(),
+                actor(),
+            )
+            .toResponse()
+    }
+
+    /** Opt a sensitive claim into or out of tuning. */
+    @PostMapping("/claims/{claimId}/pii")
+    fun reviewPii(
+        @PathVariable claimId: String,
+        @RequestBody body: PiiRequest,
+    ): ResponseEntity<Any> {
+        val choice =
+            PiiChoice.fromOrNull(body.choice)
+                ?: return badRequest("Invalid choice '${body.choice}'")
+        return reviewService.setPii(claimId, choice, actor()).toResponse()
+    }
+
+    /** Finalize the review — the approved-and-not-contested set becomes the Stage-3 gate. */
+    @PostMapping("/subjects/{id}/review/submit")
+    fun submitReview(@PathVariable id: String): ResponseEntity<Any> =
+        reviewService.submitReview(id).toResponse()
+
+    /** ADMIN: reopen a submitted review for edits (claims stay frozen). */
+    @PostMapping("/subjects/{id}/review/reopen")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun reopenReview(@PathVariable id: String): ResponseEntity<Any> =
+        reviewService.reopenReview(id).toResponse()
+
+    /** The Stage-3 read path: approved-and-not-contested claims, each with its sidecar. */
+    @GetMapping("/subjects/{id}/approved-claims")
+    fun approvedClaims(@PathVariable id: String) =
+        ResponseEntity.ok(reviewService.approvedForDownstream(id))
+
     @GetMapping("/jobs/{id}")
     fun job(@PathVariable id: String): ResponseEntity<Any> =
         stage2.job(id)?.let { ResponseEntity.ok<Any>(it) } ?: notFound("Job $id")
@@ -89,6 +159,9 @@ class Stage2ApiController(private val stage2: Stage2Service) {
     // ---- Helpers -----------------------------------------------------------
     private fun notFound(what: String): ResponseEntity<Any> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(mapOf("error" to "$what not found"))
+
+    private fun badRequest(msg: String): ResponseEntity<Any> =
+        ResponseEntity.badRequest().body(mapOf("error" to msg))
 
     private fun Either<DomainError, Any>.toResponse(
         okStatus: HttpStatus = HttpStatus.OK

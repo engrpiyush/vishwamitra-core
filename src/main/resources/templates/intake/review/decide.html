@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<link rel="stylesheet" th:href="@{/webjars/datatables/1.13.5/css/jquery.dataTables.min.css}"/>
+<style>
+    /* Make DataTables' default (light) chrome legible on the app theme. */
+    .dataTables_wrapper { color: inherit; margin-top: 0.5rem; }
+    .dataTables_wrapper .dataTables_filter input,
+    .dataTables_wrapper .dataTables_length select {
+        color: inherit; background: transparent; border: 1px solid #4b5563;
+        border-radius: 4px; padding: 0.2rem 0.4rem; margin: 0 0.3rem;
+    }
+    .dataTables_wrapper .dataTables_info,
+    .dataTables_wrapper .dataTables_paginate .paginate_button { color: inherit !important; }
+    #claimsTable tbody tr { cursor: pointer; }
+    #claimsTable tbody tr.shown { background: rgba(245, 158, 11, 0.10); }
+    #claimsTable td.favor-bad { color: #f87171; font-weight: 600; }
+    .claim-editor-wrap { padding: 0.7rem 0.5rem; }
+</style>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Claim review <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage2(id=${subject.id})}" class="muted">&larr; Stage 2</a>
+    </div>
+
+    <div th:replace="~{fragments/review-stepper :: stepper(${step})}"></div>
+
+    <h2>Review claims <span class="muted" th:text="'(' + ${allClaims.size()} + ')'">(0)</span></h2>
+    <p class="muted">Every claim is <strong>approved by default</strong> — you only act on exceptions.
+        Sorted by favorability (least favorable first). <strong>Click a row</strong> to add a
+        <strong>sidecar</strong> (an honest justification that keeps the claim and adds context); for an
+        <strong>inferred</strong> claim you can instead <strong>reject</strong> it (excluded). Search and
+        page through with the controls below.</p>
+
+    <table id="claimsTable" class="grid" style="width:100%;">
+        <thead>
+        <tr>
+            <th>Favor</th><th>Type</th><th>Basis</th><th>Claim</th><th>Source</th><th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="c : ${allClaims}" th:with="rev=${reviews.get(c.id)},
+                    dec=${rev != null and rev.decision != null ? rev.decision.name() : 'APPROVED'}"
+            th:attr="data-claim-id=${c.id}">
+            <td th:attr="data-order=${c.favorability != null ? c.favorability : 0.5}"
+                th:classappend="${c.favorability != null and c.favorability &lt; 0.5} ? 'favor-bad' : ''"
+                th:text="${c.favorability != null ? c.favorability : '—'}">0.5</td>
+            <td th:text="${c.claimType}">TYPE</td>
+            <td th:text="${c.claimBasis != null ? #strings.toLowerCase(c.claimBasis) : ''}">basis</td>
+            <td th:text="${c.text}">claim text</td>
+            <td th:text="${assetTitles.get(c.assetId) ?: c.assetId}">asset</td>
+            <td>
+                <span class="badge"
+                      th:classappend="${dec == 'CONTESTED'} ? 'badge--danger' : (${dec == 'SIDECARED'} ? 'badge--info' : 'badge--muted')"
+                      th:text="${dec == 'CONTESTED'} ? 'rejected' : (${dec == 'SIDECARED'} ? 'sidecar' : 'approved')">approved</span>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+    <!-- Editor bank: one lightweight form per claim, moved into the DataTables child row on expand. -->
+    <div id="claimEditors" hidden>
+        <div class="claim-editor" th:each="c : ${allClaims}" th:with="rev=${reviews.get(c.id)}"
+             th:attr="data-claim-id=${c.id}">
+            <form method="post" class="form" style="max-width:none;"
+                  th:action="@{/intake/stage2/claims/{cid}/review(cid=${c.id})}">
+                <input type="hidden" name="subjectId" th:value="${subject.id}"/>
+                <input type="hidden" name="decision" value="APPROVED" class="js-decision"/>
+                <p class="muted" th:if="${c.sourceExcerpt != null}" style="margin:0 0 0.5rem;">
+                    &ldquo;<span th:text="${c.sourceExcerpt}">excerpt</span>&rdquo;</p>
+                <label th:if="${c.claimBasis != null and c.claimBasis.name() == 'INFERRED'}"
+                       style="display:block; margin-bottom:0.5rem;">
+                    <input type="checkbox" class="js-reject"
+                           th:checked="${rev != null and rev.decision != null and rev.decision.name() == 'CONTESTED'}"/>
+                    Reject this inferred claim — exclude it (disables the sidecar below)</label>
+                <label>Sidecar — justification (keeps the claim, adds context)
+                    <textarea name="justification" class="js-justification" rows="2"
+                              th:text="${rev?.justification}"></textarea></label>
+                <div class="row-actions" style="margin-top:0.6rem;">
+                    <button type="submit" class="btn--sm">Save</button>
+                    <span class="muted">Leave blank to keep it approved · add text to sidecar · check reject to exclude</span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row-actions" style="margin-top:1.4rem;">
+        <a class="btn" th:href="@{/intake/{id}/review/pii(id=${subject.id})}">Next: sensitive &rarr;</a>
+        <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/stage2(id=${subject.id})}">Back to Stage 2</a>
+    </div>
+</main>
+<script th:src="@{/webjars/jquery/3.7.1/jquery.min.js}"></script>
+<script th:src="@{/webjars/datatables/1.13.5/js/jquery.dataTables.min.js}"></script>
+<script th:src="@{/js/review-decide.js}" defer></script>
+</body>
+</html>

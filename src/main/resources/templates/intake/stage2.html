@@ -45,6 +45,45 @@
             itself automatically while you keep it open.</p>
     </div>
 
+    <!-- §12.6 claim review entry point -->
+    <div class="panel" th:if="${manifest.reviewSubmittedAt != null}">
+        <div class="row-actions">
+            <span class="badge badge--success">REVIEWED &middot; LOCKED</span>
+            <span class="muted">Claims reviewed and submitted — the approved set is the Stage-3 gate.</span>
+        </div>
+        <div class="row-actions" style="margin-top:0.8rem;">
+            <a class="btn btn--sm" th:href="@{/intake/{id}/review/preview(id=${subject.id})}">View review &rarr;</a>
+            <form sec:authorize="hasRole('ADMIN')" method="post" class="inline-form"
+                  th:action="@{/intake/{id}/review/reopen(id=${subject.id})}"
+                  data-confirm="Reopen the submitted review for edits? Claims stay frozen."
+                  data-confirm-title="Reopen review?" data-confirm-ok="Reopen">
+                <button type="submit" class="btn--ghost btn--sm">Reopen (admin)</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="panel" th:if="${manifest.reviewLockedAt != null and manifest.reviewSubmittedAt == null}">
+        <div class="row-actions">
+            <span class="badge badge--info">REVIEW IN PROGRESS</span>
+            <span class="muted">Claims are locked for review — re-extraction is disabled.</span>
+        </div>
+        <a class="btn btn--sm" style="margin-top:0.8rem;"
+           th:href="@{/intake/{id}/review/decide(id=${subject.id})}">Continue review &rarr;</a>
+    </div>
+
+    <div class="panel" th:if="${reviewReady and manifest.reviewLockedAt == null}">
+        <h3 style="margin-top:0;">Ready for claim review</h3>
+        <p class="muted">All jobs have settled. Start the human review to approve, sidecar, or contest
+            each claim before Stage 3. Starting <strong>locks the claims</strong> — no more
+            transcription, retries, or re-runs (an admin can still reopen the review itself). Resolve
+            any FAILED jobs first, since Retry is disabled once locked.</p>
+        <form method="post" th:action="@{/intake/{id}/review/start(id=${subject.id})}"
+              data-confirm="Start claim review? This permanently locks the claims — Retry and Re-run will be disabled."
+              data-confirm-title="Begin claim review?" data-confirm-ok="Begin review">
+            <button type="submit">Begin claim review &rarr;</button>
+        </form>
+    </div>
+
     <!-- Jobs -->
     <th:block th:if="${!jobs.isEmpty()}">
         <div class="row-between" style="margin-top:1.2rem;">

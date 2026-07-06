@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Claim review <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage2(id=${subject.id})}" class="muted">&larr; Stage 2</a>
+    </div>
+
+    <div th:replace="~{fragments/review-stepper :: stepper(${step})}"></div>
+
+    <h2>Sensitive claims <span class="muted" th:text="'(' + ${partition.sensitive.size()} + ')'">(0)</span></h2>
+    <p class="muted">Contact/identity PII is <strong>held from tuning by default</strong>. Include a claim
+        only where the subject consents to it being used in training.</p>
+
+    <div th:if="${partition.sensitive.isEmpty()}" class="empty-state">
+        No sensitive claims — nothing to opt in.
+    </div>
+
+    <div class="turns" th:unless="${partition.sensitive.isEmpty()}">
+        <div class="turn" th:each="c : ${partition.sensitive}" th:with="rev=${reviews.get(c.id)}">
+            <div class="turn-head">
+                <strong th:text="${c.text}">Claim</strong>
+                <span class="badge"
+                      th:classappend="${rev != null and rev.piiChoice != null and rev.piiChoice.name() == 'INCLUDE'} ? 'badge--success' : 'badge--muted'"
+                      th:text="${rev != null and rev.piiChoice != null and rev.piiChoice.name() == 'INCLUDE'} ? 'included' : 'hidden'">hidden</span>
+            </div>
+            <div class="turn-body">
+                <p class="muted" th:if="${c.sourceExcerpt != null}" style="margin:0 0 0.6rem;">
+                    &ldquo;<span th:text="${c.sourceExcerpt}">excerpt</span>&rdquo;</p>
+                <form method="post" th:action="@{/intake/stage2/claims/{cid}/pii(cid=${c.id})}">
+                    <input type="hidden" name="subjectId" th:value="${subject.id}"/>
+                    <label style="display:block; margin-bottom:0.3rem;">
+                        <input type="radio" name="choice" value="HIDE"
+                               th:checked="${rev == null or rev.piiChoice == null or rev.piiChoice.name() == 'HIDE'}"/>
+                        Hide from tuning (default)</label>
+                    <label style="display:block; margin-bottom:0.5rem;">
+                        <input type="radio" name="choice" value="INCLUDE"
+                               th:checked="${rev != null and rev.piiChoice != null and rev.piiChoice.name() == 'INCLUDE'}"/>
+                        Include in tuning &mdash; the subject consents</label>
+                    <button type="submit" class="btn--sm">Save</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="row-actions" style="margin-top:1.4rem;">
+        <a class="btn" th:href="@{/intake/{id}/review/preview(id=${subject.id})}">Next: preview &rarr;</a>
+        <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/review/decide(id=${subject.id})}">&larr; Decide</a>
+    </div>
+</main>
+</body>
+</html>

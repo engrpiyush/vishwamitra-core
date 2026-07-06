@@ -1,10 +1,13 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.Relationship
+import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.SpeakerAssignment
 import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.security.CurrentUser
+import ai.vishwakarma.labelling.service.ClaimReviewService
 import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
@@ -32,6 +35,7 @@ class Stage2Controller(
     private val subjectService: SubjectService,
     private val intake: IntakeService,
     private val stage2: Stage2Service,
+    private val reviewService: ClaimReviewService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -73,6 +77,8 @@ class Stage2Controller(
             "jobStatuses",
             jobs.map { "${it.id}:${it.status}" }.sorted().joinToString(","),
         )
+        // §12.6: claim review can begin once every job has settled (COMPLETED / FAILED).
+        model.addAttribute("reviewReady", jobs.isNotEmpty() && jobs.all { it.status.terminal() })
         return "intake/stage2"
     }
 
@@ -235,6 +241,145 @@ class Stage2Controller(
                 { ra.addFlashAttribute("ok", "Job is ${it.status}") },
             )
         return "redirect:/intake/$subjectId/stage2"
+    }
+
+    // ---- §12.6 claim review flow -------------------------------------------
+
+    /** Start review: freezes the claims, then into the wizard. */
+    @PostMapping("/{id}/review/start")
+    fun startReview(@PathVariable id: String, ra: RedirectAttributes): String =
+        reviewService
+            .startReview(id)
+            .fold(
+                {
+                    ra.addFlashAttribute("error", it.message)
+                    "redirect:/intake/$id/stage2"
+                },
+                {
+                    ra.addFlashAttribute("ok", "Claim review started — claims are now locked")
+                    "redirect:/intake/$id/review/decide"
+                },
+            )
+
+    @GetMapping("/{id}/review/decide")
+    fun reviewDecide(@PathVariable id: String, model: Model, ra: RedirectAttributes): String =
+        reviewPage(id, model, ra, step = 2, view = "intake/review/decide")
+
+    @GetMapping("/{id}/review/pii")
+    fun reviewPii(@PathVariable id: String, model: Model, ra: RedirectAttributes): String =
+        reviewPage(id, model, ra, step = 3, view = "intake/review/pii")
+
+    @GetMapping("/{id}/review/preview")
+    fun reviewPreview(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
+        val result = reviewPage(id, model, ra, step = 4, view = "intake/review/preview")
+        if (result.startsWith("redirect:")) return result
+        model.addAttribute("summary", reviewService.summary(id))
+        return result
+    }
+
+    @PostMapping("/stage2/claims/{claimId}/review")
+    fun submitClaimReview(
+        @PathVariable claimId: String,
+        @RequestParam subjectId: String,
+        @RequestParam decision: String,
+        @RequestParam(required = false) justification: String?,
+        @RequestParam(required = false) corroboratingClaimIds: List<String>?,
+        ra: RedirectAttributes,
+    ): String {
+        val d = ReviewDecision.fromOrNull(decision)
+        if (d == null) {
+            ra.addFlashAttribute("error", "Choose a decision")
+            return "redirect:/intake/$subjectId/review/decide"
+        }
+        reviewService
+            .reviewClaim(claimId, d, justification, corroboratingClaimIds ?: emptyList(), actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Saved") },
+            )
+        return "redirect:/intake/$subjectId/review/decide"
+    }
+
+    @PostMapping("/stage2/claims/{claimId}/pii")
+    fun submitClaimPii(
+        @PathVariable claimId: String,
+        @RequestParam subjectId: String,
+        @RequestParam choice: String,
+        ra: RedirectAttributes,
+    ): String {
+        val c = PiiChoice.fromOrNull(choice)
+        if (c == null) {
+            ra.addFlashAttribute("error", "Choose hide or include")
+            return "redirect:/intake/$subjectId/review/pii"
+        }
+        reviewService
+            .setPii(claimId, c, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Saved") },
+            )
+        return "redirect:/intake/$subjectId/review/pii"
+    }
+
+    @PostMapping("/{id}/review/submit")
+    fun submitReview(@PathVariable id: String, ra: RedirectAttributes): String =
+        reviewService
+            .submitReview(id)
+            .fold(
+                {
+                    ra.addFlashAttribute("error", it.message)
+                    "redirect:/intake/$id/review/preview"
+                },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Review submitted — approved claims are ready for Stage 3",
+                    )
+                    "redirect:/intake/$id/stage2"
+                },
+            )
+
+    @PostMapping("/{id}/review/reopen")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun reopenReview(@PathVariable id: String, ra: RedirectAttributes): String {
+        reviewService
+            .reopenReview(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Review reopened for edits") },
+            )
+        return "redirect:/intake/$id/review/decide"
+    }
+
+    /** Shared model-load for the wizard pages; redirects out if the review isn't locked yet. */
+    private fun reviewPage(
+        id: String,
+        model: Model,
+        ra: RedirectAttributes,
+        step: Int,
+        view: String,
+    ): String {
+        val subject =
+            subjectService.get(id)
+                ?: run {
+                    ra.addFlashAttribute("error", "Subject not found")
+                    return "redirect:/intake"
+                }
+        val manifest = intake.manifest(id)
+        if (manifest?.reviewLockedAt == null) {
+            ra.addFlashAttribute("error", "Start the claim review first")
+            return "redirect:/intake/$id/stage2"
+        }
+        val partition = reviewService.partition(id)
+        model.addAttribute("pageTitle", "Review · ${subject.displayName}")
+        model.addAttribute("subject", subject)
+        model.addAttribute("manifest", manifest)
+        model.addAttribute("step", step)
+        model.addAttribute("partition", partition)
+        model.addAttribute("reviews", partition.reviews)
+        model.addAttribute("allClaims", stage2.listClaims(id))
+        model.addAttribute("assetTitles", intake.listAssets(id).associate { it.id to it.title })
+        return view
     }
 
     private fun Stage2JobStatus.terminal(): Boolean =

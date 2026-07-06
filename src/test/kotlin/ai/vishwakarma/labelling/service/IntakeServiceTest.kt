@@ -539,6 +539,23 @@ class IntakeServiceTest {
         assertTrue(result.errorOrNull()!!.message.contains("Stage 2"))
     }
 
+    @Test
+    fun `recomputeManifest preserves the claim-review locks (a manifest read must not wipe them)`() {
+        seedSubject()
+        seed(asset(consentStatus = ConsentStatus.GRANTED, uploadStatus = AssetUploadStatus.STORED))
+        service.manifest("s1") // create the manifest
+        val now = Instant.now()
+        manifests.store["s1"] =
+            manifests.store["s1"]!!.copy(reviewLockedAt = now, reviewSubmittedAt = now)
+
+        // A manifest read recomputes + saves; the §12.6 locks must survive it.
+        val recomputed = service.manifest("s1")
+
+        assertTrue(recomputed.reviewLockedAt != null)
+        assertTrue(recomputed.reviewSubmittedAt != null)
+        assertTrue(manifests.store["s1"]!!.reviewLockedAt != null)
+    }
+
     // ---- completeAsset size cap -------------------------------------------
 
     @Test

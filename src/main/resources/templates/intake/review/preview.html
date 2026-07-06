@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Claim review <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage2(id=${subject.id})}" class="muted">&larr; Stage 2</a>
+    </div>
+
+    <div th:replace="~{fragments/review-stepper :: stepper(${step})}"></div>
+
+    <h2>Preview &amp; submit</h2>
+    <div class="tiles" style="grid-template-columns:repeat(3,1fr); margin:0.5rem 0 0.6rem;">
+        <div class="tile"><span class="tile-value" th:text="${summary.approved}">0</span><span class="tile-label">approved</span></div>
+        <div class="tile"><span class="tile-value" th:text="${summary.sidecared}">0</span><span class="tile-label">enriched (sidecar)</span></div>
+        <div class="tile"><span class="tile-value" th:text="${summary.rejected}">0</span><span class="tile-label">rejected</span></div>
+    </div>
+    <p class="muted">Sensitive PII: <strong th:text="${summary.sensitiveIncluded}">0</strong> included in tuning ·
+        <strong th:text="${summary.sensitiveHeld}">0</strong> held. Approved + enriched claims (and
+        opted-in PII) flow to Stage 3; rejected and held claims are excluded.</p>
+
+    <h3>Needs a final look <span class="muted" th:text="'(' + ${summary.nonApproved.size()} + ')'">(0)</span></h3>
+    <div th:if="${summary.nonApproved.isEmpty()}" class="empty-state">
+        Nothing sidecarred or rejected — every claim is plainly approved.
+    </div>
+    <div class="turns" th:unless="${summary.nonApproved.isEmpty()}">
+        <div class="turn" th:each="n : ${summary.nonApproved}"
+             th:with="dec=${n.review != null and n.review.decision != null ? n.review.decision.name() : 'APPROVED'}">
+            <div class="turn-head">
+                <strong th:text="${n.claim.text}">claim</strong>
+                <span class="badge" th:classappend="${dec == 'CONTESTED'} ? 'badge--danger' : 'badge--info'"
+                      th:text="${dec == 'CONTESTED'} ? 'rejected' : 'sidecar'">tag</span>
+            </div>
+            <div class="turn-body" th:if="${dec == 'SIDECARED' and n.review.justification != null}">
+                <p class="muted" style="margin:0;">sidecar: &ldquo;<span th:text="${n.review.justification}">why</span>&rdquo;</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel" style="margin-top:1.4rem;">
+        <h3 style="margin-top:0;">Submit review</h3>
+        <p class="muted">Submitting locks the decisions. Everything not rejected or held flows to Stage 3;
+            an admin can reopen the review later to correct a decision.</p>
+        <form method="post" th:action="@{/intake/{id}/review/submit(id=${subject.id})}"
+              data-confirm="Submit the review? This finalizes all decisions. (An admin can reopen it later.)"
+              data-confirm-title="Submit review?" data-confirm-ok="Submit">
+            <button type="submit">Submit review</button>
+        </form>
+    </div>
+
+    <div class="row-actions" style="margin-top:1.2rem;">
+        <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/review/pii(id=${subject.id})}">&larr; Sensitive</a>
+        <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/review/decide(id=${subject.id})}">&larr; Decide</a>
+    </div>
+</main>
+</body>
+</html>

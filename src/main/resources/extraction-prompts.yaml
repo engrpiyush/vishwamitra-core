@@ -132,7 +132,10 @@ DEGREE_TRANSCRIPT: >-
   as recorded — one claim per fact, claimedDate from the printed dates. A transcript proves
   enrollment and completion, not mastery: record "completed course X (grade Y)" as the
   EPISODE fact and never emit SKILL claims from course names or grades — ability inference
-  from academic records is a later stage's job.
+  from academic records is a later stage's job. When you record any grade, index, or
+  percentage, include its scale in the claim text (e.g. "SGPI 6.61 out of 10", never a bare
+  "6.61") so the value is interpretable, and set its favorability from where the grade sits
+  against normal academic ranges for that scale — never the grade divided by its maximum.
 
 AWARD_HONOR: >-
   This documents an award or honour. Extract the awarding body, award name, category, date,

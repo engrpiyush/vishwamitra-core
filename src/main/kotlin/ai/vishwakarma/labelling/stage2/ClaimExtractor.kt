@@ -279,8 +279,14 @@ class ClaimExtractor(
             "\"favorability\" (0..1) is how favorably the claim reflects on the subject: 0.5 is " +
             "neutral/factual, above 0.5 is positive (a strong endorsement ≈0.85, an award or " +
             "top result ≈0.9), below 0.5 is unfavorable (a stated weakness ≈0.35, a multi-year " +
-            "resume gap ≈0.3, a repeated year or failed exam ≈0.2). Judge the content itself, " +
-            "not how confidently it is stated — an unfavorable fact can still be perfectly certain."
+            "resume gap ≈0.3, a repeated year or failed exam ≈0.2). It is a valence judgement, " +
+            "NOT a number copied from the claim: never set it to a grade, score, or percentage " +
+            "normalised to 0..1 (a 6.61-out-of-10 grade is NOT favorability 0.66). Judge metrics " +
+            "against the realistic norms for their scale, whose useful range is compressed — a " +
+            "CGPA/SGPI near 6.6 out of 10 is a below-average academic result and unfavorable " +
+            "(≈0.35), while a first-class/distinction (≈8.5+ out of 10) is favorable (≈0.85). " +
+            "Judge the content itself, not how confidently it is stated — an unfavorable fact " +
+            "can still be perfectly certain."
 
     private fun parseClaims(raw: String): List<Map<*, *>> {
         val json = stripFences(raw)

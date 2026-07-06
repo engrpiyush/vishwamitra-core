@@ -57,6 +57,15 @@ data class IntakeManifest(
      * forward-looking lock the unseal path already honors.
      */
     val stage2StartedAt: Instant? = null,
+    /**
+     * §12.6 claim-review lifecycle. [reviewLockedAt] is stamped when the operator *starts* the
+     * review — from that instant the subject's claims are frozen (no more extraction / re-run), so
+     * the review can key off stable claim ids. [reviewSubmittedAt] is stamped when the review is
+     * *submitted* (decisions final; Stage 3 may consume the approved-and-not-contested set). An
+     * ADMIN may clear [reviewSubmittedAt] to reopen the review, but [reviewLockedAt] is permanent.
+     */
+    val reviewLockedAt: Instant? = null,
+    val reviewSubmittedAt: Instant? = null,
     val updatedAt: Instant? = null,
 ) {
     /** The most recent seal-lifecycle event, if any. */

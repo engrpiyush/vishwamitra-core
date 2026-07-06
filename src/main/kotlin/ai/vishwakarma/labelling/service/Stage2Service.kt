@@ -13,6 +13,7 @@ import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -47,6 +48,7 @@ class Stage2Service(
     private val assets: AssetRepository,
     private val jobs: Stage2JobRepository,
     private val claims: ClaimRepository,
+    private val reviews: ClaimReviewRepository,
     private val transcriber: Transcriber,
     private val extractor: ClaimExtractor,
     private val speakerAttribution: SpeakerAttribution,
@@ -144,6 +146,9 @@ class Stage2Service(
      */
     fun retryJob(jobId: String): Either<DomainError, Stage2Job> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        reviewLocked(job.subjectId)?.let {
+            return it.left()
+        }
         if (job.status != Stage2JobStatus.FAILED)
             return DomainError.Conflict("Only FAILED jobs can be retried (job is ${job.status})")
                 .left()
@@ -162,6 +167,9 @@ class Stage2Service(
      */
     fun rerunJob(jobId: String, full: Boolean): Either<DomainError, Stage2Job> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        reviewLocked(job.subjectId)?.let {
+            return it.left()
+        }
         if (job.status != Stage2JobStatus.COMPLETED)
             return DomainError.Conflict(
                     "Only COMPLETED jobs can be re-run (job is ${job.status}; use Retry for FAILED)"
@@ -210,6 +218,9 @@ class Stage2Service(
         roles: Map<String, SpeakerAssignment>,
     ): Either<DomainError, Stage2Job> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        reviewLocked(job.subjectId)?.let {
+            return it.left()
+        }
         if (job.modality !in AV_MODALITIES)
             return DomainError.Conflict("Speaker roles apply to audio/video jobs only").left()
         if (job.status != Stage2JobStatus.COMPLETED)
@@ -271,9 +282,26 @@ class Stage2Service(
             DomainError.Invalid("Re-submit failed: ${e.message}").left()
         }
 
-    /** Delete-on-request cascade: claims and jobs derived from a subject die with it. */
+    /**
+     * §12.6: once the operator starts claim review the claims freeze — no re-transcribe /
+     * re-extract (Retry, Re-run, speaker edits, gate resolution all refuse). Claim-lock is
+     * permanent; an ADMIN can reopen the review to edit decisions, but not to re-extract.
+     */
+    private fun reviewLocked(subjectId: String): DomainError? =
+        if (manifests.findBySubject(subjectId)?.reviewLockedAt != null)
+            DomainError.Conflict(
+                "Claims are locked for review and can no longer be re-transcribed or re-extracted"
+            )
+        else null
+
+    /**
+     * Delete-on-request cascade: claims (and their reviews) and jobs derived from a subject die.
+     */
     fun purgeSubject(subjectId: String) {
-        claims.findBySubject(subjectId).forEach { claims.delete(it.id) }
+        claims.findBySubject(subjectId).forEach {
+            reviews.delete(it.id)
+            claims.delete(it.id)
+        }
         jobs.findBySubject(subjectId).forEach { jobs.delete(it.id) }
     }
 
@@ -283,7 +311,10 @@ class Stage2Service(
      * everything derived. Idempotent (safe with no claims/jobs yet).
      */
     fun purgeAssetDerived(subjectId: String, assetId: String) {
-        claims.findByAsset(assetId).forEach { claims.delete(it.id) }
+        claims.findByAsset(assetId).forEach {
+            reviews.delete(it.id)
+            claims.delete(it.id)
+        }
         jobs
             .findBySubject(subjectId)
             .filter { it.assetId == assetId }
@@ -512,6 +543,9 @@ class Stage2Service(
      */
     fun resolveSpeakers(jobId: String, selfLabels: List<String>): Either<DomainError, Stage2Job> {
         val job = jobs.findById(jobId) ?: return DomainError.NotFound("Job $jobId not found").left()
+        reviewLocked(job.subjectId)?.let {
+            return it.left()
+        }
         if (job.status != Stage2JobStatus.AWAITING_SPEAKER_SELECTION)
             return DomainError.Conflict(
                     "Job is not awaiting speaker selection (it is ${job.status})"

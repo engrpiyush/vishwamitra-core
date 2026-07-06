@@ -580,11 +580,18 @@ class IntakeService(
                 countsByContentType = all.groupingBy { it.contentType.name }.eachCount(),
                 consentSummary = all.groupingBy { it.consentStatus.name }.eachCount(),
                 sealBlockers = computeSealBlockers(all),
-                // Preserve seal state, its audit history, and the Stage 2 lock; only the explicit
-                // seal/unseal actions ever change them.
+                // Preserve seal state, its audit history, and the Stage 2 + claim-review locks;
+                // only
+                // the explicit lifecycle actions ever change them. This recompute runs (and saves)
+                // on
+                // every manifest read, so a field left out here is silently wiped — the §12.6
+                // review
+                // locks are lifecycle state, not derived from assets, and MUST be carried through.
                 sealed = existing?.sealed ?: false,
                 sealEvents = existing?.sealEvents ?: emptyList(),
                 stage2StartedAt = existing?.stage2StartedAt,
+                reviewLockedAt = existing?.reviewLockedAt,
+                reviewSubmittedAt = existing?.reviewSubmittedAt,
                 updatedAt = Instant.now(),
             )
         manifests.save(manifest)
