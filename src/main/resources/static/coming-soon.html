@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-<!-- Google reCAPTCHA — loads the widget. Replace the site key in the .g-recaptcha div below. -->
-<script src="https://www.google.com/recaptcha/api.js" async defer></script>
+<!-- Google reCAPTCHA v3 — invisible; a token is fetched in notifyMe() on submit. -->
+<script src="https://www.google.com/recaptcha/api.js?render=6Le1e0otAAAAAKOCsNqAei1zGf6vlfOcD5wnaGx7" async defer></script>
 <style>
   :root{
     --black:#02060A;
@@ -66,8 +66,9 @@
   .notify input::placeholder{color:var(--text-soft)}
   .notify button{flex:none;border:none;border-left:1px solid var(--green-faint);background:var(--green);color:var(--black);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;letter-spacing:.04em;padding:14px 22px;cursor:pointer;transition:box-shadow .2s}
   .notify button:hover{box-shadow:0 0 22px rgba(0,255,120,.5)}
-  .notify .captcha{display:flex;justify-content:center;margin-top:18px}
   .notify .note{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-soft);margin-top:16px;letter-spacing:.03em}
+  .notify .note a{text-decoration:underline}
+  .grecaptcha-badge{visibility:hidden} /* v3 badge hidden; attribution shown in .note per Google policy */
   .notify .ok{display:none;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--green);padding:14px;text-align:center;text-shadow:0 0 10px rgba(0,255,120,.4)}
 
   footer{padding:26px 0;border-top:1px solid var(--line)}
@@ -118,12 +119,9 @@
           <input type="email" id="email" placeholder="enter email for early access" aria-label="Your email" required>
           <button type="submit">NOTIFY_ME</button>
         </form>
-        <!-- Google reCAPTCHA — replace data-sitekey with your own key -->
-        <div class="captcha">
-          <div class="g-recaptcha" data-sitekey="6Le1e0otAAAAAKOCsNqAei1zGf6vlfOcD5wnaGx7"></div>
-        </div>
         <div class="ok" id="okMsg">&gt; access_granted // you're on the list.</div>
-        <p class="note">be first through the door · no spam, ever</p>
+        <p class="note">be first through the door · no spam, ever<br>
+          protected by reCAPTCHA · <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">privacy</a> · <a href="https://policies.google.com/terms" target="_blank" rel="noopener">terms</a></p>
       </div>
     </div>
   </main>
@@ -171,25 +169,31 @@
     setTimeout(t,500);
   })();
 
-  /* notify — POST the email to the subscribe API, then reveal the confirmation */
+  /* notify — fetch a reCAPTCHA v3 token, POST the email to the subscribe API, then reveal the confirmation */
+  var RECAPTCHA_SITE_KEY='6Le1e0otAAAAAKOCsNqAei1zGf6vlfOcD5wnaGx7';
   async function notifyMe(e){
     e.preventDefault();
     var btn=document.querySelector('#notifyForm button');
     var email=document.getElementById('email').value.trim();
-    if(btn) btn.disabled=true;
+    if(btn){btn.disabled=true;btn.textContent='SENDING_';}
     try{
+      var token=await new Promise(function(resolve,reject){
+        if(!window.grecaptcha) return reject(new Error('recaptcha not loaded'));
+        grecaptcha.ready(function(){
+          grecaptcha.execute(RECAPTCHA_SITE_KEY,{action:'subscribe'}).then(resolve,reject);
+        });
+      });
       var res=await fetch('/coming-soon/subscribe',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({email:email})
+        body:JSON.stringify({email:email,recaptcha_token:token})
       });
       if(!res.ok) throw new Error('subscribe failed');
       document.getElementById('notifyForm').style.display='none';
-      document.querySelector('.notify .captcha').style.display='none';
       document.querySelector('.notify .note').style.display='none';
       document.getElementById('okMsg').style.display='block';
     }catch(err){
-      if(btn) btn.disabled=false;
+      if(btn){btn.disabled=false;btn.textContent='NOTIFY_ME';}
       alert('Something went wrong. Please try again.');
     }
     return false;
