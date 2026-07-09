@@ -40,7 +40,12 @@ private open class StubGemini(private val canned: String) :
 
     override fun available(): Boolean = true
 
-    override fun generate(prompt: String, maxTokens: Int?, thinkingBudget: Int?): String {
+    override fun generate(
+        prompt: String,
+        maxTokens: Int?,
+        thinkingBudget: Int?,
+        temperature: Double?,
+    ): String {
         lastPrompt = prompt
         return canned
     }

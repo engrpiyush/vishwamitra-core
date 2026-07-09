@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.serialization.Json
 import org.neo4j.driver.Driver
 import org.neo4j.driver.SessionConfig
 import org.slf4j.LoggerFactory
@@ -1073,7 +1074,1019 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
             }
         }
     }
+
+    // ---- JUDGE phase (LLD §11.6) ----------------------------------------------------
+
+    /**
+     * The next chunk of QUEUED pairs by ascending rank, hydrated for judging: both claims' §11.6
+     * context-card fields, each side's sidecar text (rendered only in the withContext variant), and
+     * the entities both claims mention. The `status` flip in [applyJudgeOutcome] is the phase
+     * cursor — a killed poll re-reads exactly the pairs it never finished (the graph-as-cursor
+     * idiom; re-judged pairs hit the verdict cache anyway).
+     */
+    fun judgeQueueBatch(subjectId: String, limit: Int): List<PairToJudge> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (a:Claim {subjectId: ${'$'}subjectId})
+                              -[q:JUDGE_QUEUED {status: 'QUEUED'}]->(b:Claim)
+                        WITH a, b, q ORDER BY q.rank ASC LIMIT ${'$'}limit
+                        RETURN a.claimId AS aId, a.text AS aText, a.type AS aType,
+                               a.claimedDate AS aDate, a.sourceClass AS aSourceClass,
+                               a.relationship AS aRelationship, a.speakerRole AS aSpeakerRole,
+                               [ (xa:Explanation)-[:EXPLAINS]->(a) | xa.text ][0] AS aExplanation,
+                               b.claimId AS bId, b.text AS bText, b.type AS bType,
+                               b.claimedDate AS bDate, b.sourceClass AS bSourceClass,
+                               b.relationship AS bRelationship, b.speakerRole AS bSpeakerRole,
+                               [ (xb:Explanation)-[:EXPLAINS]->(b) | xb.text ][0] AS bExplanation,
+                               q.rank AS rank, q.withContext AS withContext,
+                               q.humanAsserted AS humanAsserted,
+                               [ (a)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(b) |
+                                 e.canonicalName ] AS sharedEntities
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "limit" to limit),
+                    )
+                    .list { r ->
+                        PairToJudge(
+                            pair = ClaimPair(r["aId"].asString(), r["bId"].asString()),
+                            rank = r["rank"].asLong(),
+                            withContext = r["withContext"].asBoolean(false),
+                            humanAsserted = r["humanAsserted"].asBoolean(false),
+                            a = r.toCard("a"),
+                            b = r.toCard("b"),
+                            sharedEntities = r["sharedEntities"].asList { it.asString() }.sorted(),
+                        )
+                    }
+            }
+        }
+
+    private fun org.neo4j.driver.Record.toCard(prefix: String): ClaimCard =
+        ClaimCard(
+            claimId = this["${prefix}Id"].asString(),
+            text = this["${prefix}Text"].asString(""),
+            type = this["${prefix}Type"].takeUnless { it.isNull }?.asString(),
+            claimedDate = this["${prefix}Date"].takeUnless { it.isNull }?.asString(),
+            sourceClass = this["${prefix}SourceClass"].takeUnless { it.isNull }?.asString(),
+            relationship = this["${prefix}Relationship"].takeUnless { it.isNull }?.asString(),
+            speakerRole = this["${prefix}SpeakerRole"].takeUnless { it.isNull }?.asString(),
+            explanationText = this["${prefix}Explanation"].takeUnless { it.isNull }?.asString(),
+        )
+
+    /** Queue entries in [status] — 'QUEUED' is the remaining work, 'JUDGED' the done count. */
+    fun countJudgeQueue(subjectId: String, status: String): Long =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        "MATCH (a:Claim {subjectId: ${'$'}subjectId})" +
+                            "-[q:JUDGE_QUEUED {status: ${'$'}status}]->() RETURN count(q) AS c",
+                        mapOf("subjectId" to subjectId, "status" to status),
+                    )
+                    .single()["c"]
+                    .asLong()
+            }
+        }
+
+    /**
+     * Persist one judged chunk as a single transaction: every pair's `JUDGE_QUEUED` edge flips to
+     * JUDGED and records both verdict variants (the pair record VA-16 lifts fact edges from), and
+     * bare-majority REPEATS verdicts write the claim-level `REPEATS {method: JUDGE}` edge that
+     * drives clustering. Clustering reads the **bare** verdict by design: facts must be identical
+     * across the §11.9 dual passes, and a sidecar may mitigate penalties but never merge claims.
+     * Vote maps store as JSON strings (Neo4j properties are scalars/arrays only). A failed chunk
+     * persists nothing — the QUEUED statuses retry it whole, cache-hit-free of charge.
+     */
+    fun applyJudgeOutcome(subjectId: String, judged: List<JudgedPair>) {
+        if (judged.isEmpty()) return
+        val rows =
+            judged.map { p ->
+                mapOf(
+                    "a" to p.pair.a,
+                    "b" to p.pair.b,
+                    "relation" to p.bare.relation.name,
+                    "confidence" to p.bare.confidence,
+                    "votes" to Json.writeLine(p.bare.votes),
+                    "rationale" to p.bare.rationale,
+                    "temporalNote" to p.bare.temporalNote,
+                    "tie" to p.bare.tie,
+                    "floored" to p.bare.floored,
+                    "ctxJudged" to (p.ctx != null),
+                    "ctxRelation" to p.ctx?.relation?.name,
+                    "ctxConfidence" to p.ctx?.confidence,
+                    "ctxVotes" to p.ctx?.let { Json.writeLine(it.votes) },
+                    "ctxRationale" to p.ctx?.rationale,
+                    "ctxTemporalNote" to p.ctx?.temporalNote,
+                    "ctxExplanationRelevant" to p.ctx?.explanationRelevant,
+                    "judgeModel" to p.judgeModel,
+                    "promptHash" to p.promptStamp,
+                    "repeats" to (p.bare.relation == JudgeRelation.REPEATS),
+                )
+            }
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}rows AS row
+                        MATCH (a:Claim {claimId: row.a})-[q:JUDGE_QUEUED]->(b:Claim {claimId: row.b})
+                        WHERE a.subjectId = ${'$'}subjectId
+                        SET q.status = 'JUDGED', q.relation = row.relation,
+                            q.confidence = row.confidence, q.votes = row.votes,
+                            q.rationale = row.rationale, q.temporalNote = row.temporalNote,
+                            q.tie = row.tie, q.floored = row.floored,
+                            q.ctxJudged = row.ctxJudged, q.ctxRelation = row.ctxRelation,
+                            q.ctxConfidence = row.ctxConfidence, q.ctxVotes = row.ctxVotes,
+                            q.ctxRationale = row.ctxRationale,
+                            q.ctxTemporalNote = row.ctxTemporalNote,
+                            q.ctxExplanationRelevant = row.ctxExplanationRelevant,
+                            q.judgeModel = row.judgeModel, q.promptHash = row.promptHash
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "rows" to rows),
+                    )
+                    .consume()
+                tx.run(
+                        """
+                        UNWIND ${'$'}rows AS row
+                        WITH row WHERE row.repeats
+                        MATCH (a:Claim {claimId: row.a}) WHERE a.subjectId = ${'$'}subjectId
+                        MATCH (b:Claim {claimId: row.b}) WHERE b.subjectId = ${'$'}subjectId
+                        MERGE (a)-[r:REPEATS]->(b)
+                        SET r.method = 'JUDGE', r.confidence = row.confidence,
+                            r.votes = row.votes, r.judgeModel = row.judgeModel,
+                            r.promptHash = row.promptHash
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "rows" to rows),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    // ---- ASSEMBLE phase (LLD §11.7) ---------------------------------------------------
+
+    /** The subject's claims with their mention entity-types — the assembler's kind patterns. */
+    fun claimsForAssembly(subjectId: String): List<ClaimToAssemble> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        RETURN c.claimId AS claimId, c.type AS type, c.text AS text,
+                               c.claimedDate AS claimedDate, c.sourceClass AS sourceClass,
+                               [ (c)-[:MENTIONS]->(e:Entity) | e.entityType ] AS mentionTypes
+                        ORDER BY c.claimId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        ClaimToAssemble(
+                            claimId = r["claimId"].asString(),
+                            type = r["type"].takeUnless { it.isNull }?.asString(),
+                            text = r["text"].asString(""),
+                            claimedDate = r["claimedDate"].takeUnless { it.isNull }?.asString(),
+                            sourceClass = r["sourceClass"].takeUnless { it.isNull }?.asString(),
+                            mentionTypes = r["mentionTypes"].asList { it.asString() }.sorted(),
+                        )
+                    }
+            }
+        }
+
+    /** Every claim-level REPEATS edge (AUTO + JUDGE) — the clustering input (§11.7). */
+    fun repeatsPairs(subjectId: String): List<ClaimPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        "MATCH (a:Claim {subjectId: ${'$'}subjectId})-[:REPEATS]->(b:Claim) " +
+                            "RETURN a.claimId AS a, b.claimId AS b ORDER BY a, b",
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r -> ClaimPair.of(r["a"].asString(), r["b"].asString()) }
+            }
+        }
+
+    /** JUDGED pair records off the queue edges — the §11.7 lifting input. */
+    fun judgedPairRecords(subjectId: String): List<JudgedPairRecord> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (a:Claim {subjectId: ${'$'}subjectId})
+                              -[q:JUDGE_QUEUED {status: 'JUDGED'}]->(b:Claim)
+                        RETURN a.claimId AS a, b.claimId AS b, q.relation AS relation,
+                               q.confidence AS confidence, q.votes AS votes,
+                               q.rationale AS rationale, q.temporalNote AS temporalNote,
+                               q.ctxJudged AS ctxJudged, q.ctxRelation AS ctxRelation,
+                               q.ctxConfidence AS ctxConfidence,
+                               q.ctxExplanationRelevant AS ctxExplanationRelevant,
+                               q.judgeModel AS judgeModel, q.promptHash AS promptHash,
+                               [ (a)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(b) |
+                                 e.canonicalName ] AS sharedEntities
+                        ORDER BY a, b
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        JudgedPairRecord(
+                            pair = ClaimPair(r["a"].asString(), r["b"].asString()),
+                            relation =
+                                JudgeRelation.fromOrNull(
+                                    r["relation"].takeUnless { it.isNull }?.asString()
+                                ) ?: JudgeRelation.NEUTRAL,
+                            confidence = r["confidence"].asDouble(0.0),
+                            votesJson = r["votes"].takeUnless { it.isNull }?.asString(),
+                            rationale = r["rationale"].takeUnless { it.isNull }?.asString(),
+                            temporalNote = r["temporalNote"].takeUnless { it.isNull }?.asString(),
+                            ctxJudged = r["ctxJudged"].asBoolean(false),
+                            ctxRelation =
+                                JudgeRelation.fromOrNull(
+                                    r["ctxRelation"].takeUnless { it.isNull }?.asString()
+                                ),
+                            ctxConfidence = r["ctxConfidence"].takeUnless { it.isNull }?.asDouble(),
+                            ctxExplanationRelevant =
+                                r["ctxExplanationRelevant"].takeUnless { it.isNull }?.asBoolean(),
+                            judgeModel = r["judgeModel"].takeUnless { it.isNull }?.asString(),
+                            promptHash = r["promptHash"].takeUnless { it.isNull }?.asString(),
+                            sharedEntities = r["sharedEntities"].asList { it.asString() }.sorted(),
+                        )
+                    }
+            }
+        }
+
+    /**
+     * Persist one assembly as a single transaction, wholesale (the MATCH-queue idiom): the
+     * subject's `:Fact` layer is detach-deleted and rebuilt, so a re-run yields exactly the new
+     * clustering — deterministic factIds keep rung-5 exemplar substitution stable across runs. A
+     * failed tick persists nothing (the phase is one idempotent tick).
+     */
+    fun applyAssembleOutcome(subjectId: String, outcome: AssembleOutcome) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        "MATCH (f:Fact {subjectId: ${'$'}subjectId}) DETACH DELETE f",
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .consume()
+                if (outcome.facts.isNotEmpty()) {
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            CREATE (f:Fact {factId: row.factId})
+                            SET f.subjectId = ${'$'}subjectId,
+                                f.exemplarClaimId = row.exemplarClaimId, f.label = row.label,
+                                f.factKind = row.factKind, f.slot = row.slot,
+                                f.validFrom = row.validFrom, f.validTo = row.validTo,
+                                f.datePrecision = row.datePrecision, f.anchored = row.anchored
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to
+                                    outcome.facts.map {
+                                        mapOf(
+                                            "factId" to it.factId,
+                                            "exemplarClaimId" to it.exemplarClaimId,
+                                            "label" to it.label,
+                                            "factKind" to it.factKind,
+                                            "slot" to it.slot,
+                                            "validFrom" to it.validFrom,
+                                            "validTo" to it.validTo,
+                                            "datePrecision" to it.datePrecision,
+                                            "anchored" to it.anchored,
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (f:Fact {factId: row.factId})
+                            UNWIND row.members AS cid
+                            MATCH (c:Claim {claimId: cid}) WHERE c.subjectId = ${'$'}subjectId
+                            MERGE (c)-[:ASSERTS]->(f)
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to
+                                    outcome.facts.map {
+                                        mapOf("factId" to it.factId, "members" to it.memberClaimIds)
+                                    },
+                            ),
+                        )
+                        .consume()
+                }
+                listOf("CORROBORATES", "CONTRADICTS").forEach { relation ->
+                    val rows =
+                        outcome.edges
+                            .filter { it.relation == relation }
+                            .map {
+                                mapOf(
+                                    "from" to it.fromFactId,
+                                    "to" to it.toFactId,
+                                    "confidence" to it.confidence,
+                                    "votes" to it.votesJson,
+                                    "rationale" to it.rationale,
+                                    "temporalNote" to it.temporalNote,
+                                    "judgeModel" to it.judgeModel,
+                                    "promptHash" to it.promptHash,
+                                    "withContext" to it.withContext,
+                                    "ctxRelation" to it.ctxRelation,
+                                    "ctxConfidence" to it.ctxConfidence,
+                                    "explained" to it.explained,
+                                    "temporalOverlap" to it.temporalOverlap,
+                                    "severity" to it.severity,
+                                    "reviewStatus" to it.reviewStatus,
+                                    "viaEntities" to it.viaEntities,
+                                    "contributingPairs" to it.contributingPairs,
+                                )
+                            }
+                    if (rows.isEmpty()) return@forEach
+                    // Relationship types cannot be parameterized — one statement per type.
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (f:Fact {factId: row.from}), (g:Fact {factId: row.to})
+                            CREATE (f)-[r:$relation {confidence: row.confidence,
+                                        votes: row.votes, rationale: row.rationale,
+                                        temporalNote: row.temporalNote,
+                                        judgeModel: row.judgeModel, promptHash: row.promptHash,
+                                        withContext: row.withContext,
+                                        ctxRelation: row.ctxRelation,
+                                        ctxConfidence: row.ctxConfidence,
+                                        viaEntities: row.viaEntities,
+                                        contributingPairs: row.contributingPairs}]->(g)
+                            SET r.explained = row.explained,
+                                r.temporalOverlap = row.temporalOverlap,
+                                r.severity = row.severity, r.reviewStatus = row.reviewStatus
+                            """
+                                .trimIndent(),
+                            mapOf("rows" to rows),
+                        )
+                        .consume()
+                }
+                if (outcome.succeeds.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (f:Fact {factId: row.from}), (g:Fact {factId: row.to})
+                            CREATE (f)-[r:SUCCEEDS {slot: row.slot}]->(g)
+                            SET r.gapDays = row.gapDays
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "rows" to
+                                    outcome.succeeds.map {
+                                        mapOf(
+                                            "from" to it.fromFactId,
+                                            "to" to it.toFactId,
+                                            "slot" to it.slot,
+                                            "gapDays" to it.gapDays,
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                Unit
+            }
+        }
+    }
+
+    // ---- SCORE phase (LLD §11.8) --------------------------------------------------------
+
+    /** Everything the pure [Scorer] reads, in four subject-scoped queries. */
+    fun scoreSnapshot(subjectId: String): GraphSnapshot =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                val claims =
+                    tx.run(
+                            """
+                            MATCH (c:Claim {subjectId: ${'$'}subjectId})-[:ASSERTS]->(f:Fact)
+                            RETURN c.claimId AS claimId, f.factId AS factId, c.type AS type,
+                                   c.tierSeed AS tierSeed, c.sourceClass AS sourceClass,
+                                   c.basis AS basis, c.favorability AS favorability,
+                                   c.claimedDate AS claimedDate, c.assetId AS assetId,
+                                   [ (c)-[:ATTESTED_BY]->(a:Attestor) | a.attestorKey ]
+                                       AS attestorKeys
+                            ORDER BY claimId
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            ClaimSnapshot(
+                                claimId = r["claimId"].asString(),
+                                factId = r["factId"].asString(),
+                                type = r["type"].takeUnless { it.isNull }?.asString(),
+                                tierSeed = r["tierSeed"].takeUnless { it.isNull }?.asString(),
+                                sourceClass = r["sourceClass"].takeUnless { it.isNull }?.asString(),
+                                basis = r["basis"].takeUnless { it.isNull }?.asString(),
+                                favorability =
+                                    r["favorability"].takeUnless { it.isNull }?.asDouble(),
+                                claimedDate = r["claimedDate"].takeUnless { it.isNull }?.asString(),
+                                attestorKey =
+                                    r["attestorKeys"].asList { it.asString() }.minOrNull(),
+                                assetId = r["assetId"].takeUnless { it.isNull }?.asString(),
+                            )
+                        }
+                val facts =
+                    tx.run(
+                            "MATCH (f:Fact {subjectId: ${'$'}subjectId}) " +
+                                "RETURN f.factId AS factId, f.factKind AS factKind, " +
+                                "f.exemplarClaimId AS exemplarClaimId, f.anchored AS anchored " +
+                                "ORDER BY factId",
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            FactSnapshot(
+                                factId = r["factId"].asString(),
+                                factKind = r["factKind"].asString("TIMELESS"),
+                                exemplarClaimId = r["exemplarClaimId"].asString(""),
+                                anchored = r["anchored"].asBoolean(false),
+                            )
+                        }
+                val attestors =
+                    tx.run(
+                            """
+                            MATCH (c:Claim {subjectId: ${'$'}subjectId})-[:ATTESTED_BY]->(a:Attestor)
+                            RETURN DISTINCT a.attestorKey AS attestorKey,
+                                   a.trustPrior AS trustPrior, a.trust AS trust
+                            ORDER BY attestorKey
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            AttestorSnapshot(
+                                attestorKey = r["attestorKey"].asString(),
+                                trustPrior = r["trustPrior"].asDouble(0.5),
+                                trust = r["trust"].asDouble(r["trustPrior"].asDouble(0.5)),
+                            )
+                        }
+                val edges =
+                    tx.run(
+                            """
+                            MATCH (f:Fact {subjectId: ${'$'}subjectId})
+                                  -[r:CORROBORATES|CONTRADICTS]->(g:Fact)
+                            RETURN f.factId AS fromFactId, g.factId AS toFactId,
+                                   type(r) AS relation, r.confidence AS confidence,
+                                   r.withContext AS withContext, r.ctxRelation AS ctxRelation,
+                                   r.ctxConfidence AS ctxConfidence, r.explained AS explained
+                            ORDER BY fromFactId, toFactId, relation
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            EdgeSnapshot(
+                                fromFactId = r["fromFactId"].asString(),
+                                toFactId = r["toFactId"].asString(),
+                                relation = r["relation"].asString(),
+                                confidence = r["confidence"].asDouble(0.0),
+                                withContext = r["withContext"].asBoolean(false),
+                                ctxRelation = r["ctxRelation"].takeUnless { it.isNull }?.asString(),
+                                ctxConfidence =
+                                    r["ctxConfidence"].takeUnless { it.isNull }?.asDouble(),
+                                explained = r["explained"].asBoolean(false),
+                            )
+                        }
+                GraphSnapshot(claims, facts, attestors, edges)
+            }
+        }
+
+    /**
+     * Persist provisional scores graph-side (§11.10: the ledger stays untouched until publish):
+     * fact beliefs + signals, per-claim score vector (the §3.2 shape, `scoreBare` included), and
+     * the once-at-convergence attestor trust updates (global nodes — the §6 row 3 cross-subject
+     * accrual). One transaction; signal maps store as JSON strings (Neo4j property model).
+     */
+    fun applyScoreOutcome(subjectId: String, outcome: ScoreOutcome) {
+        val factSignals = outcome.facts.associateBy { it.factId }
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                if (outcome.facts.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (f:Fact {factId: row.factId})
+                            WHERE f.subjectId = ${'$'}subjectId
+                            SET f.belief = row.belief, f.beliefBare = row.beliefBare,
+                                f.signals = row.signals
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to
+                                    outcome.facts.map {
+                                        mapOf(
+                                            "factId" to it.factId,
+                                            "belief" to it.belief,
+                                            "beliefBare" to it.beliefBare,
+                                            "signals" to Json.writeLine(it.signals.toMap()),
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                if (outcome.claims.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (c:Claim {claimId: row.claimId})
+                            WHERE c.subjectId = ${'$'}subjectId
+                            SET c.prior = row.prior, c.score = row.score,
+                                c.scoreBare = row.scoreBare, c.signals = row.signals
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to
+                                    outcome.claims.map { c ->
+                                        mapOf(
+                                            "claimId" to c.claimId,
+                                            "prior" to c.prior,
+                                            "score" to c.score,
+                                            "scoreBare" to c.scoreBare,
+                                            "signals" to
+                                                Json.writeLine(
+                                                    claimSignalVector(
+                                                        c,
+                                                        factSignals.getValue(c.factId).signals,
+                                                    )
+                                                ),
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                if (outcome.trustUpdates.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (a:Attestor {attestorKey: row.attestorKey})
+                            SET a.trust = row.trust, a.claimCount = row.factCount
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "rows" to
+                                    outcome.trustUpdates.map {
+                                        mapOf(
+                                            "attestorKey" to it.attestorKey,
+                                            "trust" to it.trust,
+                                            "factCount" to it.factCount,
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                Unit
+            }
+        }
+    }
+
+    /** The §11.10 queue size: PROPOSED, unexplained CONTRADICTS at/above the confidence floor. */
+    fun countContradictionQueue(subjectId: String, floor: Double): Long =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})-[r:CONTRADICTS]->(:Fact)
+                        WHERE r.reviewStatus = 'PROPOSED' AND r.explained = false
+                          AND r.confidence >= ${'$'}floor
+                        RETURN count(r) AS c
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "floor" to floor),
+                    )
+                    .single()["c"]
+                    .asLong()
+            }
+        }
+
+    /**
+     * The §21 A.3 read-back for `GET /subjects/{id}/scores`: every scored claim with its vector,
+     * its fact (label/kind/interval/beliefs) and the fact's judged edges — the "why this score"
+     * decomposition panel's data, one row per claim.
+     */
+    fun scoresReadback(subjectId: String): List<ScoredClaimView> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})-[:ASSERTS]->(f:Fact)
+                        WHERE c.score IS NOT NULL
+                        RETURN c.claimId AS claimId, c.text AS text, c.type AS type,
+                               c.tierSeed AS tierSeed, c.prior AS prior, c.score AS score,
+                               c.scoreBare AS scoreBare, c.signals AS signals,
+                               f.factId AS factId, f.label AS factLabel,
+                               f.factKind AS factKind, f.slot AS slot,
+                               f.validFrom AS validFrom, f.validTo AS validTo,
+                               f.datePrecision AS datePrecision, f.anchored AS anchored,
+                               f.belief AS belief, f.beliefBare AS beliefBare,
+                               [ (f)-[r:CORROBORATES|CONTRADICTS]-(g:Fact) |
+                                 {relation: type(r), otherFactId: g.factId,
+                                  otherLabel: g.label, confidence: r.confidence,
+                                  votes: r.votes, rationale: r.rationale,
+                                  explained: r.explained, temporalOverlap: r.temporalOverlap,
+                                  reviewStatus: r.reviewStatus,
+                                  viaEntities: r.viaEntities} ] AS edges,
+                               [ (x:Explanation)-[:EXPLAINS]->(c) | x.text ][0] AS explanation
+                        ORDER BY c.score DESC, claimId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        ScoredClaimView(
+                            claimId = r["claimId"].asString(),
+                            text = r["text"].asString(""),
+                            type = r["type"].takeUnless { it.isNull }?.asString(),
+                            tierSeed = r["tierSeed"].takeUnless { it.isNull }?.asString(),
+                            prior = r["prior"].takeUnless { it.isNull }?.asDouble(),
+                            score = r["score"].asDouble(0.0),
+                            scoreBare = r["scoreBare"].takeUnless { it.isNull }?.asDouble(),
+                            signalsJson = r["signals"].takeUnless { it.isNull }?.asString(),
+                            factId = r["factId"].asString(),
+                            factLabel = r["factLabel"].asString(""),
+                            factKind = r["factKind"].takeUnless { it.isNull }?.asString(),
+                            slot = r["slot"].takeUnless { it.isNull }?.asString(),
+                            validFrom = r["validFrom"].takeUnless { it.isNull }?.asString(),
+                            validTo = r["validTo"].takeUnless { it.isNull }?.asString(),
+                            datePrecision = r["datePrecision"].takeUnless { it.isNull }?.asString(),
+                            anchored = r["anchored"].asBoolean(false),
+                            belief = r["belief"].takeUnless { it.isNull }?.asDouble(),
+                            beliefBare = r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
+                            edges = r["edges"].asList { it.asMap() },
+                            explanation = r["explanation"].takeUnless { it.isNull }?.asString(),
+                        )
+                    }
+            }
+        }
+
+    // ---- AWAITING_REVIEW queue + publish (LLD §11.10–§11.11) -----------------------------
+
+    /**
+     * The §11.10 contradiction queue: every PROPOSED, unexplained CONTRADICTS edge at/above the
+     * floor, with both facts' member claims, the ensemble rationale + vote split, and the
+     * provisional score impact (current vs bare delta). Edges address by Neo4j `elementId` — the
+     * action endpoints' `{edgeId}`.
+     */
+    fun contradictionQueue(subjectId: String, floor: Double): List<ContradictionView> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})-[r:CONTRADICTS]->(g:Fact)
+                        WHERE r.reviewStatus = 'PROPOSED' AND r.explained = false
+                          AND r.confidence >= ${'$'}floor
+                        RETURN elementId(r) AS edgeId, r.confidence AS confidence,
+                               r.votes AS votes, r.rationale AS rationale,
+                               r.temporalNote AS temporalNote, r.viaEntities AS viaEntities,
+                               r.contributingPairs AS contributingPairs,
+                               r.temporalOverlap AS temporalOverlap,
+                               f.factId AS fromFactId, f.label AS fromLabel,
+                               f.belief AS fromBelief, f.beliefBare AS fromBeliefBare,
+                               [ (c:Claim)-[:ASSERTS]->(f) |
+                                 {claimId: c.claimId, text: c.text,
+                                  sourceClass: c.sourceClass, assetId: c.assetId} ] AS fromClaims,
+                               g.factId AS toFactId, g.label AS toLabel,
+                               g.belief AS toBelief, g.beliefBare AS toBeliefBare,
+                               [ (c:Claim)-[:ASSERTS]->(g) |
+                                 {claimId: c.claimId, text: c.text,
+                                  sourceClass: c.sourceClass, assetId: c.assetId} ] AS toClaims
+                        ORDER BY r.confidence DESC, fromFactId, toFactId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "floor" to floor),
+                    )
+                    .list { r ->
+                        ContradictionView(
+                            edgeId = r["edgeId"].asString(),
+                            confidence = r["confidence"].asDouble(0.0),
+                            votesJson = r["votes"].takeUnless { it.isNull }?.asString(),
+                            rationale = r["rationale"].takeUnless { it.isNull }?.asString(),
+                            temporalNote = r["temporalNote"].takeUnless { it.isNull }?.asString(),
+                            temporalOverlap =
+                                r["temporalOverlap"].takeUnless { it.isNull }?.asBoolean(),
+                            viaEntities = r["viaEntities"].asList { it.asString() },
+                            contributingPairs = r["contributingPairs"].asList { it.asString() },
+                            from = r.toContradictionSide("from"),
+                            to = r.toContradictionSide("to"),
+                        )
+                    }
+            }
+        }
+
+    private fun org.neo4j.driver.Record.toContradictionSide(prefix: String): ContradictionSide =
+        ContradictionSide(
+            factId = this["${prefix}FactId"].asString(),
+            label = this["${prefix}Label"].asString(""),
+            belief = this["${prefix}Belief"].takeUnless { it.isNull }?.asDouble(),
+            beliefBare = this["${prefix}BeliefBare"].takeUnless { it.isNull }?.asDouble(),
+            claims = this["${prefix}Claims"].asList { it.asMap() },
+        )
+
+    /** Resolve an action's edge id to its subject + pairs; null when the edge is gone. */
+    fun findContradictionEdge(edgeId: String): ContradictionEdgeRef? =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact)-[r:CONTRADICTS]->(g:Fact)
+                        WHERE elementId(r) = ${'$'}edgeId
+                        RETURN f.subjectId AS subjectId, f.factId AS fromFactId,
+                               g.factId AS toFactId, r.reviewStatus AS reviewStatus,
+                               r.contributingPairs AS contributingPairs
+                        """
+                            .trimIndent(),
+                        mapOf("edgeId" to edgeId),
+                    )
+                    .list { r ->
+                        ContradictionEdgeRef(
+                            edgeId = edgeId,
+                            subjectId = r["subjectId"].asString(),
+                            fromFactId = r["fromFactId"].asString(),
+                            toFactId = r["toFactId"].asString(),
+                            reviewStatus = r["reviewStatus"].takeUnless { it.isNull }?.asString(),
+                            contributingPairs = r["contributingPairs"].asList { it.asString() },
+                        )
+                    }
+                    .firstOrNull()
+            }
+        }
+
+    /** Confirm (§11.10): PROPOSED → CONFIRMED. False when the edge was not PROPOSED anymore. */
+    fun confirmContradiction(subjectId: String, edgeId: String): Boolean =
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})-[r:CONTRADICTS]->(:Fact)
+                        WHERE elementId(r) = ${'$'}edgeId AND r.reviewStatus = 'PROPOSED'
+                        SET r.reviewStatus = 'CONFIRMED'
+                        RETURN count(r) AS c
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "edgeId" to edgeId),
+                    )
+                    .single()["c"]
+                    .asLong() > 0
+            }
+        }
+
+    /** Dismiss (§11.10): the judge was wrong — delete the edge. False when already gone. */
+    fun deleteContradiction(subjectId: String, edgeId: String): Boolean =
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})-[r:CONTRADICTS]->(:Fact)
+                        WHERE elementId(r) = ${'$'}edgeId
+                        DELETE r
+                        RETURN count(r) AS c
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "edgeId" to edgeId),
+                    )
+                    .single()["c"]
+                    .asLong() > 0
+            }
+        }
+
+    /** The explain hook's edge update: fresh ctx verdict fields + the §11.9 explained flag. */
+    fun updateContradictionContext(
+        subjectId: String,
+        edgeId: String,
+        ctxRelation: String?,
+        ctxConfidence: Double?,
+        explained: Boolean,
+    ) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})-[r:CONTRADICTS]->(:Fact)
+                        WHERE elementId(r) = ${'$'}edgeId
+                        SET r.withContext = true, r.ctxRelation = ${'$'}ctxRelation,
+                            r.ctxConfidence = ${'$'}ctxConfidence, r.explained = ${'$'}explained
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "edgeId" to edgeId,
+                            "ctxRelation" to ctxRelation,
+                            "ctxConfidence" to ctxConfidence,
+                            "explained" to explained,
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /**
+     * Refresh the graph's sidecar projection for [rows]' claims (the explain action authors or
+     * edits a §12.6 justification AFTER sync) — same MERGE shape as [mergeEvidence]'s explanation
+     * leg, minus CITES (citation edits re-enter via a re-run's MATCH, not the hook).
+     */
+    fun upsertExplanations(subjectId: String, rows: List<ExplanationRow>) {
+        if (rows.isEmpty()) return
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}rows AS row
+                        MERGE (e:Explanation {explanationId: row.explanationId})
+                        SET e.subjectId = ${'$'}subjectId, e.text = row.text,
+                            e.author = row.author, e.createdAt = row.createdAt
+                        WITH e, row
+                        MATCH (c:Claim {claimId: row.claimId})
+                        WHERE c.subjectId = ${'$'}subjectId
+                        MERGE (e)-[:EXPLAINS]->(c)
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "rows" to rows.map { it.toMap() }),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /** Hydrate explicit pairs for the explain hook's re-judge — the [judgeQueueBatch] shape. */
+    fun hydratePairs(subjectId: String, pairs: Collection<ClaimPair>): List<PairToJudge> {
+        if (pairs.isEmpty()) return emptyList()
+        return driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}pairs AS p
+                        MATCH (a:Claim {claimId: p.a}), (b:Claim {claimId: p.b})
+                        WHERE a.subjectId = ${'$'}subjectId AND b.subjectId = ${'$'}subjectId
+                        RETURN a.claimId AS aId, a.text AS aText, a.type AS aType,
+                               a.claimedDate AS aDate, a.sourceClass AS aSourceClass,
+                               a.relationship AS aRelationship, a.speakerRole AS aSpeakerRole,
+                               [ (xa:Explanation)-[:EXPLAINS]->(a) | xa.text ][0] AS aExplanation,
+                               b.claimId AS bId, b.text AS bText, b.type AS bType,
+                               b.claimedDate AS bDate, b.sourceClass AS bSourceClass,
+                               b.relationship AS bRelationship, b.speakerRole AS bSpeakerRole,
+                               [ (xb:Explanation)-[:EXPLAINS]->(b) | xb.text ][0] AS bExplanation,
+                               [ (a)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(b) |
+                                 e.canonicalName ] AS sharedEntities
+                        ORDER BY aId, bId
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "pairs" to pairs.map { mapOf("a" to it.a, "b" to it.b) },
+                        ),
+                    )
+                    .list { r ->
+                        val a = r.toCard("a")
+                        val b = r.toCard("b")
+                        PairToJudge(
+                            pair = ClaimPair(a.claimId, b.claimId),
+                            rank = 0,
+                            withContext = a.explanationText != null || b.explanationText != null,
+                            humanAsserted = false,
+                            a = a,
+                            b = b,
+                            sharedEntities = r["sharedEntities"].asList { it.asString() }.sorted(),
+                        )
+                    }
+            }
+        }
+    }
+
+    /** Every provisionally scored claim — the PUBLISHING tick's ledger rows (§11.11). */
+    fun scoredClaimsForPublish(subjectId: String): List<ScoredClaimForPublish> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        WHERE c.score IS NOT NULL
+                        RETURN c.claimId AS claimId, c.score AS score, c.signals AS signals
+                        ORDER BY claimId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        ScoredClaimForPublish(
+                            claimId = r["claimId"].asString(),
+                            score = r["score"].asDouble(0.0),
+                            signalsJson = r["signals"].takeUnless { it.isNull }?.asString(),
+                        )
+                    }
+            }
+        }
 }
+
+/** The §3.2 per-claim signal vector as persisted (claim `signals` JSON; ledger shape VA-18). */
+internal fun claimSignalVector(claim: ClaimScore, signals: FactSignals): Map<String, Double> =
+    mapOf(
+        "prior" to claim.prior,
+        "support" to signals.support,
+        "conflict" to signals.conflict,
+        "independence" to signals.independence,
+        "recency" to signals.recency,
+        "evidenceMass" to signals.evidenceMass,
+        "scoreBare" to claim.scoreBare,
+    )
+
+internal fun FactSignals.toMap(): Map<String, Double> =
+    mapOf(
+        "support" to support,
+        "conflict" to conflict,
+        "independence" to independence,
+        "recency" to recency,
+        "evidenceMass" to evidenceMass,
+    )
+
+/** One §11.10 queue entry — a PROPOSED contradiction with everything the pair card shows. */
+data class ContradictionView(
+    val edgeId: String,
+    val confidence: Double,
+    val votesJson: String?,
+    val rationale: String?,
+    val temporalNote: String?,
+    val temporalOverlap: Boolean?,
+    val viaEntities: List<String>,
+    val contributingPairs: List<String>,
+    val from: ContradictionSide,
+    val to: ContradictionSide,
+) {
+    /** The provisional score impact the card shows: current belief minus bare belief per side. */
+    val impact: Map<String, Double?>
+        get() =
+            mapOf(
+                from.factId to from.belief?.let { b -> from.beliefBare?.let { b - it } },
+                to.factId to to.belief?.let { b -> to.beliefBare?.let { b - it } },
+            )
+}
+
+data class ContradictionSide(
+    val factId: String,
+    val label: String,
+    val belief: Double?,
+    val beliefBare: Double?,
+    val claims: List<Map<String, Any?>>,
+)
+
+/** An action's resolved edge: whose subject it belongs to and which claim pairs judged it. */
+data class ContradictionEdgeRef(
+    val edgeId: String,
+    val subjectId: String,
+    val fromFactId: String,
+    val toFactId: String,
+    val reviewStatus: String?,
+    val contributingPairs: List<String>,
+) {
+    /** Parse the "a↔b" contributing-pair records back into [ClaimPair]s. */
+    fun pairs(): List<ClaimPair> =
+        contributingPairs.mapNotNull { raw ->
+            val parts = raw.split("↔")
+            if (parts.size == 2) ClaimPair.of(parts[0], parts[1]) else null
+        }
+}
+
+/** One provisionally scored claim as PUBLISHING reads it back for the ledger (§11.11). */
+data class ScoredClaimForPublish(
+    val claimId: String,
+    val score: Double,
+    val signalsJson: String?,
+)
+
+/** One row of the §21 A.3 score read-back — the "why this score" panel's data (LLD §12). */
+data class ScoredClaimView(
+    val claimId: String,
+    val text: String,
+    val type: String?,
+    val tierSeed: String?,
+    val prior: Double?,
+    val score: Double,
+    val scoreBare: Double?,
+    val signalsJson: String?,
+    val factId: String,
+    val factLabel: String,
+    val factKind: String?,
+    val slot: String?,
+    val validFrom: String?,
+    val validTo: String?,
+    val datePrecision: String?,
+    val anchored: Boolean,
+    val belief: Double?,
+    val beliefBare: Double?,
+    val edges: List<Map<String, Any?>>,
+    val explanation: String?,
+)
 
 /** One embedded claim ready to persist. */
 data class EmbeddedClaim(val claimId: String, val embedding: List<Double>)

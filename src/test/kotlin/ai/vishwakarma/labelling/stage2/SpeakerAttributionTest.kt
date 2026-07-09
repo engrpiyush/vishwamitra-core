@@ -28,7 +28,12 @@ private open class AttribStubGemini(private val canned: String, private val avai
 
     override fun available(): Boolean = avail
 
-    override fun generate(prompt: String, maxTokens: Int?, thinkingBudget: Int?): String {
+    override fun generate(
+        prompt: String,
+        maxTokens: Int?,
+        thinkingBudget: Int?,
+        temperature: Double?,
+    ): String {
         called = true
         return canned
     }

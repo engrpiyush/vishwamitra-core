@@ -18,17 +18,30 @@ import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.persistence.AssetRepository
+import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
+import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
+import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
+import ai.vishwakarma.labelling.stage3.AssembleOutcome
+import ai.vishwakarma.labelling.stage3.AttestorSnapshot
+import ai.vishwakarma.labelling.stage3.ClaimCard
+import ai.vishwakarma.labelling.stage3.ClaimJudgeService
 import ai.vishwakarma.labelling.stage3.ClaimPair
 import ai.vishwakarma.labelling.stage3.ClaimRow
+import ai.vishwakarma.labelling.stage3.ClaimSnapshot
+import ai.vishwakarma.labelling.stage3.ClaimToAssemble
 import ai.vishwakarma.labelling.stage3.ClaimToEmbed
 import ai.vishwakarma.labelling.stage3.ClaimToMatch
 import ai.vishwakarma.labelling.stage3.ClaimToResolve
+import ai.vishwakarma.labelling.stage3.ContradictionEdgeRef
+import ai.vishwakarma.labelling.stage3.ContradictionSide
+import ai.vishwakarma.labelling.stage3.ContradictionView
+import ai.vishwakarma.labelling.stage3.EdgeSnapshot
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
@@ -41,21 +54,35 @@ import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.EntityToReembed
 import ai.vishwakarma.labelling.stage3.EntityType
 import ai.vishwakarma.labelling.stage3.EvidenceProjection
+import ai.vishwakarma.labelling.stage3.ExplanationRow
 import ai.vishwakarma.labelling.stage3.ExtractedMention
 import ai.vishwakarma.labelling.stage3.ExtractedMentions
+import ai.vishwakarma.labelling.stage3.FactSnapshot
 import ai.vishwakarma.labelling.stage3.GraphPing
+import ai.vishwakarma.labelling.stage3.GraphSnapshot
+import ai.vishwakarma.labelling.stage3.JudgeQueueEntry
+import ai.vishwakarma.labelling.stage3.JudgeRelation
+import ai.vishwakarma.labelling.stage3.JudgeSample
+import ai.vishwakarma.labelling.stage3.JudgeSampler
+import ai.vishwakarma.labelling.stage3.JudgedPair
+import ai.vishwakarma.labelling.stage3.JudgedPairRecord
 import ai.vishwakarma.labelling.stage3.MatchOutcome
 import ai.vishwakarma.labelling.stage3.MentionLinkRow
+import ai.vishwakarma.labelling.stage3.PairToJudge
 import ai.vishwakarma.labelling.stage3.PseudoEmbeddingService
 import ai.vishwakarma.labelling.stage3.SchemaStatus
+import ai.vishwakarma.labelling.stage3.ScoreOutcome
+import ai.vishwakarma.labelling.stage3.ScoredClaimForPublish
 import ai.vishwakarma.labelling.stage3.ScoredPair
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -118,12 +145,29 @@ private class FakeS3JobRepo : Stage2JobRepository(mock(Firestore::class.java)) {
 private class FakeS3ClaimRepo : ClaimRepository(mock(Firestore::class.java)) {
     val store = linkedMapOf<String, Claim>()
     var failNext = false
+    val published = mutableListOf<ClaimAuthenticityRow>()
+    var failPublish = false
 
     override fun findById(id: String): Claim? = store[id]
 
     override fun findBySubject(subjectId: String): List<Claim> {
         if (failNext) throw IllegalStateException("Firestore transport blip")
         return store.values.filter { it.subjectId == subjectId }
+    }
+
+    override fun publishAuthenticity(rows: List<ClaimAuthenticityRow>) {
+        if (failPublish) throw IllegalStateException("Firestore ledger batch write failed")
+        published += rows
+        rows.forEach { row ->
+            store[row.claimId] =
+                store[row.claimId]!!.copy(
+                    authenticityScore = row.score,
+                    authenticitySignals = row.signals,
+                    authenticityTier = AuthenticityTier.fromOrNull(row.tier),
+                    scoreRunId = row.scoreRunId,
+                    scoredAt = row.scoredAt,
+                )
+        }
     }
 }
 
@@ -270,6 +314,333 @@ private class FakeGraphRepo(props: AppProperties) :
     val matchOutcomes = mutableListOf<MatchOutcome>()
     var failMatchWrite = false
 
+    // ---- JUDGE (VA-15): the persisted queue with wholesale-replace + status-flip ----
+
+    class QueueSlot(val entry: JudgeQueueEntry, var status: String = "QUEUED") {
+        var judged: JudgedPair? = null
+    }
+
+    val judgeQueue = linkedMapOf<ClaimPair, QueueSlot>()
+    val judgeRepeats = mutableListOf<ClaimPair>()
+    var failJudgeWrite = false
+
+    /** Sidecar texts visible to the cards: SYNC-projected plus [upsertExplanations] refreshes. */
+    val extraExplanations = linkedMapOf<String, String>()
+
+    private fun explanationOf(claimId: String): String? =
+        extraExplanations[claimId]
+            ?: projections.flatMap { it.explanations }.firstOrNull { it.claimId == claimId }?.text
+
+    private fun cardOf(claimId: String): ClaimCard {
+        val row = claimRows[claimId]
+        return ClaimCard(
+            claimId = claimId,
+            text = row?.text ?: "",
+            type = row?.type,
+            claimedDate = row?.claimedDate,
+            sourceClass = row?.sourceClass,
+            relationship = row?.relationship,
+            speakerRole = row?.speakerRole,
+            explanationText = explanationOf(claimId),
+        )
+    }
+
+    override fun judgeQueueBatch(subjectId: String, limit: Int): List<PairToJudge> =
+        judgeQueue.values
+            .filter { it.status == "QUEUED" }
+            .sortedBy { it.entry.rank }
+            .take(limit)
+            .map { slot ->
+                PairToJudge(
+                    pair = slot.entry.pair,
+                    rank = slot.entry.rank.toLong(),
+                    withContext = slot.entry.withContext,
+                    humanAsserted = slot.entry.humanAsserted,
+                    a = cardOf(slot.entry.pair.a),
+                    b = cardOf(slot.entry.pair.b),
+                    sharedEntities = emptyList(),
+                )
+            }
+
+    override fun countJudgeQueue(subjectId: String, status: String): Long =
+        judgeQueue.values.count { it.status == status }.toLong()
+
+    override fun applyJudgeOutcome(subjectId: String, judged: List<JudgedPair>) {
+        if (failJudgeWrite) throw IllegalStateException("Neo4j write failed: judge tx aborted")
+        judged.forEach { p ->
+            judgeQueue[p.pair]?.let {
+                it.status = "JUDGED"
+                it.judged = p
+            }
+            if (p.bare.relation == JudgeRelation.REPEATS) judgeRepeats += p.pair
+        }
+    }
+
+    // ---- ASSEMBLE (VA-16): reads derived from the judged queue + captured outcome ----
+
+    val assembleOutcomes = mutableListOf<AssembleOutcome>()
+    var failAssembleWrite = false
+
+    /** Mutable contradiction-edge state (VA-18 actions flip/delete/annotate these). */
+    class FakeContradiction(
+        val fromFactId: String,
+        val toFactId: String,
+        val confidence: Double,
+        var reviewStatus: String?,
+        var explained: Boolean,
+        var withContext: Boolean,
+        var ctxRelation: String?,
+        var ctxConfidence: Double?,
+        val contributingPairs: List<String>,
+    )
+
+    val contradictionEdges = linkedMapOf<String, FakeContradiction>()
+    private var corroboratesEdges = listOf<EdgeSnapshot>()
+    private var edgeSeq = 0
+
+    override fun claimsForAssembly(subjectId: String): List<ClaimToAssemble> =
+        claimRows.values
+            .sortedBy { it.claimId }
+            .map { row ->
+                ClaimToAssemble(
+                    claimId = row.claimId,
+                    type = row.type,
+                    text = row.text,
+                    claimedDate = row.claimedDate,
+                    sourceClass = row.sourceClass,
+                    mentionTypes =
+                        mentionLinks
+                            .filter { it.claimId == row.claimId }
+                            .map { it.entityType }
+                            .sorted(),
+                )
+            }
+
+    override fun repeatsPairs(subjectId: String): List<ClaimPair> =
+        (matchOutcomes.flatMap { o -> o.autoRepeats.map { it.pair } } + judgeRepeats)
+            .distinct()
+            .sortedWith(compareBy({ it.a }, { it.b }))
+
+    override fun judgedPairRecords(subjectId: String): List<JudgedPairRecord> =
+        judgeQueue.values
+            .filter { it.status == "JUDGED" }
+            .mapNotNull { slot ->
+                slot.judged?.let { p ->
+                    JudgedPairRecord(
+                        pair = p.pair,
+                        relation = p.bare.relation,
+                        confidence = p.bare.confidence,
+                        votesJson = null,
+                        rationale = p.bare.rationale,
+                        temporalNote = p.bare.temporalNote,
+                        ctxJudged = p.ctx != null,
+                        ctxRelation = p.ctx?.relation,
+                        ctxConfidence = p.ctx?.confidence,
+                        ctxExplanationRelevant = p.ctx?.explanationRelevant,
+                        judgeModel = p.judgeModel,
+                        promptHash = p.promptStamp,
+                        sharedEntities = emptyList(),
+                    )
+                }
+            }
+            .sortedWith(compareBy({ it.pair.a }, { it.pair.b }))
+
+    override fun applyAssembleOutcome(subjectId: String, outcome: AssembleOutcome) {
+        if (failAssembleWrite)
+            throw IllegalStateException("Neo4j write failed: assemble tx aborted")
+        assembleOutcomes += outcome
+        // The wholesale :Fact rebuild: fact edges are recreated from scratch.
+        contradictionEdges.clear()
+        corroboratesEdges =
+            outcome.edges
+                .filter { it.relation == "CORROBORATES" }
+                .map {
+                    EdgeSnapshot(
+                        fromFactId = it.fromFactId,
+                        toFactId = it.toFactId,
+                        relation = it.relation,
+                        confidence = it.confidence,
+                        withContext = it.withContext,
+                        ctxRelation = it.ctxRelation,
+                        ctxConfidence = it.ctxConfidence,
+                        explained = it.explained,
+                    )
+                }
+        outcome.edges
+            .filter { it.relation == "CONTRADICTS" }
+            .forEach {
+                contradictionEdges["edge-${edgeSeq++}"] =
+                    FakeContradiction(
+                        fromFactId = it.fromFactId,
+                        toFactId = it.toFactId,
+                        confidence = it.confidence,
+                        reviewStatus = it.reviewStatus,
+                        explained = it.explained,
+                        withContext = it.withContext,
+                        ctxRelation = it.ctxRelation,
+                        ctxConfidence = it.ctxConfidence,
+                        contributingPairs = it.contributingPairs,
+                    )
+            }
+    }
+
+    // ---- AWAITING_REVIEW queue + publish (VA-18) ----
+
+    override fun contradictionQueue(subjectId: String, floor: Double): List<ContradictionView> =
+        contradictionEdges
+            .filterValues {
+                it.reviewStatus == "PROPOSED" && !it.explained && it.confidence >= floor
+            }
+            .map { (id, e) ->
+                ContradictionView(
+                    edgeId = id,
+                    confidence = e.confidence,
+                    votesJson = null,
+                    rationale = "scripted",
+                    temporalNote = null,
+                    temporalOverlap = true,
+                    viaEntities = emptyList(),
+                    contributingPairs = e.contributingPairs,
+                    from = ContradictionSide(e.fromFactId, "", null, null, emptyList()),
+                    to = ContradictionSide(e.toFactId, "", null, null, emptyList()),
+                )
+            }
+
+    override fun findContradictionEdge(edgeId: String): ContradictionEdgeRef? =
+        contradictionEdges[edgeId]?.let {
+            ContradictionEdgeRef(
+                edgeId = edgeId,
+                subjectId = "s1",
+                fromFactId = it.fromFactId,
+                toFactId = it.toFactId,
+                reviewStatus = it.reviewStatus,
+                contributingPairs = it.contributingPairs,
+            )
+        }
+
+    override fun confirmContradiction(subjectId: String, edgeId: String): Boolean {
+        val edge = contradictionEdges[edgeId] ?: return false
+        if (edge.reviewStatus != "PROPOSED") return false
+        edge.reviewStatus = "CONFIRMED"
+        return true
+    }
+
+    override fun deleteContradiction(subjectId: String, edgeId: String): Boolean =
+        contradictionEdges.remove(edgeId) != null
+
+    override fun updateContradictionContext(
+        subjectId: String,
+        edgeId: String,
+        ctxRelation: String?,
+        ctxConfidence: Double?,
+        explained: Boolean,
+    ) {
+        contradictionEdges[edgeId]?.let {
+            it.withContext = true
+            it.ctxRelation = ctxRelation
+            it.ctxConfidence = ctxConfidence
+            it.explained = explained
+        }
+    }
+
+    override fun upsertExplanations(subjectId: String, rows: List<ExplanationRow>) {
+        rows.forEach { extraExplanations[it.claimId] = it.text }
+    }
+
+    override fun hydratePairs(
+        subjectId: String,
+        pairs: Collection<ClaimPair>,
+    ): List<PairToJudge> =
+        pairs.sortedWith(compareBy({ it.a }, { it.b })).map { p ->
+            val a = cardOf(p.a)
+            val b = cardOf(p.b)
+            PairToJudge(
+                pair = p,
+                rank = 0,
+                withContext = a.explanationText != null || b.explanationText != null,
+                humanAsserted = false,
+                a = a,
+                b = b,
+                sharedEntities = emptyList(),
+            )
+        }
+
+    override fun scoredClaimsForPublish(subjectId: String): List<ScoredClaimForPublish> =
+        scoreOutcomes.lastOrNull()?.claims.orEmpty().map { c ->
+            ScoredClaimForPublish(
+                claimId = c.claimId,
+                score = c.score,
+                signalsJson = """{"prior":${c.prior},"scoreBare":${c.scoreBare}}""",
+            )
+        }
+
+    // ---- SCORE (VA-17): snapshot derived from the last assembly ----
+
+    val scoreOutcomes = mutableListOf<ScoreOutcome>()
+
+    override fun scoreSnapshot(subjectId: String): GraphSnapshot {
+        val assembly = assembleOutcomes.lastOrNull()
+        val factByClaim =
+            assembly
+                ?.facts
+                .orEmpty()
+                .flatMap { f -> f.memberClaimIds.map { it to f.factId } }
+                .toMap()
+        return GraphSnapshot(
+            claims =
+                claimRows.values
+                    .sortedBy { it.claimId }
+                    .mapNotNull { row ->
+                        factByClaim[row.claimId]?.let { factId ->
+                            ClaimSnapshot(
+                                claimId = row.claimId,
+                                factId = factId,
+                                type = row.type,
+                                tierSeed = row.tierSeed,
+                                sourceClass = row.sourceClass,
+                                basis = row.basis,
+                                favorability = row.favorability,
+                                claimedDate = row.claimedDate,
+                                attestorKey = row.attestorKey,
+                                assetId = row.assetId,
+                            )
+                        }
+                    },
+            facts =
+                assembly?.facts.orEmpty().map {
+                    FactSnapshot(it.factId, it.factKind, it.exemplarClaimId, it.anchored)
+                },
+            attestors =
+                projections
+                    .flatMap { it.attestors }
+                    .distinctBy { it.attestorKey }
+                    .map { AttestorSnapshot(it.attestorKey, it.trustPrior, it.trustPrior) },
+            edges =
+                corroboratesEdges +
+                    contradictionEdges.values.map {
+                        EdgeSnapshot(
+                            fromFactId = it.fromFactId,
+                            toFactId = it.toFactId,
+                            relation = "CONTRADICTS",
+                            confidence = it.confidence,
+                            withContext = it.withContext,
+                            ctxRelation = it.ctxRelation,
+                            ctxConfidence = it.ctxConfidence,
+                            explained = it.explained,
+                        )
+                    },
+        )
+    }
+
+    override fun applyScoreOutcome(subjectId: String, outcome: ScoreOutcome) {
+        scoreOutcomes += outcome
+    }
+
+    override fun countContradictionQueue(subjectId: String, floor: Double): Long =
+        contradictionEdges.values
+            .count { it.reviewStatus == "PROPOSED" && !it.explained && it.confidence >= floor }
+            .toLong()
+
     override fun claimsForMatching(subjectId: String): List<ClaimToMatch> {
         val explained = projections.flatMap { it.explanations }.map { it.claimId }.toSet()
         return claimRows.values
@@ -330,6 +701,63 @@ private class FakeGraphRepo(props: AppProperties) :
     override fun applyMatchOutcome(subjectId: String, outcome: MatchOutcome) {
         if (failMatchWrite) throw IllegalStateException("Neo4j write failed: connection reset")
         matchOutcomes += outcome
+        // The wholesale replace: MATCH re-runs yield exactly the new queue, never a union.
+        judgeQueue.clear()
+        outcome.queue.forEach { judgeQueue[it.pair] = QueueSlot(it) }
+    }
+}
+
+/** Scriptable ensemble member for lifecycle tests: fixed relations, observable call count. */
+private class ScriptedJudgeSampler(
+    var verdicts: Map<ClaimPair, JudgeRelation> = emptyMap(),
+) : JudgeSampler {
+    var calls = 0
+
+    override val versionStamp = "test:1:judgehash"
+
+    override val modelId = "test-judge"
+
+    override fun sample(
+        pairs: List<PairToJudge>,
+        withContext: Boolean,
+        sampleIndex: Int,
+    ): Map<ClaimPair, JudgeSample> {
+        calls++
+        return pairs.associate {
+            it.pair to
+                JudgeSample(
+                    relation = verdicts[it.pair] ?: JudgeRelation.NEUTRAL,
+                    confidence = 0.9,
+                    rationale = "scripted",
+                    temporalNote = null,
+                    explanationRelevant = if (withContext) true else null,
+                )
+        }
+    }
+}
+
+/** In-memory `stage3_edges` cache. */
+private class FakeJudgeEdgeRepo : Stage3EdgeRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, Stage3EdgeVerdict>()
+
+    override fun findAll(ids: Collection<String>): Map<String, Stage3EdgeVerdict> =
+        ids.mapNotNull { store[it] }.associateBy { it.id }
+
+    override fun saveAll(rows: List<Stage3EdgeVerdict>) {
+        rows.forEach { store[it.id] = it }
+    }
+
+    override fun markOverridden(claimIdLow: String, claimIdHigh: String): Int {
+        val hits =
+            store.values.filter { it.claimIdLow == claimIdLow && it.claimIdHigh == claimIdHigh }
+        hits.forEach { store[it.id] = it.copy(overridden = true) }
+        return hits.size
+    }
+
+    override fun deleteBySubject(subjectId: String): Int {
+        val ids = store.values.filter { it.subjectId == subjectId }.map { it.id }
+        ids.forEach { store.remove(it) }
+        return ids.size
     }
 }
 
@@ -366,6 +794,8 @@ class Stage3ServiceTest {
                 AppProperties.Stage3(
                     embedBatchPerPoll = 2,
                     entityBatchPerPoll = 2,
+                    judgePairsPerPoll = 1,
+                    ensembleK = 3,
                     phaseTimeout = Duration.ofMinutes(15),
                 )
         )
@@ -380,6 +810,8 @@ class Stage3ServiceTest {
     private val graph = FakeGraphRepo(props)
     private val reviewService = ClaimReviewService(manifests, jobs, claims, reviews, props)
     private val extractor = ScriptedExtractor()
+    private val judgeSampler = ScriptedJudgeSampler()
+    private val judgeEdges = FakeJudgeEdgeRepo()
 
     private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
         Stage3Service(
@@ -394,6 +826,9 @@ class Stage3ServiceTest {
             embeddings,
             extractor,
             EntityResolver(graph, embeddings, props),
+            ClaimJudgeService(judgeSampler, judgeEdges, props),
+            judgeEdges,
+            claims,
             props,
         )
 
@@ -803,6 +1238,395 @@ class Stage3ServiceTest {
         run = svc.retry(run.id).valueOrNull()!!
         run = svc.poll(run.id).valueOrNull()!!
         assertEquals(Stage3RunStatus.JUDGING, run.status)
+    }
+
+    // ---- JUDGE (VA-15) ---------------------------------------------------------------
+
+    /** Poll an existing run until it parks at [target]. */
+    private fun pollTo(svc: Stage3Service, runId: String, target: Stage3RunStatus): Stage3Run {
+        var run = runs.store[runId]!!
+        repeat(30) {
+            if (run.status == target) return run
+            run = svc.poll(run.id).valueOrNull()!!
+        }
+        error("run never reached $target (stuck at ${run.status})")
+    }
+
+    /** Two cascade-surviving pairs on a 3-claim corpus: (c1,c2) rank 0, (c1,c3) rank 1. */
+    private fun queueTwoPairs(svc: Stage3Service): Stage3Run {
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.knnPairs =
+            listOf(
+                ScoredPair(ClaimPair.of("c1", "c2"), 0.80),
+                ScoredPair(ClaimPair.of("c1", "c3"), 0.70),
+            )
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_QUEUED])
+        return run
+    }
+
+    @Test
+    fun `judge consumes the queue in rank-order chunks and writes repeats edges`() {
+        seedSubject(claimCount = 3)
+        judgeSampler.verdicts = mapOf(ClaimPair.of("c1", "c2") to JudgeRelation.REPEATS)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+
+        run = svc.poll(run.id).valueOrNull()!! // judges rank 0 only (judge-pairs-per-poll = 1)
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_JUDGED])
+        assertEquals("JUDGED", graph.judgeQueue[ClaimPair.of("c1", "c2")]!!.status)
+        assertEquals("QUEUED", graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.status)
+
+        run = svc.poll(run.id).valueOrNull()!! // judges rank 1
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_JUDGED])
+
+        run = svc.poll(run.id).valueOrNull()!! // queue empty → ASSEMBLING
+        assertEquals(Stage3RunStatus.ASSEMBLING, run.status)
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_JUDGED])
+        assertEquals(0L, run.counters[Stage3Counters.JUDGE_TIES])
+
+        // The REPEATS majority wrote a claim-level edge; the NEUTRAL verdict wrote none.
+        assertEquals(listOf(ClaimPair.of("c1", "c2")), graph.judgeRepeats)
+        val neutral = graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.judged!!
+        assertEquals(JudgeRelation.NEUTRAL, neutral.bare.relation)
+        assertNull(neutral.ctx)
+    }
+
+    @Test
+    fun `a judge write failure fails the run verbatim and retry completes via the cache`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+        run = svc.poll(run.id).valueOrNull()!! // rank 0 judged fine
+        val callsBeforeFailure = judgeSampler.calls
+
+        graph.failJudgeWrite = true
+        run = svc.poll(run.id).valueOrNull()!! // rank 1 sampled, write blows up
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertEquals(Stage3RunStatus.JUDGING, run.failedPhase)
+        assertTrue(run.error!!.contains("judge tx aborted"))
+        assertTrue(judgeSampler.calls > callsBeforeFailure)
+
+        graph.failJudgeWrite = false
+        run = svc.retry(run.id).valueOrNull()!!
+        val callsBeforeRetry = judgeSampler.calls
+        run = svc.poll(run.id).valueOrNull()!! // the failed pair re-runs on cached verdicts
+        assertEquals(judgeSampler.calls, callsBeforeRetry)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.ASSEMBLING, run.status)
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_JUDGED])
+    }
+
+    @Test
+    fun `a rerun over unchanged pairs judges entirely from the cache`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+        run = pollTo(svc, run.id, Stage3RunStatus.AWAITING_REVIEW)
+        assertTrue(judgeSampler.calls > 0)
+
+        runs.store[run.id] = run.copy(status = Stage3RunStatus.PUBLISHED)
+        val next = svc.rerun(run.id, fresh = false, actor = "op").valueOrNull()!!
+        val callsBefore = judgeSampler.calls
+        val rerun = pollTo(svc, next.id, Stage3RunStatus.AWAITING_REVIEW)
+        assertEquals(callsBefore, judgeSampler.calls) // zero sampling — every verdict cached
+        assertEquals(2L, rerun.counters[Stage3Counters.JUDGE_CACHE_HITS])
+        assertEquals(0L, rerun.counters[Stage3Counters.JUDGE_SAMPLER_CALLS] ?: 0L)
+    }
+
+    @Test
+    fun `a fresh rerun drops the cache and judges everything again`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+        run = pollTo(svc, run.id, Stage3RunStatus.AWAITING_REVIEW)
+        assertTrue(judgeEdges.store.isNotEmpty())
+
+        runs.store[run.id] = run.copy(status = Stage3RunStatus.PUBLISHED)
+        val next = svc.rerun(run.id, fresh = true, actor = "op").valueOrNull()!!
+        val callsBefore = judgeSampler.calls
+        val rerun = pollTo(svc, next.id, Stage3RunStatus.AWAITING_REVIEW)
+        assertTrue(judgeSampler.calls > callsBefore) // cache was dropped at SYNC → re-judged
+        assertEquals(0L, rerun.counters[Stage3Counters.JUDGE_CACHE_HITS] ?: 0L)
+    }
+
+    @Test
+    fun `withContext queue entries reach the graph with both verdict variants`() {
+        seedSubject(claimCount = 2)
+        reviews.store["c2"] =
+            ClaimReview(
+                claimId = "c2",
+                subjectId = subjectId,
+                decision = ReviewDecision.SIDECARED,
+                justification = "I led the backend workstream",
+                corroboratingClaimIds = listOf("c1"),
+                reviewedBy = "op",
+                reviewedAt = Instant.now(),
+            )
+        judgeSampler.verdicts = mapOf(ClaimPair.of("c1", "c2") to JudgeRelation.CONTRADICTS)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.pairSims = mapOf(ClaimPair.of("c1", "c2") to 0.5)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+
+        run = svc.poll(run.id).valueOrNull()!!
+        val judged = graph.judgeQueue[ClaimPair.of("c1", "c2")]!!.judged!!
+        assertEquals(JudgeRelation.CONTRADICTS, judged.bare.relation)
+        assertNotNull(judged.ctx)
+        assertTrue(judged.ctx!!.explanationRelevant)
+        assertEquals("test:1:judgehash", judged.promptStamp)
+        // Both variants cached under distinct keys.
+        assertEquals(setOf(false, true), judgeEdges.store.values.map { it.withContext }.toSet())
+    }
+
+    // ---- ASSEMBLE (VA-16) --------------------------------------------------------------
+
+    @Test
+    fun `assemble clusters judged repeats into facts and advances to SCORING`() {
+        seedSubject(claimCount = 3)
+        judgeSampler.verdicts = mapOf(ClaimPair.of("c1", "c2") to JudgeRelation.REPEATS)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+        run = pollTo(svc, run.id, Stage3RunStatus.ASSEMBLING)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.SCORING, run.status)
+
+        // The judged REPEATS merged c1+c2; c3 stays a singleton. Undated SKILL claims → TIMELESS.
+        assertEquals(2L, run.counters[Stage3Counters.FACTS])
+        assertEquals(2L, run.counters[Stage3Counters.FACTS_TIMELESS])
+        assertEquals(0L, run.counters[Stage3Counters.FACT_CONTRADICTS])
+        val facts = graph.assembleOutcomes.single().facts
+        val cluster = facts.first { it.factId == "fact:c1" }
+        assertEquals(listOf("c1", "c2"), cluster.memberClaimIds)
+        assertEquals(listOf("c3"), facts.first { it.factId == "fact:c3" }.memberClaimIds)
+    }
+
+    // ---- SCORE (VA-17) -----------------------------------------------------------------
+
+    @Test
+    fun `score writes provisional vectors and parks the run at the review gate`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        run = pollTo(svc, run.id, Stage3RunStatus.SCORING)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.AWAITING_REVIEW, run.status)
+        assertEquals(3L, run.counters[Stage3Counters.CLAIMS_SCORED])
+        assertEquals(0L, run.counters[Stage3Counters.CONTRADICTION_QUEUE])
+        assertEquals(0L, run.counters[Stage3Counters.SCORE_I2_CLAMPED])
+        assertEquals(true, run.converged)
+        assertNotNull(run.iterations)
+
+        val outcome = graph.scoreOutcomes.single()
+        // Three SELF singletons: belief = the LOW prior, tier movement LOW → LOW.
+        assertEquals(3, outcome.claims.size)
+        outcome.claims.forEach {
+            assertEquals(0.35, it.score, 0.005)
+            assertEquals("LOW", it.tier)
+            assertTrue(it.score >= it.scoreBare)
+        }
+        // The subject attestor's trust update landed (shrinkage toward the 0.5 prior).
+        assertTrue(outcome.trustUpdates.isNotEmpty())
+        // The park holds: further polls are no-ops (the Q6 gate).
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.AWAITING_REVIEW, run.status)
+    }
+
+    @Test
+    fun `an assemble write failure fails the run verbatim and retry resumes the phase`() {
+        seedSubject(claimCount = 2)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        run = pollTo(svc, run.id, Stage3RunStatus.ASSEMBLING)
+        graph.failAssembleWrite = true
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertEquals(Stage3RunStatus.ASSEMBLING, run.failedPhase)
+        assertTrue(run.error!!.contains("assemble tx aborted"))
+        graph.failAssembleWrite = false
+        run = svc.retry(run.id).valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.SCORING, run.status)
+    }
+
+    // ---- AWAITING_REVIEW queue actions + publish (VA-18) --------------------------------
+
+    /**
+     * A corpus whose run parks with ONE proposed contradiction: two dated 2019 EPISODEs, judged
+     * CONTRADICTS at 0.9 — same-year events overlap at episode granularity, so the §11.7 gate keeps
+     * the edge. The contradictor is an ENDORSEMENT (MEDIUM, believed) so the penalty on c1 actually
+     * bites — rel(B) of a LOW self-claim would be zero.
+     */
+    private fun contestedCorpus(svc: Stage3Service): Stage3Run {
+        seedSubject(claimCount = 2)
+        claims.store["c1"] =
+            claims.store["c1"]!!.copy(
+                claimType = ClaimType.EPISODE,
+                claimedDate = LocalDate.of(2019, 6, 1),
+            )
+        claims.store["c2"] =
+            claims.store["c2"]!!.copy(
+                claimType = ClaimType.EPISODE,
+                claimedDate = LocalDate.of(2019, 8, 1),
+                sourceClass = SourceClass.ENDORSEMENT,
+                relationship = Relationship.PEER,
+                authenticityTier = AuthenticityTier.MEDIUM,
+            )
+        judgeSampler.verdicts = mapOf(ClaimPair.of("c1", "c2") to JudgeRelation.CONTRADICTS)
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.pairSims = mapOf(ClaimPair.of("c1", "c2") to 0.7)
+        run = pollTo(svc, run.id, Stage3RunStatus.AWAITING_REVIEW)
+        assertEquals(1L, run.counters[Stage3Counters.CONTRADICTION_QUEUE])
+        return run
+    }
+
+    @Test
+    fun `publish refuses over a non-empty queue and skipReview publishes with the audit flag`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        assertEquals(1, svc.contradictions(subjectId).size)
+
+        val refused = svc.publish(run.id, skipReview = false, actor = "op").errorOrNull()
+        assertTrue(refused is DomainError.Conflict)
+        assertTrue(refused!!.message.contains("skipReview"))
+
+        val published = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHED, published.status)
+        assertTrue(published.reviewSkipped)
+        assertEquals("op", published.publishedBy)
+        assertNotNull(published.publishedAt)
+        assertEquals(2L, published.counters[Stage3Counters.CLAIMS_PUBLISHED])
+
+        // The §11.11 ledger round-trip: vector fields land on the Firestore claims.
+        val ledger = claims.store["c1"]!!
+        assertEquals(published.id, ledger.scoreRunId)
+        assertNotNull(ledger.authenticityScore)
+        assertNotNull(ledger.scoredAt)
+        assertEquals(AuthenticityTier.LOW, ledger.authenticityTier)
+        assertTrue(ledger.authenticitySignals!!.containsKey("scoreBare"))
+    }
+
+    @Test
+    fun `confirm keeps the penalty, empties the queue, and publish then proceeds`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        val edgeId = graph.contradictionEdges.keys.single()
+
+        val updated = svc.confirmContradiction(edgeId).valueOrNull()!!
+        assertEquals(0L, updated.counters[Stage3Counters.CONTRADICTION_QUEUE])
+        assertEquals("CONFIRMED", graph.contradictionEdges[edgeId]!!.reviewStatus)
+        // Confirm ratifies — no re-score happens, the penalty stands.
+        assertEquals(1, graph.scoreOutcomes.size)
+
+        // A second confirm is a conflict (not PROPOSED anymore).
+        assertTrue(svc.confirmContradiction(edgeId).errorOrNull() is DomainError.Conflict)
+
+        val published = svc.publish(run.id, skipReview = false, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHED, published.status)
+        assertFalse(published.reviewSkipped)
+    }
+
+    @Test
+    fun `dismiss deletes the edge, overrides the cached verdicts and re-scores in-request`() {
+        val svc = service()
+        contestedCorpus(svc)
+        val edgeId = graph.contradictionEdges.keys.single()
+        val beliefBefore =
+            graph.scoreOutcomes.last().facts.first { it.factId == "fact:c1" }.beliefBare
+
+        val updated = svc.dismissContradiction(edgeId).valueOrNull()!!
+        assertEquals(0L, updated.counters[Stage3Counters.CONTRADICTION_QUEUE])
+        assertTrue(graph.contradictionEdges.isEmpty())
+        // Every cached verdict variant behind the pair is permanently overridden.
+        assertTrue(judgeEdges.store.values.all { it.overridden })
+        // The incremental re-score ran and the penalty is gone: belief returns to the prior.
+        assertEquals(2, graph.scoreOutcomes.size)
+        val rescored = graph.scoreOutcomes.last().facts.first { it.factId == "fact:c1" }
+        assertTrue(rescored.beliefBare > beliefBefore)
+        assertEquals(rescored.belief, rescored.beliefBare, 1e-9)
+
+        // Dismissing again: the edge is gone.
+        assertTrue(svc.dismissContradiction(edgeId).errorOrNull() is DomainError.NotFound)
+    }
+
+    @Test
+    fun `rejudge needs a sidecar, then re-judges with context and marks the edge explained`() {
+        val svc = service()
+        contestedCorpus(svc)
+        val edgeId = graph.contradictionEdges.keys.single()
+
+        // No sidecar authored yet — the hook refuses.
+        val refused = svc.rejudgeContradiction(edgeId).errorOrNull()
+        assertTrue(refused is DomainError.Conflict)
+        assertTrue(refused!!.message.contains("sidecar"))
+
+        // The operator authors the §12.6 justification on c1, then calls the hook.
+        reviews.store["c1"] =
+            ClaimReview(
+                claimId = "c1",
+                subjectId = subjectId,
+                decision = ReviewDecision.SIDECARED,
+                justification = "I led the backend workstream; Vikram was program lead",
+                reviewedBy = "op",
+                reviewedAt = Instant.now(),
+            )
+        val callsBefore = judgeSampler.calls
+        val updated = svc.rejudgeContradiction(edgeId).valueOrNull()!!
+        assertTrue(judgeSampler.calls > callsBefore) // the ctx ensemble actually ran
+        val edge = graph.contradictionEdges[edgeId]!!
+        assertTrue(edge.withContext)
+        assertTrue(edge.explained) // scripted relevance affirms → leaves the queue
+        assertEquals("CONTRADICTS", edge.ctxRelation)
+        assertEquals(0L, updated.counters[Stage3Counters.CONTRADICTION_QUEUE])
+        // Explained pass now μ-mitigates: published score recovers above bare.
+        val rescored = graph.scoreOutcomes.last().facts.first { it.factId == "fact:c1" }
+        assertTrue(rescored.belief > rescored.beliefBare)
+    }
+
+    @Test
+    fun `a crash mid-publishing resumes via retry and poll without duplicate writes`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        claims.failPublish = true
+        var failed = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, failed.status)
+        assertEquals(Stage3RunStatus.PUBLISHING, failed.failedPhase)
+        assertTrue(failed.error!!.contains("ledger batch write failed"))
+        assertTrue(claims.published.isEmpty())
+
+        claims.failPublish = false
+        var resumed = svc.retry(failed.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHING, resumed.status)
+        resumed = svc.poll(resumed.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHED, resumed.status)
+        assertEquals(2, claims.published.size) // both claims written exactly once
+        assertEquals(setOf("c1", "c2"), claims.published.map { it.claimId }.toSet())
+    }
+
+    @Test
+    fun `admin reopen returns to the gate and a second publish overwrites the ledger stamp`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        val first = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        val firstPublishedAt = first.publishedAt!!
+
+        // Reopen requires PUBLISHED; a pending run cannot reopen.
+        assertTrue(svc.reopen("run-does-not-exist").errorOrNull() is DomainError.NotFound)
+        val reopened = svc.reopen(first.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.AWAITING_REVIEW, reopened.status)
+        assertNull(reopened.finishedAt)
+        // The ledger keeps the last-published values while reopened (§15 #12).
+        assertEquals(first.id, claims.store["c1"]!!.scoreRunId)
+
+        val second = svc.publish(reopened.id, skipReview = true, actor = "op2").valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHED, second.status)
+        assertEquals("op2", second.publishedBy)
+        assertTrue(second.publishedAt!! >= firstPublishedAt)
+        assertEquals(4, claims.published.size) // two publishes × two claims
     }
 
     // ---- rerun -------------------------------------------------------------------

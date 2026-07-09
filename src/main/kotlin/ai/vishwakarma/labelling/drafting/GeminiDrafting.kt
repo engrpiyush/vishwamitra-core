@@ -29,16 +29,25 @@ class GeminiDrafting(
     override fun available(): Boolean =
         providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false
 
+    /** The configured model id (the `gemini` provider row) — Stage 3 stamps it on verdicts. */
+    fun modelId(): String? = providers.get(id)?.model?.takeIf { it.isNotBlank() }
+
     /**
      * One-shot text completion against the configured gemini provider row (Vertex, ADC).
      * [maxTokens] caps the response via generationConfig; null keeps the model default. Gemini 2.5
      * models spend "thinking" tokens from the same budget — an unbounded (dynamic) thinker can
      * consume nearly all of it before emitting a single output character (observed live 2026-07-04:
      * JSON truncated mid-first object). [thinkingBudget] caps that spend so output space is
-     * guaranteed.
+     * guaranteed. [temperature] overrides the model default — the Stage 3 judge ensemble samples at
+     * `ensemble-temperature` for vote diversity (LLD §11.6); null keeps the default.
      */
-    fun generate(prompt: String, maxTokens: Int? = null, thinkingBudget: Int? = null): String =
-        generateContent(listOf(mapOf("text" to prompt)), maxTokens, thinkingBudget)
+    fun generate(
+        prompt: String,
+        maxTokens: Int? = null,
+        thinkingBudget: Int? = null,
+        temperature: Double? = null,
+    ): String =
+        generateContent(listOf(mapOf("text" to prompt)), maxTokens, thinkingBudget, temperature)
 
     /**
      * Multimodal one-shot: [bytes] ride inline (base64 `inlineData` part, placed before the text
@@ -72,6 +81,7 @@ class GeminiDrafting(
         parts: List<Map<String, Any>>,
         maxTokens: Int?,
         thinkingBudget: Int?,
+        temperature: Double? = null,
     ): String {
         val cfg = providers.get(id) ?: error("gemini not configured")
         val model = cfg.model.ifBlank { error("gemini model not set") }
@@ -94,6 +104,7 @@ class GeminiDrafting(
             val generationConfig = buildMap {
                 maxTokens?.let { put("maxOutputTokens", it) }
                 thinkingBudget?.let { put("thinkingConfig", mapOf("thinkingBudget" to it)) }
+                temperature?.let { put("temperature", it) }
             }
             if (generationConfig.isNotEmpty()) put("generationConfig", generationConfig)
         }

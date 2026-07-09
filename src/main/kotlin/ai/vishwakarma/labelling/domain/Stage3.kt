@@ -64,6 +64,34 @@ object Stage3Counters {
     const val PAIRS_AUTO_RESOLVED = "pairsAutoResolved"
     const val PAIRS_DISCARDED = "pairsDiscarded"
     const val PAIRS_QUEUED = "pairsQueued"
+    /** JUDGE progress: queue entries flipped to JUDGED (authoritative graph count, VA-15). */
+    const val PAIRS_JUDGED = "pairsJudged"
+    /** Verdict variants served from the `stage3_edges` cache without any sampling. */
+    const val JUDGE_CACHE_HITS = "judgeCacheHits"
+    /** Ensemble sampler invocations (k per missed sub-batch per variant; LLM calls when real). */
+    const val JUDGE_SAMPLER_CALLS = "judgeSamplerCalls"
+    /** Verdict variants whose majority relation was tied — LLD §15 #4's tie-rate numerator. */
+    const val JUDGE_TIES = "judgeTies"
+    /** ASSEMBLE (§11.7): the fact count + its kind split. */
+    const val FACTS = "facts"
+    const val FACTS_STATE = "factsState"
+    const val FACTS_EVENT = "factsEvent"
+    const val FACTS_TIMELESS = "factsTimeless"
+    /** Lifted fact-level edges… */
+    const val FACT_CORROBORATES = "factCorroborates"
+    const val FACT_CONTRADICTS = "factContradicts"
+    /** …CONTRADICTS verdicts the temporal gate dropped (sequences, not conflicts)… */
+    const val CONTRADICTIONS_GATED = "contradictionsGated"
+    /** …and the timeline edges laid between same-slot STATE facts. */
+    const val SUCCEEDS_EDGES = "succeedsEdges"
+    /** SCORE (§11.8): claims carrying a provisional vector after the fixed point. */
+    const val CLAIMS_SCORED = "claimsScored"
+    /** The §11.10 queue size at AWAITING_REVIEW (PROPOSED ∧ unexplained ∧ ≥ floor). */
+    const val CONTRADICTION_QUEUE = "contradictionQueue"
+    /** Claims whose explained score was lifted to scoreBare (I2 enforcement; 0 = healthy). */
+    const val SCORE_I2_CLAMPED = "scoreI2Clamped"
+    /** PUBLISHING (§11.11): claim vectors written to the Firestore ledger. */
+    const val CLAIMS_PUBLISHED = "claimsPublished"
 }
 
 /**

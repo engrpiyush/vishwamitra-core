@@ -12,6 +12,36 @@
         edits apply to the next run (or a job Re-run) with no deploy. Types without a saved override show the code default;
         Save stores your edit as an override, Reset deletes it and returns to the code default.</p>
 
+    <section th:if="${stage3Rows != null and !stage3Rows.isEmpty()}">
+        <h2>STAGE 3</h2>
+        <p class="muted">The Stage 3 graph prompts: STAGE3_ENTITY is the typed-mention extraction block, STAGE3_JUDGE the
+            pairwise-relation rubric. Their version+hash stamp keys what re-resolves / re-judges — saving an edit re-runs
+            exactly the affected work on the next run (judge verdicts re-judge because the cache keys on the prompt).</p>
+        <div th:each="r : ${stage3Rows}" class="provider-card">
+            <form th:id="'reset-' + ${r.key}" method="post"
+                  th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                  data-confirm="This deletes the saved override; the code default applies from the next run."
+                  data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger></form>
+            <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                <div class="form-row">
+                    <span class="provider-name" th:text="${r.key}">STAGE3_JUDGE</span>
+                    <span class="muted" th:if="${r.prompt == null}">code default</span>
+                    <span class="muted" th:if="${r.prompt != null}"
+                          th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                </div>
+                <div class="prompt-editor">
+                    <textarea name="instructions" rows="5"
+                              th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                    <div class="prompt-actions">
+                        <button type="submit">Save</button>
+                        <button type="submit" class="btn--danger"
+                                th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </section>
+
     <section th:each="group : ${groups}">
         <h2 th:text="${group.key}">SELF</h2>
         <div th:each="r : ${group.value}" class="provider-card">

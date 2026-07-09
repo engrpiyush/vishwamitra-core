@@ -1,23 +1,35 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.persistence.AssetRepository
+import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
+import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
+import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.stage3.ClaimJudgeService
 import ai.vishwakarma.labelling.stage3.ClaimMatcher
+import ai.vishwakarma.labelling.stage3.ContradictionEdgeRef
+import ai.vishwakarma.labelling.stage3.ContradictionView
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
 import ai.vishwakarma.labelling.stage3.EntityEmbedding
 import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
 import ai.vishwakarma.labelling.stage3.EntityResolver
+import ai.vishwakarma.labelling.stage3.ExplanationRow
+import ai.vishwakarma.labelling.stage3.FactAssembler
+import ai.vishwakarma.labelling.stage3.ScoreOutcome
+import ai.vishwakarma.labelling.stage3.Scorer
+import ai.vishwakarma.labelling.stage3.ScorerParams
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import ai.vishwakarma.labelling.stage3.buildEvidenceProjection
 import ai.vishwakarma.labelling.stage3.embeddingText
@@ -30,11 +42,10 @@ import org.springframework.stereotype.Service
 
 /**
  * Stage 3 (reviewed claims → authenticity graph/scores) — the run lifecycle chassis (LLD §9.6–9.7)
- * plus the phases built so far: SYNC (§11.2), RESOLVE_ENTITIES (§11.3), EMBED (§11.4) and MATCH
- * (§11.5). JUDGE (VA-15), ASSEMBLE (VA-16), SCORE (VA-17) and the publish gate (VA-18) plug into
- * the [poll] dispatch as they land; until then their slots log and advance so the state machine is
- * walkable end-to-end (the VA-9 contract) without pretending any judgment happened — counters stay
- * empty and publish does not exist yet, so nothing can reach the ledger.
+ * plus the complete pipeline: SYNC (§11.2), RESOLVE_ENTITIES (§11.3), EMBED (§11.4), MATCH (§11.5),
+ * JUDGE (§11.6), ASSEMBLE (§11.7) and SCORE (§11.8), which parks the run at the Q6 AWAITING_REVIEW
+ * gate; the §11.10 queue actions (confirm / dismiss / explain-re-judge) act there, and [publish] —
+ * the only door to the Firestore ledger — moves it through PUBLISHING to PUBLISHED.
  *
  * Conventions carried over from Stage 2: no scheduler — the run advances only inside poll requests,
  * one bounded step each; failures are terminal FAILED states carrying the verbatim provider error
@@ -55,6 +66,9 @@ class Stage3Service(
     private val embeddings: EmbeddingService,
     private val entityExtractor: EntityMentionExtractor,
     private val entityResolver: EntityResolver,
+    private val judge: ClaimJudgeService,
+    private val judgeCache: Stage3EdgeRepository,
+    private val claimLedger: ClaimRepository,
     private val props: AppProperties,
 ) {
 
@@ -125,13 +139,11 @@ class Stage3Service(
             Stage3RunStatus.RESOLVING_ENTITIES -> runResolveEntitiesChunk(run).right()
             Stage3RunStatus.EMBEDDING -> runEmbedChunk(run).right()
             Stage3RunStatus.MATCHING -> runMatchTick(run).right()
-            Stage3RunStatus.JUDGING ->
-                stubAdvance(run, Stage3RunStatus.ASSEMBLING, "JUDGE", "VA-15").right()
-            Stage3RunStatus.ASSEMBLING ->
-                stubAdvance(run, Stage3RunStatus.SCORING, "ASSEMBLE", "VA-16").right()
-            Stage3RunStatus.SCORING ->
-                stubAdvance(run, Stage3RunStatus.AWAITING_REVIEW, "SCORE", "VA-17").right()
-            // PUBLISHING is only enterable via the VA-18 publish action; nothing to do here.
+            Stage3RunStatus.JUDGING -> runJudgeTick(run).right()
+            Stage3RunStatus.ASSEMBLING -> runAssembleTick(run).right()
+            Stage3RunStatus.SCORING -> runScoreTick(run).right()
+            // Entered via the publish action; a poll here resumes a crashed ledger write.
+            Stage3RunStatus.PUBLISHING -> runPublishTick(run).right()
             else -> run.right()
         }
     }
@@ -158,8 +170,8 @@ class Stage3Service(
      * Re-run a PUBLISHED subject: a **new** PENDING run (fresh params snapshot) rather than
      * mutating the published record — ledger claims stamp `scoreRunId`, and that id must keep
      * resolving to the exact params that produced the published scores (§9.6 reproducibility).
-     * [fresh] additionally wipes the subject's evidence layer at SYNC (and will drop the judge
-     * cache once VA-15 lands).
+     * [fresh] additionally wipes the subject's evidence layer AND drops its cached judge verdicts
+     * at SYNC — the full re-judge posture; a plain re-run keeps the cache and is LLM-free.
      */
     fun rerun(runId: String, fresh: Boolean, actor: String?): Either<DomainError, Stage3Run> {
         val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
@@ -235,7 +247,14 @@ class Stage3Service(
         return inPhase(run, "SYNC") {
                 if (run.fresh) {
                     val wiped = graph.wipeEvidenceLayer(run.subjectId)
-                    log.info("Run {}: fresh re-run wiped {} evidence node(s)", run.id, wiped)
+                    val dropped = judgeCache.deleteBySubject(run.subjectId)
+                    log.info(
+                        "Run {}: fresh re-run wiped {} evidence node(s), dropped {} cached " +
+                            "judge verdict(s)",
+                        run.id,
+                        wiped,
+                        dropped,
+                    )
                 }
                 graph.mergeEvidence(projection)
                 if (projection.citationsDropped > 0)
@@ -478,16 +497,399 @@ class Stage3Service(
         )
     }
 
-    /** A not-yet-built phase slot: log, advance, keep counters honest (empty) — see class KDoc. */
-    private fun stubAdvance(
-        run: Stage3Run,
-        to: Stage3RunStatus,
-        phase: String,
-        ticket: String,
-    ): Stage3Run {
-        log.info("Run {}: {} not implemented yet ({}) — advancing to {}", run.id, phase, ticket, to)
-        return advance(run, to, emptyMap())
+    /**
+     * JUDGE (LLD §11.6): one bounded chunk per poll — up to `judge-pairs-per-poll` QUEUED pairs by
+     * ascending rank, verdict-cache-first (a re-run over unchanged pairs samples nothing), the
+     * ensemble only for misses. The `JUDGE_QUEUED.status` flip is the phase cursor (`judgeCursor`
+     * as-built): a killed poll re-reads exactly the unfinished pairs, and their cache hits make the
+     * retry free. When nothing remains QUEUED the phase advances with the authoritative JUDGED
+     * count.
+     */
+    private fun runJudgeTick(run: Stage3Run): Stage3Run =
+        inPhase(run, "JUDGE") {
+            val batch = graph.judgeQueueBatch(run.subjectId, props.stage3.judgePairsPerPoll)
+            if (batch.isEmpty()) {
+                advance(
+                    run,
+                    Stage3RunStatus.ASSEMBLING,
+                    mapOf(
+                        Stage3Counters.PAIRS_JUDGED to
+                            graph.countJudgeQueue(run.subjectId, "JUDGED")
+                    ),
+                )
+            } else {
+                val outcome = judge.judgePairs(run.subjectId, batch)
+                graph.applyJudgeOutcome(run.subjectId, outcome.judged)
+                val counters = run.counters
+                val progressed =
+                    run.copy(
+                        counters =
+                            counters +
+                                mapOf(
+                                    Stage3Counters.PAIRS_JUDGED to
+                                        graph.countJudgeQueue(run.subjectId, "JUDGED"),
+                                    Stage3Counters.JUDGE_CACHE_HITS to
+                                        (counters[Stage3Counters.JUDGE_CACHE_HITS] ?: 0L) +
+                                            outcome.cacheHits,
+                                    Stage3Counters.JUDGE_SAMPLER_CALLS to
+                                        (counters[Stage3Counters.JUDGE_SAMPLER_CALLS] ?: 0L) +
+                                            outcome.samplerCalls,
+                                    Stage3Counters.JUDGE_TIES to
+                                        (counters[Stage3Counters.JUDGE_TIES] ?: 0L) + outcome.ties,
+                                ),
+                        phaseSince = Instant.now(),
+                    )
+                runs.save(progressed)
+                progressed
+            }
+        }
+
+    /**
+     * ASSEMBLE (LLD §11.7): one idempotent tick — union-find clustering over REPEATS, exemplar +
+     * kind + interval inference, SUCCEEDS sequencing and the temporally-gated edge lift, persisted
+     * wholesale (the subject's `:Fact` layer is rebuilt). In-app work is trivial at the §16 sizing,
+     * so the phase never chunks.
+     */
+    private fun runAssembleTick(run: Stage3Run): Stage3Run =
+        inPhase(run, "ASSEMBLE") {
+            val outcome =
+                FactAssembler.assemble(
+                    graph.claimsForAssembly(run.subjectId),
+                    graph.repeatsPairs(run.subjectId),
+                    graph.judgedPairRecords(run.subjectId),
+                    props.stage3,
+                )
+            graph.applyAssembleOutcome(run.subjectId, outcome)
+            log.info(
+                "Run {}: ASSEMBLE {} fact(s) ({} STATE / {} EVENT / {} TIMELESS), {} corroborates, " +
+                    "{} contradicts (+{} gated), {} succeeds",
+                run.id,
+                outcome.counters.facts,
+                outcome.counters.factsState,
+                outcome.counters.factsEvent,
+                outcome.counters.factsTimeless,
+                outcome.counters.factCorroborates,
+                outcome.counters.factContradicts,
+                outcome.counters.contradictionsGated,
+                outcome.counters.succeedsEdges,
+            )
+            advance(
+                run,
+                Stage3RunStatus.SCORING,
+                mapOf(
+                    Stage3Counters.FACTS to outcome.counters.facts,
+                    Stage3Counters.FACTS_STATE to outcome.counters.factsState,
+                    Stage3Counters.FACTS_EVENT to outcome.counters.factsEvent,
+                    Stage3Counters.FACTS_TIMELESS to outcome.counters.factsTimeless,
+                    Stage3Counters.FACT_CORROBORATES to outcome.counters.factCorroborates,
+                    Stage3Counters.FACT_CONTRADICTS to outcome.counters.factContradicts,
+                    Stage3Counters.CONTRADICTIONS_GATED to outcome.counters.contradictionsGated,
+                    Stage3Counters.SUCCEEDS_EDGES to outcome.counters.succeedsEdges,
+                ),
+            )
+        }
+
+    /**
+     * SCORE (LLD §11.8): one in-app tick — snapshot the assembled graph, run the pure dual-pass
+     * fixed point, persist provisional scores graph-side, park at the Q6 gate. The ledger stays
+     * untouched (§11.10); publish is VA-18's action.
+     */
+    private fun runScoreTick(run: Stage3Run): Stage3Run =
+        inPhase(run, "SCORE") {
+            val outcome = rescore(run.subjectId)
+            val queue =
+                graph.countContradictionQueue(run.subjectId, props.stage3.judgeConfidenceFloor)
+            if (outcome.i2Clamped > 0)
+                log.warn(
+                    "Run {}: {} claim(s) violated score ≥ scoreBare and were lifted (I2 — " +
+                        "investigate the ctx verdicts)",
+                    run.id,
+                    outcome.i2Clamped,
+                )
+            log.info(
+                "Run {}: SCORE {} claim(s) over {} fact(s) — converged={} in {} iteration(s), " +
+                    "queue={}",
+                run.id,
+                outcome.claims.size,
+                outcome.facts.size,
+                outcome.converged,
+                outcome.iterations,
+                queue,
+            )
+            advance(
+                run.copy(converged = outcome.converged, iterations = outcome.iterations),
+                Stage3RunStatus.AWAITING_REVIEW,
+                mapOf(
+                    Stage3Counters.CLAIMS_SCORED to outcome.claims.size.toLong(),
+                    Stage3Counters.CONTRADICTION_QUEUE to queue,
+                    Stage3Counters.SCORE_I2_CLAMPED to outcome.i2Clamped,
+                ),
+            )
+        }
+
+    /**
+     * The §11.8 scoring pass over the subject's current graph, shared by the SCORING tick and the
+     * §11.10 queue actions (**incremental re-score**: edges changed ⇒ re-run steps 1–5 only — no
+     * matching, no LLM, milliseconds). Persists provisional scores + trust and returns the outcome;
+     * `asOf` is the wall clock (recency decays with real time between runs — scores stay
+     * attributable via the run's paramsSnapshot + scoredAt).
+     */
+    fun rescore(subjectId: String): ScoreOutcome {
+        val outcome =
+            Scorer.score(
+                graph.scoreSnapshot(subjectId),
+                ScorerParams(
+                    stage3 = props.stage3,
+                    favorabilityThreshold = props.stage2.favorabilityThreshold,
+                    asOf = java.time.LocalDate.now(),
+                ),
+            )
+        graph.applyScoreOutcome(subjectId, outcome)
+        return outcome
     }
+
+    // ---- AWAITING_REVIEW queue actions + gated publish (LLD §11.10–§11.11) ------------
+
+    /** The §11.10 queue read: PROPOSED, unexplained contradictions at/above the floor. */
+    fun contradictions(subjectId: String): List<ContradictionView> =
+        graph.contradictionQueue(subjectId, props.stage3.judgeConfidenceFloor)
+
+    /** Confirm: the penalty stands — CONFIRMED leaves the queue, keeps its effect. */
+    fun confirmContradiction(edgeId: String): Either<DomainError, Stage3Run> =
+        edgeAction(edgeId) { edge, run ->
+            if (!graph.confirmContradiction(edge.subjectId, edgeId))
+                DomainError.Conflict("Contradiction is not PROPOSED anymore").left()
+            else refreshQueueCounter(run).right()
+        }
+
+    /**
+     * Dismiss: the judge was wrong — delete the edge, permanently override the cached verdicts
+     * behind it (they may never hit again), and incrementally re-score (steps 1–5, no LLM).
+     */
+    fun dismissContradiction(edgeId: String): Either<DomainError, Stage3Run> =
+        edgeAction(edgeId) { edge, run ->
+            if (!graph.deleteContradiction(edge.subjectId, edgeId))
+                return@edgeAction DomainError.Conflict("Contradiction is already gone").left()
+            edge.pairs().forEach { judgeCache.markOverridden(it.a, it.b) }
+            rescore(edge.subjectId)
+            log.info(
+                "Run {}: dismissed contradiction {} ({} cached verdict pair(s) overridden)",
+                run.id,
+                edgeId,
+                edge.pairs().size,
+            )
+            refreshQueueCounter(run).right()
+        }
+
+    /**
+     * The explain hook (§11.10 "Explain"): after the operator authors/edits the §12.6 sidecar on an
+     * involved claim, this re-projects the explanation into the graph, re-judges the edge's
+     * contributing pairs **with context** (one ensemble batch — the changed sidecar text misses the
+     * ctx cache by hash), stamps the fresh ctx verdict + relevance onto the edge, and incrementally
+     * re-scores. An affirmed-relevant or neutralized edge leaves the queue as `explained`.
+     */
+    fun rejudgeContradiction(edgeId: String): Either<DomainError, Stage3Run> =
+        edgeAction(edgeId) { edge, run ->
+            val pairs = edge.pairs()
+            if (pairs.isEmpty())
+                return@edgeAction DomainError.Invalid(
+                        "Contradiction $edgeId carries no contributing pairs"
+                    )
+                    .left()
+            val sidecars =
+                pairs
+                    .flatMap { listOf(it.a, it.b) }
+                    .distinct()
+                    .mapNotNull { claimId ->
+                        claimReviews
+                            .findByClaim(claimId)
+                            ?.takeIf {
+                                it.decision == ReviewDecision.SIDECARED &&
+                                    !it.justification.isNullOrBlank()
+                            }
+                            ?.let { review ->
+                                ExplanationRow(
+                                    explanationId = claimId,
+                                    claimId = claimId,
+                                    text = review.justification!!.trim(),
+                                    author = review.reviewedBy,
+                                    createdAt = review.reviewedAt?.toString(),
+                                    cites = emptyList(),
+                                )
+                            }
+                    }
+            graph.upsertExplanations(edge.subjectId, sidecars)
+            val hydrated = graph.hydratePairs(edge.subjectId, pairs).filter { it.withContext }
+            if (hydrated.isEmpty())
+                return@edgeAction DomainError.Conflict(
+                        "No sidecar on either claim of this contradiction — author the " +
+                            "explanation first"
+                    )
+                    .left()
+            val outcome = judge.judgePairs(edge.subjectId, hydrated)
+            graph.applyJudgeOutcome(edge.subjectId, outcome.judged)
+            val best =
+                outcome.judged
+                    .filter { it.ctx != null }
+                    .maxWithOrNull(
+                        compareBy<ai.vishwakarma.labelling.stage3.JudgedPair> { it.bare.confidence }
+                            .thenBy { it.pair.a }
+                            .thenBy { it.pair.b }
+                    )
+            graph.updateContradictionContext(
+                edge.subjectId,
+                edgeId,
+                ctxRelation = best?.ctx?.relation?.name,
+                ctxConfidence = best?.ctx?.confidence,
+                explained = outcome.judged.any { it.ctx?.explanationRelevant == true },
+            )
+            rescore(edge.subjectId)
+            refreshQueueCounter(run).right()
+        }
+
+    /**
+     * Publish (§11.10, the Q6 gate): from AWAITING_REVIEW only; refused while PROPOSED
+     * contradictions remain unless [skipReview] — which is recorded as the audit cost of skipping.
+     * PUBLISHING then batch-writes the ledger idempotently (a crash resumes via poll/Retry).
+     */
+    fun publish(
+        runId: String,
+        skipReview: Boolean,
+        actor: String?
+    ): Either<DomainError, Stage3Run> {
+        val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
+        if (run.status != Stage3RunStatus.AWAITING_REVIEW)
+            return DomainError.Conflict(
+                    "Only AWAITING_REVIEW runs can publish (run is ${run.status})"
+                )
+                .left()
+        val queue = graph.countContradictionQueue(run.subjectId, props.stage3.judgeConfidenceFloor)
+        if (queue > 0 && props.stage3.publishRequiresReview && !skipReview)
+            return DomainError.Conflict(
+                    "$queue proposed contradiction(s) await review — confirm/dismiss/explain " +
+                        "them, or publish with skipReview=true"
+                )
+                .left()
+        val publishing =
+            run.copy(
+                    status = Stage3RunStatus.PUBLISHING,
+                    publishedBy = actor,
+                    reviewSkipped = skipReview && queue > 0,
+                    counters = run.counters + (Stage3Counters.CONTRADICTION_QUEUE to queue),
+                    phaseSince = Instant.now(),
+                )
+                .also { runs.save(it) }
+        return runPublishTick(publishing).right()
+    }
+
+    /**
+     * PUBLISHING (§11.11): read every provisionally scored claim off the graph and batch-write the
+     * §3.2 vector to the Firestore ledger — idempotent and resumable (per-claim updates are atomic;
+     * a resumed tick re-writes identical values). Then PUBLISHED, terminal.
+     */
+    private fun runPublishTick(run: Stage3Run): Stage3Run =
+        inPhase(run, "PUBLISH") {
+            val rows = graph.scoredClaimsForPublish(run.subjectId)
+            val now = Instant.now()
+            claimLedger.publishAuthenticity(
+                rows.map { row ->
+                    ClaimAuthenticityRow(
+                        claimId = row.claimId,
+                        score = row.score,
+                        signals = parseSignals(row.signalsJson),
+                        tier = tierOf(row.score),
+                        scoreRunId = run.id,
+                        scoredAt = now,
+                    )
+                }
+            )
+            log.info("Run {}: published {} claim vector(s) to the ledger", run.id, rows.size)
+            val published =
+                run.copy(
+                    status = Stage3RunStatus.PUBLISHED,
+                    publishedAt = now,
+                    finishedAt = now,
+                    counters =
+                        run.counters + (Stage3Counters.CLAIMS_PUBLISHED to rows.size.toLong()),
+                    phaseSince = now,
+                )
+            runs.save(published)
+            published
+        }
+
+    /**
+     * ADMIN reopen (§15 #12): PUBLISHED → AWAITING_REVIEW for another review round. The ledger
+     * keeps the last-published values until the next publish overwrites them; the prior publish
+     * audit stays on the run until then too.
+     */
+    fun reopen(runId: String): Either<DomainError, Stage3Run> {
+        val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
+        if (run.status != Stage3RunStatus.PUBLISHED)
+            return DomainError.Conflict("Only PUBLISHED runs can reopen (run is ${run.status})")
+                .left()
+        runs.findActiveBySubject(run.subjectId)?.let {
+            return DomainError.Conflict("A Stage 3 run is already active (${it.id}: ${it.status})")
+                .left()
+        }
+        val reopened =
+            run.copy(
+                status = Stage3RunStatus.AWAITING_REVIEW,
+                finishedAt = null,
+                phaseSince = Instant.now(),
+            )
+        runs.save(reopened)
+        log.info("Run {}: reopened to AWAITING_REVIEW", run.id)
+        return reopened.right()
+    }
+
+    /** Queue actions share the guard: the edge must exist and its run must sit at the Q6 gate. */
+    private fun edgeAction(
+        edgeId: String,
+        work: (ContradictionEdgeRef, Stage3Run) -> Either<DomainError, Stage3Run>,
+    ): Either<DomainError, Stage3Run> {
+        val edge =
+            graph.findContradictionEdge(edgeId)
+                ?: return DomainError.NotFound("Contradiction $edgeId not found").left()
+        val run =
+            runs.findActiveBySubject(edge.subjectId)
+                ?: return DomainError.Conflict(
+                        "No active Stage 3 run for subject ${edge.subjectId}"
+                    )
+                    .left()
+        if (run.status != Stage3RunStatus.AWAITING_REVIEW)
+            return DomainError.Conflict(
+                    "Queue actions require AWAITING_REVIEW (run is ${run.status})"
+                )
+                .left()
+        return work(edge, run)
+    }
+
+    private fun refreshQueueCounter(run: Stage3Run): Stage3Run =
+        run.copy(
+                counters =
+                    run.counters +
+                        (Stage3Counters.CONTRADICTION_QUEUE to
+                            graph.countContradictionQueue(
+                                run.subjectId,
+                                props.stage3.judgeConfidenceFloor,
+                            )),
+            )
+            .also { runs.save(it) }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseSignals(json: String?): Map<String, Double> {
+        val raw =
+            json?.let { runCatching { Json.parse(it) as? Map<String, Any?> }.getOrNull() }
+                ?: return emptyMap()
+        return raw.mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap()
+    }
+
+    private fun tierOf(score: Double): String =
+        when {
+            score >= props.stage3.tierHigh -> "HIGH"
+            score >= props.stage3.tierMedium -> "MEDIUM"
+            else -> "LOW"
+        }
 
     // ---- lifecycle helpers ---------------------------------------------------------
 

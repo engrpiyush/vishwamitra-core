@@ -97,6 +97,15 @@ data class Claim(
     /** Final trust score — null until Stage 3 scores it. */
     val authenticityScore: Double? = null,
     /**
+     * The §3.2 signal vector behind [authenticityScore] — {prior, support, conflict, independence,
+     * recency, evidenceMass, scoreBare}. Written only at Stage 3 publish (LLD §11.11); Stage 4
+     * reads this ledger copy, never Neo4j.
+     */
+    val authenticitySignals: Map<String, Double>? = null,
+    /** The Stage 3 run whose frozen paramsSnapshot produced the published score (§9.6). */
+    val scoreRunId: String? = null,
+    val scoredAt: Instant? = null,
+    /**
      * LLM self-reported extraction *fidelity* (0..1) — how cleanly the source was read, NOT
      * evidential weight; uniform per run in practice, so Stage 3 must not weight on it.
      */

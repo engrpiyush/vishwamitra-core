@@ -296,6 +296,7 @@ class AdminController(
         model.addAttribute("pageTitle", "Extraction prompts")
         model.addAttribute("section", "extraction-prompts")
         model.addAttribute("groups", extractionPrompts.list())
+        model.addAttribute("stage3Rows", extractionPrompts.listStage3())
         return "admin/extraction-prompts"
     }
 
@@ -305,18 +306,17 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") instructions: String,
         ra: RedirectAttributes,
     ): String {
-        val contentType = ContentType.fromOrNull(id)
+        val known = extractionPrompts.isStage3Key(id) || ContentType.fromOrNull(id) != null
         when {
-            contentType == null -> ra.addFlashAttribute("error", "Unknown content type '$id'")
+            !known -> ra.addFlashAttribute("error", "Unknown prompt '$id'")
             instructions.isBlank() ->
                 ra.addFlashAttribute(
                     "error",
-                    "Instructions cannot be blank — use Reset to revert ${contentType.name} " +
-                        "to the code default",
+                    "Instructions cannot be blank — use Reset to revert $id to the code default",
                 )
             else -> {
-                val saved = extractionPrompts.update(contentType, instructions, actor())
-                ra.addFlashAttribute("ok", "${contentType.name} prompt saved (v${saved.version})")
+                val saved = extractionPrompts.updateKey(id, instructions, actor())
+                ra.addFlashAttribute("ok", "$id prompt saved (v${saved.version})")
             }
         }
         return "redirect:/admin/extraction-prompts"
@@ -324,12 +324,11 @@ class AdminController(
 
     @PostMapping("/extraction-prompts/{id}/reset")
     fun resetExtractionPrompt(@PathVariable id: String, ra: RedirectAttributes): String {
-        val contentType = ContentType.fromOrNull(id)
-        if (contentType == null) {
-            ra.addFlashAttribute("error", "Unknown content type '$id'")
+        if (!extractionPrompts.isStage3Key(id) && ContentType.fromOrNull(id) == null) {
+            ra.addFlashAttribute("error", "Unknown prompt '$id'")
         } else {
-            extractionPrompts.reset(contentType)
-            ra.addFlashAttribute("ok", "${contentType.name} reverted to the code default")
+            extractionPrompts.resetKey(id)
+            ra.addFlashAttribute("ok", "$id reverted to the code default")
         }
         return "redirect:/admin/extraction-prompts"
     }

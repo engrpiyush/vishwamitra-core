@@ -65,6 +65,56 @@ class Stage3ApiController(
         stage3.run(id)?.let { ResponseEntity.ok<Any>(it) } ?: notFound("Run $id")
 
     /**
+     * Scored claims with the full §3.2 vector, term decomposition and judged edge list — the "why
+     * this score" panel + the Stage 4 preview read (LLD §10, §21 A.3). Provisional until publish;
+     * empty before SCORING has run.
+     */
+    @GetMapping("/subjects/{id}/scores")
+    fun scores(@PathVariable id: String): ResponseEntity<Any> =
+        ResponseEntity.ok(graph.scoresReadback(id))
+
+    /** The §11.10 contradiction queue: PROPOSED pair cards with rationale + score impact. */
+    @GetMapping("/subjects/{id}/contradictions")
+    fun contradictions(@PathVariable id: String): ResponseEntity<Any> =
+        ResponseEntity.ok(stage3.contradictions(id))
+
+    /** Ratify a proposed contradiction — the penalty stands, the edge leaves the queue. */
+    @PostMapping("/contradictions/{edgeId}/confirm")
+    fun confirmContradiction(@PathVariable edgeId: String): ResponseEntity<Any> =
+        stage3.confirmContradiction(edgeId).toResponse()
+
+    /**
+     * Reject a judge false-positive: edge deleted, cached verdicts overridden forever, incremental
+     * re-score in the same request.
+     */
+    @PostMapping("/contradictions/{edgeId}/dismiss")
+    fun dismissContradiction(@PathVariable edgeId: String): ResponseEntity<Any> =
+        stage3.dismissContradiction(edgeId).toResponse()
+
+    /**
+     * The explain hook: call after authoring/editing the §12.6 sidecar on an involved claim —
+     * re-judges the pair with context, sets `explained` on affirmed relevance, re-scores.
+     */
+    @PostMapping("/contradictions/{edgeId}/rejudge")
+    fun rejudgeContradiction(@PathVariable edgeId: String): ResponseEntity<Any> =
+        stage3.rejudgeContradiction(edgeId).toResponse()
+
+    /**
+     * The Q6 gate (LLD §11.10): write the ledger from AWAITING_REVIEW. Refused while PROPOSED
+     * contradictions remain unless `skipReview=true` (recorded as the audit cost of skipping).
+     */
+    @PostMapping("/runs/{id}/publish")
+    fun publish(
+        @PathVariable id: String,
+        @RequestParam(required = false, defaultValue = "false") skipReview: Boolean,
+    ): ResponseEntity<Any> = stage3.publish(id, skipReview, actor()).toResponse()
+
+    /** ADMIN: PUBLISHED → AWAITING_REVIEW; the ledger keeps the last-published values. */
+    @PostMapping("/runs/{id}/reopen")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun reopen(@PathVariable id: String): ResponseEntity<Any> = stage3.reopen(id).toResponse()
+
+    /**
      * Connectivity diagnostic — verifies the service can reach the configured Neo4j (AuraDB in
      * prod: plain TLS egress, no VPC path) and optionally sweeps the §21 A.4 layer-boundary guards
      * (`?guards=true`; each count must be 0). Deploy-time smoke: call this once after wiring the

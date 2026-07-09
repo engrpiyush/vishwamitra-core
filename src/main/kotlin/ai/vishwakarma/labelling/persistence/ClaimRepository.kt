@@ -49,6 +49,31 @@ class ClaimRepository(private val db: Firestore) {
         col.document(id).delete().await()
     }
 
+    /**
+     * The §11.11 publish write-back: each claim's authenticity vector lands in one atomic per-doc
+     * update (LLD §15 #10), batched under Firestore's limit. Idempotent — a resumed PUBLISHING tick
+     * re-writes identical values, so a crash mid-batch can never half-write or duplicate.
+     */
+    fun publishAuthenticity(rows: List<ClaimAuthenticityRow>) {
+        if (rows.isEmpty()) return
+        rows.chunked(BATCH_LIMIT).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { row ->
+                batch.update(
+                    col.document(row.claimId),
+                    mapOf(
+                        "authenticityScore" to row.score,
+                        "authenticitySignals" to row.signals,
+                        "authenticityTier" to row.tier,
+                        "scoreRunId" to row.scoreRunId,
+                        "scoredAt" to row.scoredAt.toTimestamp(),
+                    ),
+                )
+            }
+            batch.commit().await()
+        }
+    }
+
     private fun Claim.toMap(): Map<String, Any?> =
         mapOf(
             "subjectId" to subjectId,
@@ -65,6 +90,9 @@ class ClaimRepository(private val db: Firestore) {
             "sourceClass" to sourceClass?.name,
             "relationship" to relationship?.name,
             "authenticityScore" to authenticityScore,
+            "authenticitySignals" to authenticitySignals,
+            "scoreRunId" to scoreRunId,
+            "scoredAt" to scoredAt.toTimestamp(),
             "extractionConfidence" to extractionConfidence,
             "claimBasis" to claimBasis?.name,
             "sensitive" to sensitive,
@@ -93,6 +121,9 @@ class ClaimRepository(private val db: Firestore) {
             sourceClass = SourceClass.fromOrNull(getString("sourceClass")),
             relationship = Relationship.fromOrNull(getString("relationship")),
             authenticityScore = getDouble("authenticityScore"),
+            authenticitySignals = signalMap("authenticitySignals"),
+            scoreRunId = getString("scoreRunId"),
+            scoredAt = instant("scoredAt"),
             extractionConfidence = getDouble("extractionConfidence"),
             claimBasis = ClaimBasis.fromOrNull(getString("claimBasis")),
             sensitive = getBoolean("sensitive") ?: false,
@@ -104,7 +135,25 @@ class ClaimRepository(private val db: Firestore) {
             stage2ProcessedAt = instant("stage2ProcessedAt"),
         )
 
+    @Suppress("UNCHECKED_CAST")
+    private fun DocumentSnapshot.signalMap(field: String): Map<String, Double>? {
+        val raw = get(field) as? Map<String, Any?> ?: return null
+        return raw.mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap()
+    }
+
     companion object {
         const val COLLECTION = "claims"
+        /** Firestore write-batch hard limit. */
+        private const val BATCH_LIMIT = 500
     }
 }
+
+/** One claim's published vector (§11.11) — what [ClaimRepository.publishAuthenticity] writes. */
+data class ClaimAuthenticityRow(
+    val claimId: String,
+    val score: Double,
+    val signals: Map<String, Double>,
+    val tier: String,
+    val scoreRunId: String,
+    val scoredAt: java.time.Instant,
+)

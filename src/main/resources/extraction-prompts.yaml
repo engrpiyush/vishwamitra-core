@@ -291,3 +291,17 @@ STAGE3_ENTITY: >-
   claim. Prefer the most specific surface written ("Google Cloud Spanner" as one mention,
   not "Google" plus "Cloud" plus "Spanner") and never invent an entity the claim does not
   name.
+
+STAGE3_JUDGE: >-
+  Relations, judged strictly: REPEATS — both claims assert the same underlying
+  proposition (paraphrase, translation, summary-of); the wording may differ, the fact may
+  not. CORROBORATES — a distinct proposition that raises the other's likelihood (a degree
+  corroborates the skill it teaches; commit history corroborates the project episode);
+  note the direction in the rationale but judge the pair symmetrically. CONTRADICTS —
+  both claims cannot hold over the SAME time span; always capture the span reasoning in
+  temporalNote, and remember that different periods usually mean a sequence, not a
+  conflict ("worked at Infosys, 2016" and "works at Google, 2024" do NOT contradict).
+  NEUTRAL — the default whenever none of the above clearly applies: similar wording about
+  different episodes is NEUTRAL, and so is topical overlap without a real propositional
+  link. When unsure between two relations, choose the weaker claim about the pair
+  (NEUTRAL over REPEATS over CORROBORATES over CONTRADICTS).
