@@ -23,6 +23,8 @@ class Stage3PropertiesTest {
         assertEquals(32, s3.embedBatchPerPoll)
         assertEquals(20, s3.entityBatchPerPoll)
         assertEquals("PRUNED", s3.matchingMode)
+        assertEquals(false, s3.exhaustiveMatching)
+        assertEquals(5.0, s3.episodeWindowYears)
         assertEquals(20, s3.knnK)
         assertEquals(0.60, s3.simFloor)
         assertEquals(0.93, s3.simAutoRepeat)
@@ -74,6 +76,8 @@ class Stage3PropertiesTest {
                     "app.stage3.connection-liveness-check-timeout" to "90s",
                     "app.stage3.volatile-half-life-years.SKILL" to "4.5",
                     "app.stage3.dry-run" to "true",
+                    "app.stage3.matching-mode" to "exhaustive",
+                    "app.stage3.episode-window-years" to "3",
                 )
             )
         val bound =
@@ -85,6 +89,9 @@ class Stage3PropertiesTest {
         assertEquals(Duration.ofSeconds(90), bound.connectionLivenessCheckTimeout)
         assertEquals(mapOf("SKILL" to 4.5), bound.volatileHalfLifeYears)
         assertEquals(true, bound.dryRun)
+        // The mode flag is case-insensitive (config files say "exhaustive", code asks the flag).
+        assertEquals(true, bound.exhaustiveMatching)
+        assertEquals(3.0, bound.episodeWindowYears)
         // Untouched keys keep their constructor defaults.
         assertEquals(5, bound.ensembleK)
     }

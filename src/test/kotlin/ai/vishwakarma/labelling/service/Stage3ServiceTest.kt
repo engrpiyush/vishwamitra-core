@@ -24,25 +24,31 @@ import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
+import ai.vishwakarma.labelling.stage3.ClaimPair
 import ai.vishwakarma.labelling.stage3.ClaimRow
 import ai.vishwakarma.labelling.stage3.ClaimToEmbed
+import ai.vishwakarma.labelling.stage3.ClaimToMatch
 import ai.vishwakarma.labelling.stage3.ClaimToResolve
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
 import ai.vishwakarma.labelling.stage3.EntityCandidate
+import ai.vishwakarma.labelling.stage3.EntityEmbedding
 import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
 import ai.vishwakarma.labelling.stage3.EntityRef
 import ai.vishwakarma.labelling.stage3.EntityResolutionWrite
 import ai.vishwakarma.labelling.stage3.EntityResolver
+import ai.vishwakarma.labelling.stage3.EntityToReembed
 import ai.vishwakarma.labelling.stage3.EntityType
 import ai.vishwakarma.labelling.stage3.EvidenceProjection
 import ai.vishwakarma.labelling.stage3.ExtractedMention
 import ai.vishwakarma.labelling.stage3.ExtractedMentions
 import ai.vishwakarma.labelling.stage3.GraphPing
+import ai.vishwakarma.labelling.stage3.MatchOutcome
 import ai.vishwakarma.labelling.stage3.MentionLinkRow
 import ai.vishwakarma.labelling.stage3.PseudoEmbeddingService
 import ai.vishwakarma.labelling.stage3.SchemaStatus
+import ai.vishwakarma.labelling.stage3.ScoredPair
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
@@ -254,6 +260,77 @@ private class FakeGraphRepo(props: AppProperties) :
         issuersUpgraded = true
         return sourceIssuers.size.toLong()
     }
+
+    // ---- MATCH (VA-14): scripted kNN/sims, derived co-mention + human arms ----
+
+    var knnPairs: List<ScoredPair> = emptyList()
+    var pairSims: Map<ClaimPair, Double> = emptyMap()
+    val staleEntities = mutableListOf<EntityToReembed>()
+    val entityEmbeddings = mutableListOf<EntityEmbedding>()
+    val matchOutcomes = mutableListOf<MatchOutcome>()
+    var failMatchWrite = false
+
+    override fun claimsForMatching(subjectId: String): List<ClaimToMatch> {
+        val explained = projections.flatMap { it.explanations }.map { it.claimId }.toSet()
+        return claimRows.values
+            .sortedBy { it.claimId }
+            .map {
+                ClaimToMatch(
+                    claimId = it.claimId,
+                    type = it.type,
+                    text = it.text,
+                    claimedDate = it.claimedDate,
+                    assetId = it.assetId,
+                    explained = it.claimId in explained,
+                    exemplarClaimId = null, // :Fact clusters arrive with VA-16
+                )
+            }
+    }
+
+    override fun claimKnnPairs(subjectId: String, k: Int, simFloor: Double): List<ScoredPair> =
+        knnPairs.filter { it.sim >= simFloor }
+
+    override fun coMentionPairs(subjectId: String, idfFloor: Double): List<ClaimPair> =
+        mentionLinks
+            .groupBy { "${it.entityType}|${it.canonicalKey}" }
+            .values
+            .flatMap { links ->
+                val ids = links.map { it.claimId }.distinct().sorted()
+                buildList {
+                    for (i in ids.indices) for (j in i + 1 until ids.size) add(
+                        ClaimPair(ids[i], ids[j])
+                    )
+                }
+            }
+            .distinct()
+
+    override fun humanAssertedPairs(subjectId: String): List<ClaimPair> =
+        projections
+            .flatMap { it.explanations }
+            .flatMap { x -> x.cites.map { ClaimPair.of(x.claimId, it) } }
+            .filter { it.a != it.b }
+            .distinct()
+
+    override fun pairSimilarities(
+        subjectId: String,
+        pairs: Collection<ClaimPair>,
+    ): Map<ClaimPair, Double> = pairs.mapNotNull { p -> pairSims[p]?.let { p to it } }.toMap()
+
+    override fun entitiesNeedingReembedding(
+        subjectId: String,
+        versionStamp: String,
+        limit: Int,
+    ): List<EntityToReembed> = staleEntities.take(limit)
+
+    override fun setEntityEmbeddings(rows: List<EntityEmbedding>, versionStamp: String) {
+        entityEmbeddings += rows
+        staleEntities.removeAll { stale -> rows.any { it.entityId == stale.entityId } }
+    }
+
+    override fun applyMatchOutcome(subjectId: String, outcome: MatchOutcome) {
+        if (failMatchWrite) throw IllegalStateException("Neo4j write failed: connection reset")
+        matchOutcomes += outcome
+    }
 }
 
 /** Scriptable extractor: canned per-claim mentions, observable batches, a failure switch. */
@@ -434,8 +511,9 @@ class Stage3ServiceTest {
         run = svc.poll(run.id).valueOrNull()!! // nothing left → MATCHING
         assertEquals(Stage3RunStatus.MATCHING, run.status)
 
-        run = svc.poll(run.id).valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!! // real MATCH: no candidate pairs on this corpus
         assertEquals(Stage3RunStatus.JUDGING, run.status)
+        assertEquals(0L, run.counters[Stage3Counters.PAIRS_QUEUED])
         run = svc.poll(run.id).valueOrNull()!!
         assertEquals(Stage3RunStatus.ASSEMBLING, run.status)
         run = svc.poll(run.id).valueOrNull()!!
@@ -616,6 +694,115 @@ class Stage3ServiceTest {
         run = svc.poll(run.id).valueOrNull()!! // completion sweep upgrades the attestation
         assertEquals(Stage3RunStatus.EMBEDDING, run.status)
         assertEquals(1L, run.counters[Stage3Counters.ISSUER_ATTESTORS_UPGRADED])
+    }
+
+    // ---- MATCH (VA-14) --------------------------------------------------------------
+
+    /** Poll a fresh run until it parks at [target] (guards against silent walk regressions). */
+    private fun walkTo(svc: Stage3Service, target: Stage3RunStatus): Stage3Run {
+        var run = svc.submit(subjectId, "op").valueOrNull()!!
+        repeat(20) {
+            if (run.status == target) return run
+            run = svc.poll(run.id).valueOrNull()!!
+        }
+        error("run never reached $target (stuck at ${run.status})")
+    }
+
+    @Test
+    fun `match queues cascade survivors and writes auto-repeats without the judge`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.knnPairs =
+            listOf(
+                ScoredPair(ClaimPair.of("c1", "c2"), 0.95), // τ_high same-type → AUTO REPEATS
+                ScoredPair(ClaimPair.of("c1", "c3"), 0.70), // cascade survivor → queued
+            )
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        val outcome = graph.matchOutcomes.single()
+        assertEquals(listOf(ClaimPair.of("c1", "c2")), outcome.autoRepeats.map { it.pair })
+        assertEquals(3, outcome.autoRepeats.single().rung)
+        val entry = outcome.queue.single()
+        assertEquals(ClaimPair.of("c1", "c3"), entry.pair)
+        assertEquals(0, entry.rank)
+        assertEquals(0.70, entry.blockScore)
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_KNN])
+        assertEquals(2L, run.counters[Stage3Counters.PAIRS_CANDIDATE])
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_AUTO_RESOLVED])
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_QUEUED])
+        assertEquals(0L, run.counters[Stage3Counters.PAIRS_DISCARDED])
+    }
+
+    @Test
+    fun `match queues human-asserted sidecar pairs even at rock-bottom similarity`() {
+        seedSubject(claimCount = 2)
+        reviews.store["c2"] =
+            ClaimReview(
+                claimId = "c2",
+                subjectId = subjectId,
+                decision = ReviewDecision.SIDECARED,
+                justification = "the cited claim shows the same project",
+                corroboratingClaimIds = listOf("c1"),
+                reviewedBy = "op",
+                reviewedAt = Instant.now(),
+            )
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.pairSims = mapOf(ClaimPair.of("c1", "c2") to 0.05)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        val entry = graph.matchOutcomes.single().queue.single()
+        assertEquals(ClaimPair.of("c1", "c2"), entry.pair)
+        assertTrue(entry.humanAsserted)
+        assertTrue(entry.withContext) // c2 carries the sidecar → §11.9 dual evaluation
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_HUMAN_ASSERTED])
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_QUEUED])
+    }
+
+    @Test
+    fun `match bounces stale claim vectors back to embedding and returns`() {
+        seedSubject(claimCount = 2)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.claimStamps["c1"] = "pseudo:stale" // model/dims changed since EMBED (§15 #6)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.EMBEDDING, run.status)
+        run = svc.poll(run.id).valueOrNull()!! // re-embeds c1
+        run = svc.poll(run.id).valueOrNull()!! // clean → back to MATCHING
+        assertEquals(Stage3RunStatus.MATCHING, run.status)
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+    }
+
+    @Test
+    fun `match re-embeds stale entity vectors before blocking`() {
+        seedSubject(claimCount = 2)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.staleEntities += EntityToReembed("e-kotlin", "Kotlin")
+        run = svc.poll(run.id).valueOrNull()!! // one bounded re-embed chunk, same phase
+        assertEquals(Stage3RunStatus.MATCHING, run.status)
+        assertEquals(1L, run.counters[Stage3Counters.ENTITIES_REEMBEDDED])
+        assertEquals("e-kotlin", graph.entityEmbeddings.single().entityId)
+        run = svc.poll(run.id).valueOrNull()!! // vectors current → the blocking tick
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+    }
+
+    @Test
+    fun `a match write failure fails the run verbatim and retry resumes the phase`() {
+        seedSubject(claimCount = 2)
+        val svc = service()
+        var run = walkTo(svc, Stage3RunStatus.MATCHING)
+        graph.failMatchWrite = true
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertEquals(Stage3RunStatus.MATCHING, run.failedPhase)
+        assertTrue(run.error!!.contains("connection reset"))
+        graph.failMatchWrite = false
+        run = svc.retry(run.id).valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
     }
 
     // ---- rerun -------------------------------------------------------------------

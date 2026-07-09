@@ -51,6 +51,19 @@ object Stage3Counters {
     /** Claim attestations migrated from per-asset fallback to issuer-entity keys (§18.2 Q2). */
     const val ISSUER_ATTESTORS_UPGRADED = "issuerAttestorsUpgraded"
     const val CLAIMS_EMBEDDED = "claimsEmbedded"
+    /** MATCH's §15 #6 pre-flight: stale-space entity vectors re-embedded before kNN (VA-14). */
+    const val ENTITIES_REEMBEDDED = "entitiesReembedded"
+    /** The §11.5 funnel, per blocking arm (a pair counts once per arm that produced it)… */
+    const val PAIRS_KNN = "pairsKnn"
+    const val PAIRS_CO_MENTION = "pairsCoMention"
+    const val PAIRS_STRUCTURAL = "pairsStructural"
+    const val PAIRS_HUMAN_ASSERTED = "pairsHumanAsserted"
+    /** …its deduped union… */
+    const val PAIRS_CANDIDATE = "pairsCandidate"
+    /** …and its outcomes: auto-REPEATS/same-fact (rungs 2/3/5), discards (1/4), judge queue. */
+    const val PAIRS_AUTO_RESOLVED = "pairsAutoResolved"
+    const val PAIRS_DISCARDED = "pairsDiscarded"
+    const val PAIRS_QUEUED = "pairsQueued"
 }
 
 /**

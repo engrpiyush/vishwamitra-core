@@ -11,9 +11,11 @@ import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.stage3.ClaimMatcher
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
+import ai.vishwakarma.labelling.stage3.EntityEmbedding
 import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
 import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
@@ -28,8 +30,8 @@ import org.springframework.stereotype.Service
 
 /**
  * Stage 3 (reviewed claims → authenticity graph/scores) — the run lifecycle chassis (LLD §9.6–9.7)
- * plus the phases built so far: SYNC (§11.2), RESOLVE_ENTITIES (§11.3) and EMBED (§11.4). MATCH
- * (VA-14), JUDGE (VA-15), ASSEMBLE (VA-16), SCORE (VA-17) and the publish gate (VA-18) plug into
+ * plus the phases built so far: SYNC (§11.2), RESOLVE_ENTITIES (§11.3), EMBED (§11.4) and MATCH
+ * (§11.5). JUDGE (VA-15), ASSEMBLE (VA-16), SCORE (VA-17) and the publish gate (VA-18) plug into
  * the [poll] dispatch as they land; until then their slots log and advance so the state machine is
  * walkable end-to-end (the VA-9 contract) without pretending any judgment happened — counters stay
  * empty and publish does not exist yet, so nothing can reach the ledger.
@@ -122,8 +124,7 @@ class Stage3Service(
             Stage3RunStatus.SYNCING -> runSync(run) // re-entrant after a crashed poll
             Stage3RunStatus.RESOLVING_ENTITIES -> runResolveEntitiesChunk(run).right()
             Stage3RunStatus.EMBEDDING -> runEmbedChunk(run).right()
-            Stage3RunStatus.MATCHING ->
-                stubAdvance(run, Stage3RunStatus.JUDGING, "MATCH", "VA-14").right()
+            Stage3RunStatus.MATCHING -> runMatchTick(run).right()
             Stage3RunStatus.JUDGING ->
                 stubAdvance(run, Stage3RunStatus.ASSEMBLING, "JUDGE", "VA-15").right()
             Stage3RunStatus.ASSEMBLING ->
@@ -370,6 +371,112 @@ class Stage3Service(
                 progressed
             }
         }
+
+    /**
+     * MATCH (LLD §11.5): blocking union → precision cascade → persisted judge queue. Three tick
+     * shapes, so every poll stays bounded:
+     * 1. **Stale claim vectors** (§15 #6 — model/dims/dry-run changed since EMBED): bounce the run
+     *    back to EMBEDDING; its graph-as-cursor re-embeds exactly the stale claims and returns
+     *    here. Vector spaces never mix.
+     * 2. **Stale entity vectors** (same rule, ontology side — no phase owns entity vectors after
+     *    minting): re-embed one bounded chunk of the entities this subject mentions and stay in
+     *    MATCHING.
+     * 3. **All vectors current**: run the whole blocking + cascade tick — §16 sizes this as seconds
+     *    of Cypher + in-app rungs even at the ~800-claim reference — write auto-REPEATS + the
+     *    ranked queue in one transaction, advance to JUDGING.
+     */
+    private fun runMatchTick(run: Stage3Run): Stage3Run =
+        inPhase(run, "MATCH") {
+            val stamp = embeddings.versionStamp
+            val staleClaims = graph.countClaimsNeedingEmbedding(run.subjectId, stamp)
+            if (staleClaims > 0) {
+                log.info(
+                    "Run {}: {} claim vector(s) stale against {} — re-embedding before kNN " +
+                        "(LLD §15 #6)",
+                    run.id,
+                    staleClaims,
+                    stamp,
+                )
+                advance(run, Stage3RunStatus.EMBEDDING, emptyMap())
+            } else {
+                val staleEntities =
+                    graph.entitiesNeedingReembedding(
+                        run.subjectId,
+                        stamp,
+                        props.stage3.embedBatchPerPoll,
+                    )
+                if (staleEntities.isNotEmpty()) {
+                    graph.setEntityEmbeddings(
+                        staleEntities.map {
+                            EntityEmbedding(
+                                entityId = it.entityId,
+                                embedding =
+                                    embeddings.embed(
+                                        it.canonicalName,
+                                        EmbeddingTaskType.CLASSIFICATION,
+                                    ),
+                            )
+                        },
+                        stamp,
+                    )
+                    val progressed =
+                        run.copy(
+                            counters =
+                                run.counters +
+                                    (Stage3Counters.ENTITIES_REEMBEDDED to
+                                        (run.counters[Stage3Counters.ENTITIES_REEMBEDDED] ?: 0L) +
+                                            staleEntities.size),
+                            phaseSince = Instant.now(),
+                        )
+                    runs.save(progressed)
+                    progressed
+                } else {
+                    runMatchBlocking(run)
+                }
+            }
+        }
+
+    /** The single blocking + cascade tick (§11.5) — all vectors verified current by the caller. */
+    private fun runMatchBlocking(run: Stage3Run): Stage3Run {
+        val s3 = props.stage3
+        val claims = graph.claimsForMatching(run.subjectId)
+        val knn =
+            if (s3.exhaustiveMatching) emptyList()
+            else graph.claimKnnPairs(run.subjectId, s3.knnK, s3.simFloor)
+        val coMention =
+            if (s3.exhaustiveMatching) emptyList()
+            else graph.coMentionPairs(run.subjectId, s3.entityIdfFloor)
+        val human = graph.humanAssertedPairs(run.subjectId)
+        val candidates = ClaimMatcher.candidates(claims, knn, coMention, human, s3)
+        // kNN already scored its arm; every other candidate pair gets an exact cosine.
+        val knnSims = knn.associate { it.pair to it.sim }
+        val sims = knnSims + graph.pairSimilarities(run.subjectId, candidates.keys - knnSims.keys)
+        val outcome = ClaimMatcher.cascade(claims, candidates, sims, s3)
+        graph.applyMatchOutcome(run.subjectId, outcome)
+        log.info(
+            "Run {}: MATCH {} candidates → {} auto-resolved, {} discarded, {} queued ({})",
+            run.id,
+            outcome.counters.pairsCandidate,
+            outcome.counters.pairsAutoResolved,
+            outcome.counters.pairsDiscarded,
+            outcome.counters.pairsQueued,
+            s3.matchingMode,
+        )
+        return advance(
+            run,
+            Stage3RunStatus.JUDGING,
+            mapOf(
+                Stage3Counters.PAIRS_KNN to outcome.counters.pairsKnn,
+                Stage3Counters.PAIRS_CO_MENTION to outcome.counters.pairsCoMention,
+                Stage3Counters.PAIRS_STRUCTURAL to outcome.counters.pairsStructural,
+                Stage3Counters.PAIRS_HUMAN_ASSERTED to outcome.counters.pairsHumanAsserted,
+                Stage3Counters.PAIRS_CANDIDATE to outcome.counters.pairsCandidate,
+                Stage3Counters.PAIRS_AUTO_RESOLVED to outcome.counters.pairsAutoResolved,
+                Stage3Counters.PAIRS_DISCARDED to outcome.counters.pairsDiscarded,
+                Stage3Counters.PAIRS_QUEUED to outcome.counters.pairsQueued,
+            ),
+        )
+    }
 
     /** A not-yet-built phase slot: log, advance, keep counters honest (empty) — see class KDoc. */
     private fun stubAdvance(

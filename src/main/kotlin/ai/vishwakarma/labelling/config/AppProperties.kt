@@ -203,6 +203,12 @@ data class AppProperties(
         val entityBatchPerPoll: Int = 20,
         /** PRUNED (blocking + cascade) or EXHAUSTIVE (calibration benchmark, eval database). */
         val matchingMode: String = "PRUNED",
+        /**
+         * §11.5's `window(type)` for EPISODEs, in years: the structural blocking arm pairs
+         * same-type episodes dated within it, and rung 4 discards episode pairs beyond it that
+         * share no discriminative entity.
+         */
+        val episodeWindowYears: Double = 5.0,
         /** Vector blocking: neighbours fetched per claim. */
         val knnK: Int = 20,
         /** Similarity discard floor (τ_low). */
@@ -261,5 +267,8 @@ data class AppProperties(
         val publishRequiresReview: Boolean = true,
         /** Dev/test: deterministic pseudo-embeddings + canned judge; Neo4j itself stays real. */
         val dryRun: Boolean = false,
-    )
+    ) {
+        val exhaustiveMatching: Boolean
+            get() = matchingMode.equals("EXHAUSTIVE", ignoreCase = true)
+    }
 }

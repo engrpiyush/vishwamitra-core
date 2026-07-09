@@ -790,10 +790,299 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                 upgraded
             }
         }
+
+    // ---- MATCH phase (LLD §11.5) ----------------------------------------------------
+
+    /**
+     * The subject's claims as [ClaimToMatch] rows — the cascade's metadata (type/date/source for
+     * the rungs, the §11.9 `explained` flag, and `Fact.exemplarClaimId` for rung 5 once VA-16
+     * clusters exist; on a first run the OPTIONAL MATCH yields nulls and rung 5 no-ops).
+     */
+    fun claimsForMatching(subjectId: String): List<ClaimToMatch> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        OPTIONAL MATCH (c)-[:ASSERTS]->(f:Fact)
+                        RETURN c.claimId AS claimId, c.type AS type, c.text AS text,
+                               c.claimedDate AS claimedDate, c.assetId AS assetId,
+                               EXISTS { MATCH (:Explanation)-[:EXPLAINS]->(c) } AS explained,
+                               f.exemplarClaimId AS exemplarClaimId
+                        ORDER BY c.claimId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        ClaimToMatch(
+                            claimId = r["claimId"].asString(),
+                            type = r["type"].takeUnless { it.isNull }?.asString(),
+                            text = r["text"].asString(""),
+                            claimedDate = r["claimedDate"].takeUnless { it.isNull }?.asString(),
+                            assetId = r["assetId"].takeUnless { it.isNull }?.asString(),
+                            explained = r["explained"].asBoolean(false),
+                            exemplarClaimId =
+                                r["exemplarClaimId"].takeUnless { it.isNull }?.asString(),
+                        )
+                    }
+            }
+        }
+
+    /**
+     * The §21 A.2 kNN blocking query generalized over the whole subject: each claim fetches its [k]
+     * approximate neighbours from the shared index, post-filtered to the subject and floored at
+     * [simFloor]. Duplicated hits (a finds b, b finds a) collapse to the unordered pair keeping the
+     * max score. HNSW is approximate — EXHAUSTIVE mode (§13) is the recall oracle for tuning
+     * [k]/[simFloor], not this query.
+     */
+    fun claimKnnPairs(subjectId: String, k: Int, simFloor: Double): List<ScoredPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                val best = linkedMapOf<ClaimPair, Double>()
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        WHERE c.embedding IS NOT NULL
+                        CALL db.index.vector.queryNodes('claim_embedding', ${'$'}k, c.embedding)
+                        YIELD node, score
+                        WHERE node.subjectId = c.subjectId AND node.claimId <> c.claimId
+                          AND score >= ${'$'}simFloor
+                        RETURN c.claimId AS a, node.claimId AS b, score AS sim
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "k" to k, "simFloor" to simFloor),
+                    )
+                    .forEach { r ->
+                        val pair = ClaimPair.of(r["a"].asString(), r["b"].asString())
+                        val sim = r["sim"].asDouble()
+                        best[pair] = maxOf(best[pair] ?: sim, sim)
+                    }
+                best.entries.sortedWith(compareBy({ it.key.a }, { it.key.b })).map {
+                    ScoredPair(it.key, it.value)
+                }
+            }
+        }
+
+    /**
+     * The §21 A.2 co-mention blocking query with the `entity-idf-floor` inlined: entities mentioned
+     * by more than (1 − floor) of the subject's claims are stopword-like (the subject himself,
+     * "software") and produce no pairs.
+     */
+    fun coMentionPairs(subjectId: String, idfFloor: Double): List<ClaimPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        WITH count(c) AS total
+                        MATCH (e:Entity)<-[:MENTIONS]-(k:Claim {subjectId: ${'$'}subjectId})
+                        WITH e, count(DISTINCT k) AS mentioners, total
+                        WHERE mentioners <= (1.0 - ${'$'}floor) * total
+                        MATCH (a:Claim {subjectId: ${'$'}subjectId})-[:MENTIONS]->(e)
+                              <-[:MENTIONS]-(b:Claim {subjectId: ${'$'}subjectId})
+                        WHERE a.claimId < b.claimId
+                        RETURN DISTINCT a.claimId AS a, b.claimId AS b
+                        ORDER BY a, b
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "floor" to idfFloor),
+                    )
+                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+            }
+        }
+
+    /**
+     * Human-asserted pairs (§11.5: always judged, bypass every prune): the claim an explanation
+     * EXPLAINS × each claim it CITES — review `corroboratingClaimIds` became those CITES edges at
+     * SYNC.
+     */
+    fun humanAssertedPairs(subjectId: String): List<ClaimPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (x:Explanation {subjectId: ${'$'}subjectId})-[:EXPLAINS]->(ca:Claim),
+                              (x)-[:CITES]->(cb:Claim)
+                        WHERE ca.claimId <> cb.claimId
+                        WITH CASE WHEN ca.claimId < cb.claimId THEN ca.claimId
+                                  ELSE cb.claimId END AS a,
+                             CASE WHEN ca.claimId < cb.claimId THEN cb.claimId
+                                  ELSE ca.claimId END AS b
+                        RETURN DISTINCT a, b
+                        ORDER BY a, b
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+            }
+        }
+
+    /**
+     * Exact pairwise cosine for candidate pairs the kNN arm did not score (co-mention/structural/
+     * human arms) — `vector.similarity.cosine` over the stored claim vectors. Pairs whose vectors
+     * are missing simply drop from the result (the cascade treats them as sim 0.0).
+     */
+    fun pairSimilarities(subjectId: String, pairs: Collection<ClaimPair>): Map<ClaimPair, Double> {
+        if (pairs.isEmpty()) return emptyMap()
+        return driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}pairs AS p
+                        MATCH (a:Claim {claimId: p.a}), (b:Claim {claimId: p.b})
+                        WHERE a.subjectId = ${'$'}subjectId AND b.subjectId = ${'$'}subjectId
+                          AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL
+                        RETURN p.a AS a, p.b AS b,
+                               vector.similarity.cosine(a.embedding, b.embedding) AS sim
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "pairs" to pairs.map { mapOf("a" to it.a, "b" to it.b) },
+                        ),
+                    )
+                    .list { r ->
+                        ClaimPair(r["a"].asString(), r["b"].asString()) to r["sim"].asDouble()
+                    }
+                    .toMap()
+            }
+        }
+    }
+
+    /**
+     * MATCH's §15 #6 pre-flight, ontology side: entities this subject mentions whose vector is
+     * missing or from another space (model/dims/dry-run change after they were minted). Claim
+     * staleness is handled by bouncing to EMBED; entities re-embed here because no phase owns their
+     * vectors after minting (the canon converges as runs touch it).
+     */
+    fun entitiesNeedingReembedding(
+        subjectId: String,
+        versionStamp: String,
+        limit: Int,
+    ): List<EntityToReembed> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (e:Entity)<-[:MENTIONS]-(c:Claim {subjectId: ${'$'}subjectId})
+                        WHERE e.mergedInto IS NULL
+                          AND (e.embedding IS NULL OR e.embeddingModelVersion <> ${'$'}stamp)
+                        RETURN DISTINCT e.entityId AS entityId, e.canonicalName AS canonicalName
+                        ORDER BY entityId LIMIT ${'$'}limit
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "stamp" to versionStamp, "limit" to limit),
+                    )
+                    .list { r ->
+                        EntityToReembed(
+                            entityId = r["entityId"].asString(),
+                            canonicalName = r["canonicalName"].asString(""),
+                        )
+                    }
+            }
+        }
+
+    /** Persist one entity re-embed chunk (global ontology layer — no subjectId by design). */
+    fun setEntityEmbeddings(rows: List<EntityEmbedding>, versionStamp: String) {
+        if (rows.isEmpty()) return
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}rows AS row
+                        MATCH (e:Entity {entityId: row.entityId})
+                        SET e.embedding = row.embedding, e.embeddingModelVersion = ${'$'}stamp
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "stamp" to versionStamp,
+                            "rows" to
+                                rows.map {
+                                    mapOf("entityId" to it.entityId, "embedding" to it.embedding)
+                                },
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /**
+     * Persist the cascade's outcome as a single transaction: rung-2/3 auto-REPEATS edges (MERGE —
+     * idempotent across re-runs) and the judge queue as `JUDGE_QUEUED` relationships. The queue is
+     * **replaced wholesale** (delete-then-create), which is what makes MATCH deterministic and
+     * re-entrant: re-running the phase after a config change yields exactly the new queue, never a
+     * union of old and new. VA-15 consumes entries by ascending `rank` (its judgeCursor) and flips
+     * `status` off QUEUED; a failed tick here persists nothing.
+     */
+    fun applyMatchOutcome(subjectId: String, outcome: MatchOutcome) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                if (outcome.autoRepeats.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (a:Claim {claimId: row.a}) WHERE a.subjectId = ${'$'}subjectId
+                            MATCH (b:Claim {claimId: row.b}) WHERE b.subjectId = ${'$'}subjectId
+                            MERGE (a)-[r:REPEATS]->(b)
+                            SET r.method = 'AUTO', r.rung = row.rung, r.sim = row.sim
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to
+                                    outcome.autoRepeats.map {
+                                        mapOf(
+                                            "a" to it.pair.a,
+                                            "b" to it.pair.b,
+                                            "rung" to it.rung,
+                                            "sim" to it.sim,
+                                        )
+                                    },
+                            ),
+                        )
+                        .consume()
+                tx.run(
+                        "MATCH (a:Claim {subjectId: ${'$'}subjectId})-[q:JUDGE_QUEUED]->() " +
+                            "DELETE q",
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .consume()
+                if (outcome.queue.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (a:Claim {claimId: row.a}) WHERE a.subjectId = ${'$'}subjectId
+                            MATCH (b:Claim {claimId: row.b}) WHERE b.subjectId = ${'$'}subjectId
+                            CREATE (a)-[q:JUDGE_QUEUED {rank: row.rank,
+                                        blockScore: row.blockScore, sources: row.sources,
+                                        humanAsserted: row.humanAsserted,
+                                        withContext: row.withContext, status: 'QUEUED'}]->(b)
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to outcome.queue.map { it.toMap() },
+                            ),
+                        )
+                        .consume()
+                Unit
+            }
+        }
+    }
 }
 
 /** One embedded claim ready to persist. */
 data class EmbeddedClaim(val claimId: String, val embedding: List<Double>)
+
+/** An entity whose vector is stale/missing — MATCH's §15 #6 re-embed work unit (VA-14). */
+data class EntityToReembed(val entityId: String, val canonicalName: String)
+
+/** One re-embedded entity ready to persist. */
+data class EntityEmbedding(val entityId: String, val embedding: List<Double>)
 
 /** Best-effort schema at boot — Neo4j down must never fail startup (VA-7 acceptance). */
 @Component
