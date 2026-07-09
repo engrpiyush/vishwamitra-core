@@ -2349,6 +2349,188 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                     }
             }
         }
+
+    // ---- FE read surfaces: timeline + entity browser (LLD §10/§12, VA-46) ----------------
+
+    /**
+     * The §12 timeline read: STATE facts bucketed into slot lanes, EVENT facts as points, and
+     * everything without an axis position (undated STATE + TIMELESS) listed separately so nothing
+     * drops silently. Facts carrying a CONTRADICTS edge expose the edge element ids — the
+     * anachronism markers deep-link into the §11.10 queue cards by that id.
+     */
+    fun timeline(subjectId: String): TimelineView {
+        val facts =
+            driver.session(sessionConfig()).use { s ->
+                s.executeRead { tx ->
+                    tx.run(
+                            """
+                            MATCH (f:Fact {subjectId: ${'$'}subjectId})
+                            OPTIONAL MATCH (c:Claim)-[:ASSERTS]->(f)
+                            WITH f, collect(c.claimId) AS members
+                            OPTIONAL MATCH (f)-[r:CONTRADICTS]-(:Fact)
+                            WITH f, members, collect(DISTINCT elementId(r)) AS conflictEdgeIds
+                            RETURN f.factId AS factId, f.label AS label,
+                                   f.factKind AS factKind, f.slot AS slot,
+                                   f.validFrom AS validFrom, f.validTo AS validTo,
+                                   f.datePrecision AS datePrecision, f.belief AS belief,
+                                   f.beliefBare AS beliefBare,
+                                   coalesce(f.anchored, false) AS anchored,
+                                   members, conflictEdgeIds
+                            ORDER BY factId
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            TimelineFact(
+                                factId = r["factId"].asString(),
+                                label = r["label"].asString(""),
+                                factKind = r["factKind"].asString(""),
+                                slot = r["slot"].takeUnless { it.isNull }?.asString(),
+                                validFrom = r["validFrom"].takeUnless { it.isNull }?.asString(),
+                                validTo = r["validTo"].takeUnless { it.isNull }?.asString(),
+                                datePrecision = r["datePrecision"].asString("NONE"),
+                                belief = r["belief"].takeUnless { it.isNull }?.asDouble(),
+                                beliefBare =
+                                    r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
+                                anchored = r["anchored"].asBoolean(false),
+                                memberClaimIds = r["members"].asList { v -> v.asString() }.sorted(),
+                                conflictEdgeIds =
+                                    r["conflictEdgeIds"].asList { v -> v.asString() }.sorted(),
+                            )
+                        }
+                }
+            }
+        val succeeds =
+            driver.session(sessionConfig()).use { s ->
+                s.executeRead { tx ->
+                    tx.run(
+                            """
+                            MATCH (a:Fact {subjectId: ${'$'}subjectId})-[sq:SUCCEEDS]->(b:Fact)
+                            RETURN a.factId AS fromFactId, b.factId AS toFactId,
+                                   sq.slot AS slot, sq.gapDays AS gapDays
+                            ORDER BY slot, fromFactId
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .list { r ->
+                            TimelineSucceeds(
+                                fromFactId = r["fromFactId"].asString(),
+                                toFactId = r["toFactId"].asString(),
+                                slot = r["slot"].asString(""),
+                                gapDays = r["gapDays"].takeUnless { it.isNull }?.asLong(),
+                            )
+                        }
+                }
+            }
+        val (dated, offAxis) = facts.partition { it.validFrom != null && it.factKind != "TIMELESS" }
+        return TimelineView(
+            state =
+                dated
+                    .filter { it.factKind == "STATE" }
+                    .sortedWith(compareBy({ it.slot }, { it.validFrom }, { it.factId })),
+            events =
+                dated
+                    .filter { it.factKind == "EVENT" }
+                    .sortedWith(compareBy({ it.validFrom }, { it.factId })),
+            succeeds = succeeds,
+            undated = offAxis.sortedWith(compareBy({ it.factKind }, { it.factId })),
+        )
+    }
+
+    /**
+     * The §12 entity-browser search: type filter + case-insensitive name/alias/key contains, with
+     * mention / provisional / distinct-subject counts. Counts are global (single-tenant reviewer
+     * posture); the §9.1 boundary holds because entities carry no claim text.
+     */
+    fun searchEntities(entityType: String?, query: String, limit: Int): List<EntitySearchRow> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (e:Entity)
+                        WHERE (${'$'}type IS NULL OR e.entityType = ${'$'}type)
+                          AND (${'$'}q = '' OR toLower(e.canonicalName) CONTAINS ${'$'}q
+                               OR e.canonicalKey CONTAINS ${'$'}q
+                               OR any(a IN coalesce(e.aliases, [])
+                                      WHERE toLower(a) CONTAINS ${'$'}q))
+                        OPTIONAL MATCH (c:Claim)-[m:MENTIONS]->(e)
+                        WITH e, count(m) AS mentionCount,
+                             sum(CASE WHEN m.provisional THEN 1 ELSE 0 END) AS provisionalCount,
+                             count(DISTINCT c.subjectId) AS subjectCount
+                        RETURN e.entityId AS entityId, e.entityType AS entityType,
+                               e.canonicalKey AS canonicalKey,
+                               e.canonicalName AS canonicalName,
+                               coalesce(e.aliases, []) AS aliases,
+                               e.mergedInto AS mergedInto, e.escoId AS escoId,
+                               e.rorId AS rorId, e.wikidataQid AS wikidataQid,
+                               mentionCount, provisionalCount, subjectCount
+                        ORDER BY mentionCount DESC, canonicalName, entityId
+                        LIMIT ${'$'}limit
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "type" to entityType,
+                            "q" to query.lowercase().trim(),
+                            "limit" to limit,
+                        ),
+                    )
+                    .list { r ->
+                        EntitySearchRow(
+                            entityId = r["entityId"].asString(),
+                            entityType = r["entityType"].asString(),
+                            canonicalKey = r["canonicalKey"].asString(),
+                            canonicalName = r["canonicalName"].asString(""),
+                            aliases = r["aliases"].asList { v -> v.asString() },
+                            mergedInto = r["mergedInto"].takeUnless { it.isNull }?.asString(),
+                            escoId = r["escoId"].takeUnless { it.isNull }?.asString(),
+                            rorId = r["rorId"].takeUnless { it.isNull }?.asString(),
+                            wikidataQid =
+                                r["wikidataQid"].takeUnless { it.isNull }?.asString(),
+                            mentionCount = r["mentionCount"].asLong(0),
+                            provisionalCount = r["provisionalCount"].asLong(0),
+                            subjectCount = r["subjectCount"].asLong(0),
+                        )
+                    }
+            }
+        }
+
+    /** The §11.3 near-miss review list: every provisional MENTIONS link with its context. */
+    fun entityReviewList(limit: Int): List<EntityReviewRow> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim)-[m:MENTIONS]->(e:Entity)
+                        WHERE m.provisional = true
+                        RETURN e.entityId AS entityId, e.entityType AS entityType,
+                               e.canonicalKey AS canonicalKey,
+                               e.canonicalName AS canonicalName,
+                               c.claimId AS claimId, c.subjectId AS subjectId,
+                               c.text AS claimText, m.surface AS surface,
+                               m.confidence AS confidence
+                        ORDER BY confidence DESC, claimId, surface
+                        LIMIT ${'$'}limit
+                        """
+                            .trimIndent(),
+                        mapOf("limit" to limit),
+                    )
+                    .list { r ->
+                        EntityReviewRow(
+                            entityId = r["entityId"].asString(),
+                            entityType = r["entityType"].asString(),
+                            canonicalKey = r["canonicalKey"].asString(),
+                            canonicalName = r["canonicalName"].asString(""),
+                            claimId = r["claimId"].asString(),
+                            subjectId = r["subjectId"].asString(""),
+                            claimText = r["claimText"].takeUnless { it.isNull }?.asString(),
+                            surface = r["surface"].asString(""),
+                            confidence = r["confidence"].asDouble(0.0),
+                        )
+                    }
+            }
+        }
 }
 
 /** The §3.2 per-claim signal vector as persisted (claim `signals` JSON; ledger shape VA-18). */
@@ -2476,6 +2658,71 @@ data class EntityMentionRow(
     val subjectId: String,
     val surface: String,
     val provisional: Boolean,
+)
+
+/** One timeline fact (LLD §12 bullet 4) — a lane bar (STATE), a point (EVENT), or off-axis. */
+data class TimelineFact(
+    val factId: String,
+    val label: String,
+    val factKind: String,
+    val slot: String?,
+    val validFrom: String?,
+    val validTo: String?,
+    val datePrecision: String,
+    val belief: Double?,
+    val beliefBare: Double?,
+    val anchored: Boolean,
+    val memberClaimIds: List<String>,
+    /** CONTRADICTS edges touching this fact — the anachronism markers' queue-card deep links. */
+    val conflictEdgeIds: List<String>,
+)
+
+/** One SUCCEEDS chain link as the timeline draws it. */
+data class TimelineSucceeds(
+    val fromFactId: String,
+    val toFactId: String,
+    val slot: String,
+    val gapDays: Long?,
+)
+
+/** `GET /subjects/{id}/timeline` — slot lanes, event points, chains, and the off-axis list. */
+data class TimelineView(
+    val state: List<TimelineFact>,
+    val events: List<TimelineFact>,
+    val succeeds: List<TimelineSucceeds>,
+    /** No axis position: undated STATE + all TIMELESS — listed, never dropped (VA-24). */
+    val undated: List<TimelineFact>,
+)
+
+/** One entity-browser row (LLD §12 bullet 5): canon identity + usage counts. */
+data class EntitySearchRow(
+    val entityId: String,
+    val entityType: String,
+    val canonicalKey: String,
+    val canonicalName: String,
+    val aliases: List<String>,
+    /** Non-null = tombstone (merged away). */
+    val mergedInto: String?,
+    /** Reserved external-linkage ids (§9.2 — empty in v1). */
+    val escoId: String?,
+    val rorId: String?,
+    val wikidataQid: String?,
+    val mentionCount: Long,
+    val provisionalCount: Long,
+    val subjectCount: Long,
+)
+
+/** One §11.3 near-miss review-list row: a provisional link with its claim context. */
+data class EntityReviewRow(
+    val entityId: String,
+    val entityType: String,
+    val canonicalKey: String,
+    val canonicalName: String,
+    val claimId: String,
+    val subjectId: String,
+    val claimText: String?,
+    val surface: String,
+    val confidence: Double,
 )
 
 /** One fact's inputs to the §13 score-sanity flags (VA-20). */

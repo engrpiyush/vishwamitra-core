@@ -1,11 +1,13 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.persistence.Stage3EntityJournalRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.EntityAdminService
 import ai.vishwakarma.labelling.service.Stage3CorpusSeeder
 import ai.vishwakarma.labelling.service.Stage3EvalService
 import ai.vishwakarma.labelling.service.Stage3Service
+import ai.vishwakarma.labelling.stage3.EntityType
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import arrow.core.Either
 import org.springframework.http.HttpStatus
@@ -18,6 +20,9 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+
+/** Hard cap for the entity-browser list reads (VA-46) — the canon is small at POC scale. */
+private const val MAX_ENTITY_PAGE = 500
 
 /** `POST /entities/{id}/merge` body (LLD §10, VA-12). */
 data class EntityMergeRequest(val intoId: String? = null)
@@ -47,6 +52,7 @@ class Stage3ApiController(
     private val corpusSeeder: Stage3CorpusSeeder,
     private val entityAdmin: EntityAdminService,
     private val eval: Stage3EvalService,
+    private val entityJournal: Stage3EntityJournalRepository,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -97,6 +103,58 @@ class Stage3ApiController(
     @GetMapping("/subjects/{id}/contradictions")
     fun contradictions(@PathVariable id: String): ResponseEntity<Any> =
         ResponseEntity.ok(stage3.contradictions(id))
+
+    /**
+     * The §12 timeline read (VA-46): STATE slot lanes + SUCCEEDS chains, EVENT points,
+     * off-axis (undated/TIMELESS) facts listed, conflict edge ids for anachronism markers.
+     */
+    @GetMapping("/subjects/{id}/timeline")
+    fun timeline(@PathVariable id: String): ResponseEntity<Any> =
+        ResponseEntity.ok(graph.timeline(id))
+
+    /** Entity-browser search (VA-46): type filter + name/alias contains + usage counts. */
+    @GetMapping("/entities")
+    fun entities(
+        @RequestParam(required = false) type: String?,
+        @RequestParam(required = false, defaultValue = "") q: String,
+        @RequestParam(required = false, defaultValue = "100") limit: Int,
+    ): ResponseEntity<Any> {
+        val entityType =
+            type?.trim()?.takeIf { it.isNotBlank() }?.let {
+                EntityType.fromOrNull(it)?.name
+                    ?: return ResponseEntity.badRequest()
+                        .body(
+                            mapOf(
+                                "error" to
+                                    "Unknown entity type '$it' — one of " +
+                                        EntityType.entries.joinToString(", ")
+                            )
+                        )
+            }
+        return ResponseEntity.ok(
+            graph.searchEntities(entityType, q, limit.coerceIn(1, MAX_ENTITY_PAGE))
+        )
+    }
+
+    /** Entity detail (VA-46): full row + mention rows + this entity's journal history. */
+    @GetMapping("/entities/{id}")
+    fun entityDetail(@PathVariable id: String): ResponseEntity<Any> {
+        val entity = graph.findEntityAdmin(id) ?: return notFound("Entity $id")
+        return ResponseEntity.ok(
+            mapOf(
+                "entity" to entity,
+                "mentions" to graph.entityMentionRows(id),
+                "journal" to entityJournal.findByEntity(id),
+            )
+        )
+    }
+
+    /** The §11.3 near-miss review list (VA-46): provisional links with claim context. */
+    @GetMapping("/entities/review-list")
+    fun entityReviewList(
+        @RequestParam(required = false, defaultValue = "100") limit: Int,
+    ): ResponseEntity<Any> =
+        ResponseEntity.ok(graph.entityReviewList(limit.coerceIn(1, MAX_ENTITY_PAGE)))
 
     /** Ratify a proposed contradiction — the penalty stands, the edge leaves the queue. */
     @PostMapping("/contradictions/{edgeId}/confirm")
