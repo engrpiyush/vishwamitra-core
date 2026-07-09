@@ -115,6 +115,16 @@
 			<artifactId>google-auth-library-oauth2-http</artifactId>
 		</dependency>
 
+		<!-- Stage 3 claim graph: plain Neo4j Java driver + hand-written Cypher (no Spring Data
+		     Neo4j / OGM by design — LLD §8.1: the access pattern is MERGE/MATCH + vector queries,
+		     not entity CRUD). Version is Boot-managed: the BOM also pins the driver's
+		     org.neo4j.bolt:* transitives, and mixing a hand-pinned driver with BOM-pinned bolt
+		     artifacts breaks at runtime (NoClassDefFoundError in the bolt-connection layer). -->
+		<dependency>
+			<groupId>org.neo4j.driver</groupId>
+			<artifactId>neo4j-java-driver</artifactId>
+		</dependency>
+
 		<!-- Front-end: HTMX served from a webjar, resolved version-less via locator -->
 		<dependency>
 			<groupId>org.webjars.npm</groupId>

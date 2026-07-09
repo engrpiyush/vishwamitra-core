@@ -112,6 +112,8 @@ class SecurityConfig {
                 authorize("/api/intake/**", hasRole("REVIEWER"))
                 // Stage 2 (A/V → Claims) JSON API: REVIEWER+, CSRF on, same conventions as intake.
                 authorize("/api/stage2/**", hasRole("REVIEWER"))
+                // Stage 3 (Claims → Authenticity scores) JSON API: same conventions.
+                authorize("/api/stage3/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }
             // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).

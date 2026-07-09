@@ -38,6 +38,35 @@ seeded automatically on first run.
 > explicit plaintext gRPC channel when `FIRESTORE_EMULATOR_HOST` is set; and `-Djava.net.preferIPv4Stack=true`
 > avoids a gRPC/Netty dual-stack "No route to host" on macOS loopback.
 
+## Local development (Neo4j — the Stage 3 claim graph)
+
+Stage 3 builds the corroboration graph in Neo4j. Locally the graph is **always real** (graph
+logic is the thing under test — only the LLM legs are stubbed by `app.stage3.dry-run`, on by
+default in dev):
+
+```bash
+docker compose up -d neo4j    # bolt://localhost:7687 · Browser http://localhost:7474
+```
+
+The dev profile connects with zero extra config (`neo4j` / `vishwamitra-dev`; override via
+`NEO4J_LOCAL_PASSWORD` on the container and `NEO4J_PASSWORD` on the app — keep them in sync).
+Graph data persists in the `neo4j-data` volume across restarts; full reset:
+
+```bash
+docker compose down -v        # stop Neo4j and wipe the graph volume
+```
+
+Start order for a full local Stage 1→3 loop: **Neo4j → Firestore emulator → app (dev profile)**
+— i.e. the compose one-liner above, then the emulator + app commands from the previous section.
+In production the same code talks to Neo4j AuraDB via the `NEO4J_URI`/`NEO4J_USER`/
+`NEO4J_DATABASE`/`NEO4J_PASSWORD` env wired by `vishwamitra-infra` (operator-created secrets
+`NEO4J_DB_URL`/`NEO4J_DB_SECRET`; LLD §8.1.1). No VPC/egress configuration is involved — Cloud
+Run reaches the `neo4j+s://` TLS endpoint directly; after wiring the secrets, smoke-test from
+the deployed service with `GET /api/stage3/graph/health` (add `?guards=true` to also sweep the
+§21 A.4 layer-boundary guards). AuraDB's silent idle-connection drops are absorbed in
+`Neo4jConfig`: pooled-connection liveness checks, a bounded connection lifetime, and
+managed-transaction retries on SessionExpired/ServiceUnavailable.
+
 ## Deployment
 
 Runs on **Cloud Run** (region `asia-southeast1`, project `vishwakarma-ai-poc`) behind a global

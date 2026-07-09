@@ -69,6 +69,24 @@ app:
     explicit-channel-count: ${STAGE2_EXPLICIT_CHANNEL_COUNT:2}
     # IMAGE/DOCUMENT lane cap: bytes ride inline (base64) in the Gemini request (~20MB total).
     max-document-bytes: ${STAGE2_MAX_DOCUMENT_BYTES:14680064}
+  # Stage 3 (Claims → Authenticity graph/scores): Neo4j connection + the LLD §8.2 knobs (the full
+  # table, with defaults, lives in AppProperties.Stage3 — only env-wired keys repeat here).
+  # NEO4J_* env names match what vishwamitra-infra injects on Cloud Run: in Aura mode (Option 1,
+  # current) NEO4J_URI/NEO4J_PASSWORD come from the operator-created Secret Manager secrets
+  # (NEO4J_DB_URL / NEO4J_DB_SECRET) once neo4j_wire_app=true; no VPC/egress config is involved —
+  # Cloud Run reaches the neo4j+s:// TLS endpoint directly.
+  stage3:
+    neo4j-uri: ${NEO4J_URI:bolt://localhost:7687}
+    neo4j-user: ${NEO4J_USER:neo4j}
+    # Empty default outside dev: a missing secret fails the ping guard loudly instead of trying a
+    # default password against Aura. The dev profile overrides to compose.yaml's pair below.
+    neo4j-password: ${NEO4J_PASSWORD:}
+    neo4j-database: ${NEO4J_DATABASE:neo4j}
+    # Blank = app region (asia-southeast1). Embedding models are served regionally — override
+    # (e.g. us-central1) if the home region lacks gemini-embedding-001.
+    embedding-location: ${STAGE3_EMBEDDING_LOCATION:}
+    embedding-dimensions: ${STAGE3_EMBEDDING_DIMENSIONS:3072}
+    dry-run: ${STAGE3_DRY_RUN:false}
   # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
   coming-soon:
     cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}
@@ -96,6 +114,11 @@ app:
   stage2:
     transcripts-bucket: ""   # no GCP locally
     dry-run: true            # canned diarized transcript — never calls Speech-to-Text in dev
+  stage3:
+    # compose.yaml's dev pair; Neo4j itself is ALWAYS real locally (docker compose up -d neo4j) —
+    # dry-run stubs only the LLM legs (pseudo embeddings now; canned judge/extraction with VA-19).
+    neo4j-password: ${NEO4J_PASSWORD:vishwamitra-dev}
+    dry-run: true
 
 ---
 # Cloud Run production.
@@ -122,3 +145,5 @@ app:
     enabled: true   # real Vertex tuningJobs are submitted in prod
   stage2:
     dry-run: false  # real Speech-to-Text batchRecognize in prod
+  stage3:
+    dry-run: false  # real Vertex embeddings/judge in prod; graph = AuraDB via NEO4J_* env

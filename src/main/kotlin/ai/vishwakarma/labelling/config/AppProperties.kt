@@ -16,6 +16,7 @@ data class AppProperties(
     val comingSoon: ComingSoon = ComingSoon(),
     val intake: Intake = Intake(),
     val stage2: Stage2 = Stage2(),
+    val stage3: Stage3 = Stage3(),
 ) {
     data class ComingSoon(
         /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
@@ -144,5 +145,116 @@ data class AppProperties(
          * 0.5 is the neutral midpoint, so the default reviews everything that reads as unfavorable.
          */
         val favorabilityThreshold: Double = 0.5,
+    )
+
+    /**
+     * Stage 3 (Claims → Authenticity graph/scores) — the full LLD §8.2 config table. Every value
+     * here is frozen into a run's `paramsSnapshot` at submit (the reproducibility contract), so
+     * scores are always attributable to the exact knobs that produced them.
+     */
+    data class Stage3(
+        /**
+         * Bolt URI. Dev default = local Docker (`compose.yaml`); prod = AuraDB
+         * (`neo4j+s://<dbid>.databases.neo4j.io`) via the NEO4J_URI env Terraform wires from the
+         * operator-created secret.
+         */
+        val neo4jUri: String = "bolt://localhost:7687",
+        val neo4jUser: String = "neo4j",
+        /** Via env/Secret Manager in prod; the dev default matches compose.yaml's NEO4J_AUTH. */
+        val neo4jPassword: String = "vishwamitra-dev",
+        /** Target database (Enterprise multi-DB; Aura Free + Community have exactly one). */
+        val neo4jDatabase: String = "neo4j",
+        /**
+         * AuraDB's load balancer silently drops connections idled for a few minutes, which surfaces
+         * as SessionExpired/ServiceUnavailable on the next use of a stale pooled connection. Pooled
+         * connections idle longer than this are liveness-tested (and replaced when dead) before
+         * reuse — keep it comfortably under the idle-kill horizon.
+         */
+        val connectionLivenessCheckTimeout: Duration = Duration.ofMinutes(2),
+        /** Hard cap on any pooled connection's age — forces periodic refresh below LB horizons. */
+        val maxConnectionLifetime: Duration = Duration.ofMinutes(30),
+        /** Managed-transaction retry window (SessionExpired / ServiceUnavailable / transient). */
+        val maxTransactionRetryTime: Duration = Duration.ofSeconds(30),
+        /**
+         * A run phase that keeps erroring without a single successful step for longer than this is
+         * reclaimed to FAILED on the next poll so operator Retry can resume it (the Stage 2 §12.7
+         * idiom, generalized: phaseSince tracks the last successful advance).
+         */
+        val phaseTimeout: Duration = Duration.ofMinutes(15),
+        /** Vertex embedding model id (LLD §11.4). */
+        val embeddingModel: String = "gemini-embedding-001",
+        /**
+         * Full-fidelity default (quality over pennies; Neo4j vector indexes cap at 4096). MRL
+         * truncation to 1536/768 remains a knob — truncated outputs are re-normalized client-side.
+         */
+        val embeddingDimensions: Int = 3072,
+        /**
+         * Vertex location for the embedding endpoint. Blank → [Gcp.region]. Unlike Gemini
+         * generateContent, embedding models are served regionally — override (e.g. us-central1) if
+         * the home region lacks [embeddingModel].
+         */
+        val embeddingLocation: String = "",
+        /** Claims embedded per poll tick (bounded work per request; VA-13). */
+        val embedBatchPerPoll: Int = 32,
+        /** PRUNED (blocking + cascade) or EXHAUSTIVE (calibration benchmark, eval database). */
+        val matchingMode: String = "PRUNED",
+        /** Vector blocking: neighbours fetched per claim. */
+        val knnK: Int = 20,
+        /** Similarity discard floor (τ_low). */
+        val simFloor: Double = 0.60,
+        /** Auto-REPEATS threshold (τ_high). */
+        val simAutoRepeat: Double = 0.93,
+        /** Embedding cosine above which a mention merges into an existing same-type entity. */
+        val entityMergeThreshold: Double = 0.85,
+        /** Entities mentioned by more than (1 − floor) of a subject's claims are stopword-like. */
+        val entityIdfFloor: Double = 0.25,
+        /** Judge samples per pair (self-consistency ensemble, LLD §11.6). */
+        val ensembleK: Int = 5,
+        val ensembleTemperature: Double = 0.7,
+        /** Claim-pair presentation order across the k samples (position-bias control). */
+        val ensembleOrderings: String = "ALTERNATE",
+        /** Aggregated edge confidence below this → NEUTRAL (no edge). */
+        val judgeConfidenceFloor: Double = 0.55,
+        /** Work budget per poll tick. */
+        val judgePairsPerPoll: Int = 40,
+        /** Pairs per Gemini call (the ensemble runs k calls per batch). */
+        val judgeBatchSize: Int = 8,
+        /** Claim-type × entity patterns treated as exclusive STATE slots that sequence (§11.7). */
+        val stateSlotTypes: List<String> =
+            listOf("EMPLOYER", "ROLE", "RESIDENCE", "EDUCATION_ENROLLMENT"),
+        /**
+         * Per-claim-type evidence half-life (years) for recency decay; absent types don't decay.
+         */
+        val volatileHalfLifeYears: Map<String, Double> = mapOf("SKILL" to 5.0),
+        /** Fixed-point controls (LLD §11.8). */
+        val maxIterations: Int = 20,
+        val epsilon: Double = 0.005,
+        val damping: Double = 0.5,
+        /** Log-odds weights at full confidence; contradiction > corroboration is deliberate. */
+        val corroborationWeight: Double = 0.8,
+        val contradictionWeight: Double = 1.2,
+        /** Geometric discount (λ) for additional voices within a dependence group. */
+        val dependenceDamping: Double = 0.4,
+        /** Fraction (μ) of a contradiction penalty removed by a judged-relevant explanation. */
+        val explanationMitigation: Double = 0.6,
+        /** Update multiplier (ρ) for anchored (DOCUMENTARY) facts. */
+        val anchorPlasticity: Double = 0.2,
+        /** Log-odds prior bonus (β) for unfavorable SELF claims (statement against interest). */
+        val againstInterestBonus: Double = 0.4,
+        /** Log-odds prior penalty (δ, negative) for claimBasis = INFERRED. */
+        val inferredPenalty: Double = -0.5,
+        /** Cap for favorable SELF-only facts with zero independent corroboration. */
+        val selfPraiseCeiling: Double = 0.65,
+        /** Pseudo-count (m) shrinking attestor trust toward its prior. */
+        val trustShrinkage: Int = 5,
+        /** Score → refreshed tier bands. */
+        val tierHigh: Double = 0.75,
+        val tierMedium: Double = 0.45,
+        /** Reserved v2+ flag (§9.4): read cross-subject evidence edges in scoring. Off in v1. */
+        val crossSubjectEvidence: Boolean = false,
+        /** The Q6 gate: ledger write-back only from AWAITING_REVIEW via explicit publish. */
+        val publishRequiresReview: Boolean = true,
+        /** Dev/test: deterministic pseudo-embeddings + canned judge; Neo4j itself stays real. */
+        val dryRun: Boolean = false,
     )
 }
