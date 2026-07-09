@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!--
+  §13 labeling ride-along (VA-26) — the shared "record human label" partial. One tiny form per
+  relation posting the REVIEWER+ shared route; `ret` bounces the redirect back to the calling
+  surface. Usage:
+    <div th:replace="~{fragments/stage3-label :: label(${subjectId}, ${a}, ${b}, ${ret})}"></div>
+-->
+<div th:fragment="label(subjectId, a, b, ret)" class="row-actions" style="font-size:0.8rem;">
+    <span class="muted" title="Grow the §13 golden set: what is the TRUE relation between these two claims?">record human label:</span>
+    <form th:each="rel : ${ {'REPEATS','CORROBORATES','CONTRADICTS','NEUTRAL','IRRELEVANT'} }"
+          method="post" class="inline-form" th:action="@{/intake/stage3/eval/label}">
+        <input type="hidden" name="subjectId" th:value="${subjectId}"/>
+        <input type="hidden" name="claimIdA" th:value="${a}"/>
+        <input type="hidden" name="claimIdB" th:value="${b}"/>
+        <input type="hidden" name="humanRelation" th:value="${rel}"/>
+        <input type="hidden" name="return" th:value="${ret}"/>
+        <button type="submit" class="btn--ghost btn--sm" style="font-size:0.75rem; padding:0.15rem 0.45rem;"
+                th:text="${#strings.toLowerCase(rel)}">relation</button>
+    </form>
+</div>
+</body>
+</html>

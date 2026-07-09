@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<style>
+    .queue-sides { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.7rem; }
+    .queue-side {
+        flex: 1 1 320px; border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem;
+        background: var(--bg);
+    }
+    .queue-claim { margin: 0.5rem 0 0; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
+    .queue-claim:first-of-type { border-top: none; padding-top: 0; }
+</style>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Contradiction queue <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+    </div>
+    <p class="muted">The human gate (§11.10): ratify a real conflict (<strong>Confirm</strong> — the
+        penalty stands), reject a judge false-positive (<strong>Dismiss</strong> — edge deleted,
+        re-scored), or <strong>Explain</strong> — re-judge with the claim's sidecar context. Actions
+        re-score within the request; the page you land back on already shows the new numbers.</p>
+
+    <!-- Empty state: the queue is clear — publish is one click away on the run page. -->
+    <div class="panel" th:if="${cards.isEmpty()}">
+        <div class="row-actions">
+            <span class="badge badge--success">QUEUE EMPTY</span>
+            <span class="muted">No unresolved contradictions.</span>
+        </div>
+        <a class="btn" style="margin-top:0.8rem;"
+           th:href="@{/intake/{id}/stage3(id=${subject.id})}"
+           th:text="${run != null and run.status.name() == 'AWAITING_REVIEW'} ? 'Publish from the run page →' : 'Back to the run page →'">Publish &rarr;</a>
+    </div>
+
+    <div class="panel" th:each="card : ${cards}" th:id="'edge-' + ${card.edgeId}">
+        <!-- Verdict strip -->
+        <div class="row-actions">
+            <span class="badge badge--danger">CONTRADICTS</span>
+            <span class="muted" th:if="${card.majorityText != null}">
+                <strong th:text="${card.majorityText}">4/5</strong> votes</span>
+            <span class="muted">confidence <strong th:text="${card.confidenceText}">0.72</strong></span>
+            <span class="badge badge--warning" th:if="${card.temporalOverlap == true}"
+                  title="the two facts' validity intervals overlap — a genuine conflict, not a succession">overlap</span>
+            <span class="muted" th:if="${!card.viaEntities.isEmpty()}"
+                  th:text="'via ' + ${#strings.listJoin(card.viaEntities, ', ')}">via entities</span>
+        </div>
+        <p class="muted" style="margin:0.4rem 0 0; font-size:0.88em;" th:if="${card.votesText != null}"
+           th:text="'vote split: ' + ${card.votesText}">split</p>
+        <p class="muted" style="margin:0.4rem 0 0; font-style:italic;" th:if="${card.rationale != null}"
+           th:text="'“' + ${card.rationale} + '”'">rationale</p>
+        <p class="muted" style="margin:0.4rem 0 0; font-size:0.88em;" th:if="${card.temporalNote != null}"
+           th:text="${card.temporalNote}">temporal note</p>
+
+        <!-- The two facts, side by side -->
+        <div class="queue-sides">
+            <div class="queue-side" th:each="side : ${ {card.from, card.to} }">
+                <div class="row-actions">
+                    <strong th:text="${side.label}">fact label</strong>
+                    <span class="muted" th:if="${side.beliefText != null}">belief
+                        <strong th:text="${side.beliefText}">0.62</strong></span>
+                    <span class="badge badge--warning" th:if="${side.impactText != null}"
+                          th:title="'current belief minus bare belief — what the explanation layer currently changes on this fact'">
+                        impact <span th:text="${side.impactText}">−0.12</span></span>
+                </div>
+                <div class="queue-claim" th:each="c : ${side.claims}">
+                    <p style="margin:0;" th:text="${c.text}">claim text</p>
+                    <div class="row-actions" style="margin-top:0.3rem; font-size:0.85em;">
+                        <span class="badge badge--muted" th:if="${c.sourceClass != null}"
+                              th:text="${#strings.toLowerCase(c.sourceClass)}">source</span>
+                        <span class="badge badge--muted" th:if="${c.relationship != null}"
+                              th:text="${#strings.toLowerCase(c.relationship)}">relationship</span>
+                        <span class="badge badge--info" th:if="${c.speakerRole != null}"
+                              th:text="${#strings.toLowerCase(c.speakerRole)}">role</span>
+                        <span class="badge badge--muted" th:if="${c.claimedDate != null}"
+                              th:text="${c.claimedDate}">date</span>
+                        <span class="muted" th:if="${c.assetTitle != null}"
+                              th:text="'— ' + ${c.assetTitle}">asset</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="row-actions" style="margin-top:0.8rem;">
+            <form method="post" class="inline-form"
+                  th:action="@{/intake/{id}/stage3/contradictions/{eid}/confirm(id=${subject.id}, eid=${card.edgeId})}"
+                  data-confirm="Ratify this contradiction? The score penalty stands and the card leaves the queue."
+                  data-confirm-title="Confirm contradiction?" data-confirm-ok="Confirm">
+                <button type="submit" class="btn--sm">Confirm</button>
+            </form>
+            <form method="post" class="inline-form"
+                  th:action="@{/intake/{id}/stage3/contradictions/{eid}/dismiss(id=${subject.id}, eid=${card.edgeId})}"
+                  data-confirm="The judge got this wrong? Dismissing deletes the edge, permanently overrides the cached verdicts behind it, and re-scores the affected claims."
+                  data-confirm-title="Dismiss contradiction?" data-confirm-ok="Dismiss" data-confirm-danger>
+                <button type="submit" class="btn--danger btn--sm">Dismiss</button>
+            </form>
+            <form method="post" class="inline-form"
+                  th:action="@{/intake/{id}/stage3/contradictions/{eid}/rejudge(id=${subject.id}, eid=${card.edgeId})}"
+                  data-confirm="Re-judge this pair WITH the sidecar explanation as context? Needs a sidecar on an involved claim — if there is none yet, author it via the review editor first (admin reopen required after submit)."
+                  data-confirm-title="Explain — re-judge with context?" data-confirm-ok="Re-judge">
+                <button type="submit" class="btn--ghost btn--sm">Explain (re-judge with sidecar)</button>
+            </form>
+            <a class="muted" style="font-size:0.85em;"
+               th:href="@{/intake/{id}/review/decide(id=${subject.id})}"
+               title="The §12.6 sidecar editor. Editing after review submit needs an ADMIN reopen (Stage 2 page) and a re-submit; then come back and hit Explain.">
+                Edit sidecar &rarr;</a>
+        </div>
+
+        <!-- §13 ride-along: label the pair the judge actually saw (VA-26 shared partial). -->
+        <div style="margin-top:0.6rem;" th:if="${card.labelClaimIdA != null and card.labelClaimIdB != null}">
+            <div th:replace="~{fragments/stage3-label :: label(${subject.id}, ${card.labelClaimIdA}, ${card.labelClaimIdB}, '/intake/' + ${subject.id} + '/stage3/contradictions')}"></div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <nav th:replace="~{fragments/common :: adminnav('entities')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Entities</h1>
+    <p class="muted">The self-grown cross-subject canon (§11.3): every SKILL / ORG / INSTITUTION /
+        CREDENTIAL / PROJECT / PERSON / PLACE the resolver has linked or minted. Open an entity to
+        repair resolution mistakes (merge duplicates, split conflations) — every repair is
+        journaled.</p>
+
+    <div class="flash error" th:if="${loadError != null}" th:text="${loadError}">error</div>
+
+    <form method="get" th:action="@{/admin/entities}" class="row-actions" style="margin:0.8rem 0;">
+        <select name="type">
+            <option value="" th:selected="${selectedType == null}">all types</option>
+            <option th:each="t : ${entityTypes}" th:value="${t.name()}"
+                    th:text="${#strings.toLowerCase(t.name())}" th:selected="${selectedType == t.name()}">type</option>
+        </select>
+        <input type="text" name="q" th:value="${q}" placeholder="name or alias contains…" style="min-width:16rem;"/>
+        <button type="submit" class="btn--sm">Search</button>
+        <a class="btn--ghost btn--sm btn" th:href="@{/admin/entities}">Clear</a>
+    </form>
+
+    <div th:if="${rows.isEmpty() and loadError == null}" class="empty-state">
+        No entities match — the canon grows as Stage 3 runs resolve claims.
+    </div>
+
+    <table class="grid" th:unless="${rows.isEmpty()}">
+        <thead>
+        <tr><th>Entity</th><th>Type</th><th>Aliases</th><th>Mentions</th><th>Provisional</th><th>Subjects</th><th></th></tr>
+        </thead>
+        <tbody>
+        <tr th:each="e : ${rows}">
+            <td>
+                <a th:href="@{/admin/entities/{id}(id=${e.entityId})}" th:text="${e.canonicalName}">name</a>
+                <span class="badge badge--danger" th:if="${e.mergedInto != null}"
+                      th:title="'merged into ' + ${e.mergedInto}">merged</span>
+                <span class="badge badge--muted" th:if="${e.escoId != null}" th:text="'ESCO ' + ${e.escoId}">esco</span>
+                <span class="badge badge--muted" th:if="${e.rorId != null}" th:text="'ROR ' + ${e.rorId}">ror</span>
+                <span class="badge badge--muted" th:if="${e.wikidataQid != null}" th:text="${e.wikidataQid}">qid</span>
+            </td>
+            <td><span class="badge" th:text="${e.entityType}">TYPE</span></td>
+            <td><span class="muted" th:text="${#strings.abbreviate(#strings.listJoin(e.aliases, ', '), 60)}">aliases</span></td>
+            <td th:text="${e.mentionCount}">3</td>
+            <td th:text="${e.provisionalCount}">0</td>
+            <td th:text="${e.subjectCount}">1</td>
+            <td><a class="btn--ghost btn--sm btn" th:href="@{/admin/entities/{id}(id=${e.entityId})}">Open &rarr;</a></td>
+        </tr>
+        </tbody>
+    </table>
+
+    <!-- §11.3 near-miss band: provisional links awaiting a human eye. -->
+    <h2 style="margin-top:1.6rem;">Near-miss review list
+        <span class="muted" th:text="'(' + ${reviewList.size()} + ')'">(0)</span></h2>
+    <p class="muted">Provisional links from the resolution band — the mention is <strong>already
+        linked</strong> and counted, flagged for review only. <em>Keep</em> acknowledges the link
+        (hides the row; nothing changes server-side); if the link is wrong, open the entity and
+        <em>Split</em> it — the mention re-resolves without it.</p>
+
+    <div th:if="${reviewList.isEmpty()}" class="empty-state">No provisional links to review.</div>
+
+    <table class="grid" th:unless="${reviewList.isEmpty()}">
+        <thead>
+        <tr><th>Linked to</th><th>Surface</th><th>Similarity</th><th>Claim</th><th>Subject</th><th></th></tr>
+        </thead>
+        <tbody>
+        <tr th:each="r : ${reviewList}">
+            <td>
+                <a th:href="@{/admin/entities/{id}(id=${r.entityId})}" th:text="${r.canonicalName}">entity</a>
+                <span class="badge badge--muted" th:text="${r.entityType}">TYPE</span>
+            </td>
+            <td>&ldquo;<span th:text="${r.surface}">surface</span>&rdquo;</td>
+            <td th:text="${#numbers.formatDecimal(r.confidence, 1, 2)}">0.81</td>
+            <td class="muted" th:text="${#strings.abbreviate(r.claimText ?: '—', 70)}">claim</td>
+            <td class="muted" th:text="${subjectNames[r.subjectId] ?: r.subjectId}">subject</td>
+            <td class="row-actions">
+                <button type="button" class="btn--ghost btn--sm" data-ack
+                        title="Acknowledge — the link is already live; this only hides the row for now.">Keep</button>
+                <a class="btn--ghost btn--sm btn" th:href="@{/admin/entities/{id}(id=${r.entityId})}"
+                   title="Open the entity — Split re-resolves its mentions without it.">Split off &rarr;</a>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+</main>
+<script>
+    // "Keep" = acknowledge a near-miss row client-side (the link itself is already live).
+    document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-ack]");
+        if (btn) { var tr = btn.closest("tr"); if (tr) tr.remove(); }
+    });
+</script>
+</body>
+</html>

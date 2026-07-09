@@ -105,8 +105,8 @@ class Stage3ApiController(
         ResponseEntity.ok(stage3.contradictions(id))
 
     /**
-     * The §12 timeline read (VA-46): STATE slot lanes + SUCCEEDS chains, EVENT points,
-     * off-axis (undated/TIMELESS) facts listed, conflict edge ids for anachronism markers.
+     * The §12 timeline read (VA-46): STATE slot lanes + SUCCEEDS chains, EVENT points, off-axis
+     * (undated/TIMELESS) facts listed, conflict edge ids for anachronism markers.
      */
     @GetMapping("/subjects/{id}/timeline")
     fun timeline(@PathVariable id: String): ResponseEntity<Any> =
@@ -120,17 +120,20 @@ class Stage3ApiController(
         @RequestParam(required = false, defaultValue = "100") limit: Int,
     ): ResponseEntity<Any> {
         val entityType =
-            type?.trim()?.takeIf { it.isNotBlank() }?.let {
-                EntityType.fromOrNull(it)?.name
-                    ?: return ResponseEntity.badRequest()
-                        .body(
-                            mapOf(
-                                "error" to
-                                    "Unknown entity type '$it' — one of " +
-                                        EntityType.entries.joinToString(", ")
+            type
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    EntityType.fromOrNull(it)?.name
+                        ?: return ResponseEntity.badRequest()
+                            .body(
+                                mapOf(
+                                    "error" to
+                                        "Unknown entity type '$it' — one of " +
+                                            EntityType.entries.joinToString(", ")
+                                )
                             )
-                        )
-            }
+                }
         return ResponseEntity.ok(
             graph.searchEntities(entityType, q, limit.coerceIn(1, MAX_ENTITY_PAGE))
         )

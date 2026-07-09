@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <nav th:replace="~{fragments/common :: adminnav('entities')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>
+            <span th:text="${entity.canonicalName}">Entity</span>
+            <span class="badge" th:text="${entity.entityType}">TYPE</span>
+        </h1>
+        <a th:href="@{/admin/entities}" class="muted">&larr; entities</a>
+    </div>
+
+    <!-- Tombstone: everything below is historical; operate on the live target. -->
+    <div class="panel" th:if="${entity.mergedInto != null}">
+        <span class="badge badge--danger">merged</span>
+        <span class="muted">This entity is a tombstone redirect —
+            <a th:href="@{/admin/entities/{id}(id=${entity.mergedInto})}">open the live target &rarr;</a></span>
+    </div>
+
+    <div class="panel">
+        <p style="margin:0 0 0.4rem;"><span class="muted">canonical key:</span>
+            <code class="copyable" th:text="${entity.canonicalKey}">key</code>
+            <span class="muted" style="margin-left:0.6rem;">id:</span>
+            <code class="copyable" th:text="${entity.entityId}">id</code></p>
+        <p style="margin:0 0 0.4rem;"><span class="muted">aliases:</span>
+            <span th:if="${entity.aliases.isEmpty()}" class="muted">none</span>
+            <span class="chip" th:each="a : ${entity.aliases}" th:text="${a}">alias</span></p>
+        <p class="muted" style="margin:0;">
+            <strong th:text="${mentionTotal}">4</strong> mention(s) across
+            <strong th:text="${perSubject.size()}">2</strong> subject(s)
+            <th:block th:if="${provisionalTotal > 0}">&middot;
+                <span class="badge badge--warning" th:text="${provisionalTotal} + ' provisional'">1 provisional</span></th:block></p>
+
+        <!-- §11.3 repair actions -->
+        <div class="row-actions" style="margin-top:0.9rem;" th:if="${entity.mergedInto == null}">
+            <button type="button" class="btn--sm" data-rerun-open
+                    th:disabled="${mergeTargets.isEmpty()}"
+                    th:title="${mergeTargets.isEmpty() ? 'no other live ' + entity.entityType + ' entity to merge into' : ''}">Merge into…</button>
+            <dialog class="panel" style="max-width:30rem; border:none;">
+                <h3 style="margin-top:0;">Merge this entity into…</h3>
+                <p class="muted">Every mention of <strong th:text="${entity.canonicalName}">this</strong>
+                    is rewired onto the target, aliases are unioned, and a tombstone redirect stays
+                    behind. Affected subjects' blocking keys go stale — the outcome note lists them.</p>
+                <form method="post" class="form" style="max-width:none;"
+                      th:action="@{/admin/entities/{id}/merge(id=${entity.entityId})}">
+                    <label>Target (<span th:text="${#strings.toLowerCase(entity.entityType)}">type</span>-scoped, live only)
+                        <select name="intoId" required>
+                            <option value="" disabled selected>choose the surviving entity…</option>
+                            <option th:each="t : ${mergeTargets}" th:value="${t.entityId}"
+                                    th:text="${t.canonicalName} + ' (' + ${t.mentionCount} + ' mentions)'">target</option>
+                        </select>
+                    </label>
+                    <div class="row-actions" style="margin-top:0.6rem;">
+                        <button type="submit">Merge</button>
+                        <button type="button" class="btn--ghost btn--sm" data-dialog-close>Cancel</button>
+                    </div>
+                </form>
+            </dialog>
+            <form method="post" class="inline-form"
+                  th:action="@{/admin/entities/{id}/split(id=${entity.entityId})}"
+                  data-confirm="Split this entity? Each of its mention surfaces re-resolves with the entity excluded — exact-match elsewhere, kNN-merge, or a fresh mint; surfaces matching its own canonical key stay. Aliases reset to the survivors."
+                  data-confirm-title="Split entity?" data-confirm-ok="Split" data-confirm-danger>
+                <button type="submit" class="btn--danger btn--sm">Split</button>
+            </form>
+        </div>
+    </div>
+
+    <h2>Mentions by subject</h2>
+    <div th:if="${perSubject.isEmpty()}" class="empty-state">No mentions point here.</div>
+    <table class="grid" th:unless="${perSubject.isEmpty()}">
+        <thead><tr><th>Subject</th><th>Mentions</th><th>Provisional</th><th>Surfaces</th></tr></thead>
+        <tbody>
+        <tr th:each="g : ${perSubject}">
+            <td th:text="${g.subjectName}">subject</td>
+            <td th:text="${g.mentionCount}">3</td>
+            <td th:text="${g.provisionalCount}">0</td>
+            <td class="muted" th:text="${#strings.abbreviate(#strings.listJoin(g.surfaces, ', '), 80)}">surfaces</td>
+        </tr>
+        </tbody>
+    </table>
+
+    <h2 style="margin-top:1.4rem;">Repair journal</h2>
+    <div th:if="${journal.isEmpty()}" class="empty-state">No merges or splits touched this entity.</div>
+    <div class="turns" th:unless="${journal.isEmpty()}">
+        <div class="turn" th:each="j : ${journal}">
+            <div class="turn-head">
+                <span>
+                    <span class="badge" th:classappend="${j.action == 'MERGE'} ? 'badge--info' : 'badge--warning'"
+                          th:text="${j.action}">MERGE</span>
+                    <span th:text="${j.fromName ?: j.fromEntityId}">from</span>
+                    <th:block th:if="${j.intoEntityId != null}">&rarr;
+                        <a th:href="@{/admin/entities/{id}(id=${j.intoEntityId})}"
+                           th:text="${j.intoName ?: j.intoEntityId}">into</a></th:block>
+                </span>
+                <span class="muted">
+                    <time class="js-ts" th:if="${j.at != null}" th:datetime="${j.at}" th:text="${j.at}">when</time>
+                    <th:block th:if="${j.actor != null}">by <span th:text="${j.actor}">who</span></th:block>
+                </span>
+            </div>
+            <div class="turn-body">
+                <p class="muted" style="margin:0;">
+                    <span th:text="${j.mentionsRewired}">3</span> mention(s) rewired
+                    <th:block th:if="${!j.affectedSubjectIds.isEmpty()}">&middot; affected subjects:
+                        <span th:text="${#strings.listJoin(j.affectedSubjectIds, ', ')}">s1</span></th:block>
+                </p>
+                <p class="muted" style="margin:0.3rem 0 0; font-size:0.85em;" th:if="${!j.details.isEmpty()}"
+                   th:text="${#strings.listJoin(j.details, ' · ')}">details</p>
+            </div>
+        </div>
+    </div>
+</main>
+<script th:src="@{/js/stage3-poll.js}" defer></script>
+</body>
+</html>

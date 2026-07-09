@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<style>
+    .conf-matrix td.conf-cell { text-align: center; min-width: 4.2rem; }
+    .sanity-chip { margin-right: 0.4rem; }
+</style>
+<main class="container wide">
+    <nav th:replace="~{fragments/common :: adminnav('stage3-eval')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Stage 3 eval</h1>
+    <p class="muted">The §13 quality harness: the golden set accretes through labeling ride-alongs
+        (queue cards, scored-table rows, and the blind flow below); the metrics job grades the
+        ensemble judge against it per prompt version.</p>
+
+    <!-- Golden set -->
+    <div class="panel">
+        <h3>Golden set</h3>
+        <div class="row-actions">
+            <span><strong th:text="${goldenTotal}">0</strong> <span class="muted">labels</span></span>
+            <span class="badge badge--info" th:text="'TEST ' + ${goldenTest}">TEST 0</span>
+            <span class="badge badge--muted" th:text="'CALIBRATION ' + ${goldenCalibration}">CAL 0</span>
+            <span class="muted" th:if="${goldenTotal > 0}">by relation:
+                <th:block th:each="e,iter : ${goldenByRelation}">
+                    <span th:text="${e.key} + ' ' + ${e.value}">REL n</span><th:block th:unless="${iter.last}"> · </th:block>
+                </th:block></span>
+        </div>
+        <p class="muted" style="margin:0.6rem 0 0; font-size:0.88em;">Target 150–300 pairs,
+            stratified ~40% judge-queue hard cases / ~40% blocking survivors / ~20% discarded
+            probes — the sampler below keeps that mix; splits assign ~50/50 by pair-key hash.</p>
+        <form method="get" th:action="@{/admin/stage3-eval/label}" class="row-actions" style="margin-top:0.8rem;">
+            <select name="subjectId" required>
+                <option value="" disabled selected>choose a subject…</option>
+                <option th:each="s : ${subjects}" th:value="${s.id}" th:text="${s.displayName}">subject</option>
+            </select>
+            <button type="submit" class="btn--sm">Label pairs (blind) &rarr;</button>
+        </form>
+    </div>
+
+    <!-- Metrics job -->
+    <div class="panel">
+        <div class="row-between">
+            <h3 style="margin:0;">Judge metrics</h3>
+            <span class="muted">live judge prompt: <code th:text="${currentStamp}">stamp</code></span>
+        </div>
+        <p class="muted" th:if="${staleMetrics}" style="margin:0.6rem 0 0;">
+            <span class="badge badge--warning">stale</span>
+            No metrics for the live judge prompt yet — run the job (grades only cached verdicts
+            under the current prompt; re-run a subject first if you just edited the prompt).</p>
+        <form method="post" th:action="@{/admin/stage3-eval/run-metrics}" class="row-actions" style="margin-top:0.8rem;">
+            <select name="referenceSubjectId">
+                <option value="" selected>no reference subject (skip sanity flags)</option>
+                <option th:each="s : ${subjects}" th:value="${s.id}" th:text="${s.displayName}">subject</option>
+            </select>
+            <button type="submit" class="btn--sm">Run metrics</button>
+        </form>
+    </div>
+
+    <div class="empty-state" th:if="${latest == null}">
+        No metrics recorded yet — label some pairs, then run the job.
+    </div>
+
+    <th:block th:if="${latest != null}">
+        <h2>Latest record <code style="font-size:0.7em;" th:text="${latest.id}">id</code></h2>
+        <p class="muted">
+            ran <time class="js-ts" th:if="${latest.ranAt != null}" th:datetime="${latest.ranAt}" th:text="${latest.ranAt}">when</time>
+            <th:block th:if="${latest.ranBy != null}">by <span th:text="${latest.ranBy}">who</span></th:block>
+            &middot; <span th:text="${latest.labeledPairs}">n</span> labeled
+            (<span th:text="${latest.testPairs}">n</span> TEST / <span th:text="${latest.calibrationPairs}">n</span> CALIBRATION)
+            <span class="badge badge--warning" th:if="${latest.unjudgedTestPairs > 0}"
+                  th:title="TEST pairs with no cached verdict under this prompt stamp — excluded from P/R"
+                  th:text="${latest.unjudgedTestPairs} + ' TEST unjudged'">unjudged</span>
+        </p>
+
+        <div style="display:flex; gap:1.2rem; flex-wrap:wrap; align-items:flex-start;">
+            <!-- P/R/F1 -->
+            <div class="panel" style="flex:1 1 300px;">
+                <h3>Precision / recall / F1 <span class="muted">(TEST split)</span></h3>
+                <table class="grid">
+                    <thead><tr><th>Relation</th><th>P</th><th>R</th><th>F1</th><th>Support</th></tr></thead>
+                    <tbody>
+                    <tr th:each="e : ${latest.perRelation}">
+                        <td th:text="${e.key}">REL</td>
+                        <td th:text="${e.value.precision != null ? #numbers.formatDecimal(e.value.precision, 1, 2) : '—'}">—</td>
+                        <td th:text="${e.value.recall != null ? #numbers.formatDecimal(e.value.recall, 1, 2) : '—'}">—</td>
+                        <td th:text="${e.value.f1 != null ? #numbers.formatDecimal(e.value.f1, 1, 2) : '—'}">—</td>
+                        <td th:text="${e.value.support}">0</td>
+                    </tr>
+                    </tbody>
+                </table>
+                <p style="margin:0.7rem 0 0;">
+                    <span class="muted">Blocking recall:</span>
+                    <strong th:text="${latest.blockingRecall.recall != null ? #numbers.formatDecimal(latest.blockingRecall.recall * 100, 1, 1) + '%' : '—'}">—</strong>
+                    <span class="muted"
+                          th:text="'(' + ${latest.blockingRecall.survivedBlocking} + '/' + ${latest.blockingRecall.nonNeutralLabeled} + ' labeled non-NEUTRAL pairs survived blocking)'">()</span>
+                </p>
+            </div>
+
+            <!-- Confusion matrix -->
+            <div class="panel" style="flex:1 1 300px;" th:if="${matrix != null}">
+                <h3>Confusion <span class="muted">(human ↓ vs judge →)</span></h3>
+                <table class="grid conf-matrix">
+                    <thead>
+                    <tr><th></th><th th:each="r : ${matrix.relations}" th:text="${#strings.abbreviate(r, 7)}">REL</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="row : ${matrix.rows}">
+                        <th th:text="${#strings.abbreviate(row.human, 12)}">REL</th>
+                        <td th:each="c : ${row.cells}" class="conf-cell"
+                            th:style="'background: rgba(' + (${c.diagonal} ? '22,163,74' : '220,38,38') + ',' + ${c.alpha} + ');'"
+                            th:text="${c.count}">0</td>
+                    </tr>
+                    </tbody>
+                </table>
+                <p class="muted" style="margin:0.5rem 0 0; font-size:0.82em;">green diagonal =
+                    agreement · red off-diagonal = judge errors (IRRELEVANT labels grade as
+                    NEUTRAL).</p>
+            </div>
+
+            <!-- Calibration curve -->
+            <div class="panel" style="flex:1 1 380px;" th:if="${calibration != null}">
+                <h3>Calibration <span class="muted">(reliability diagram)</span></h3>
+                <svg th:attr="viewBox='0 0 ' + ${calibration.width} + ' ' + ${calibration.height}"
+                     style="width:100%; max-width:420px; height:auto; display:block;">
+                    <!-- frame + perfect-calibration diagonal -->
+                    <line th:attr="x1=${calibration.x0},y1=${calibration.y0},x2=${calibration.x1},y2=${calibration.y0}"
+                          stroke="currentColor" stroke-opacity="0.3"/>
+                    <line th:attr="x1=${calibration.x0},y1=${calibration.y0},x2=${calibration.x0},y2=${calibration.y1}"
+                          stroke="currentColor" stroke-opacity="0.3"/>
+                    <line th:attr="x1=${calibration.x0},y1=${calibration.y0},x2=${calibration.x1},y2=${calibration.y1}"
+                          stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="4 4"/>
+                    <polyline th:if="${!calibration.points.isEmpty()}" th:attr="points=${calibration.points}"
+                              fill="none" stroke="#3b82f6" stroke-width="2"/>
+                    <circle th:each="m : ${calibration.markers}"
+                            th:attr="cx=${m.cx},cy=${m.cy},r=${m.r}" fill="#3b82f6" fill-opacity="0.75">
+                        <title th:text="${m.title}">bucket</title>
+                    </circle>
+                    <text th:attr="x=${calibration.x0},y=${calibration.height - 6}" font-size="10"
+                          fill="currentColor" fill-opacity="0.6">0</text>
+                    <text th:attr="x=${calibration.x1 - 6},y=${calibration.height - 6}" font-size="10"
+                          fill="currentColor" fill-opacity="0.6">1</text>
+                    <text th:attr="x=${calibration.x0 - 26},y=${calibration.y1 + 10}" font-size="10"
+                          fill="currentColor" fill-opacity="0.6">rate</text>
+                </svg>
+                <p class="muted" style="margin:0.4rem 0 0; font-size:0.82em;">x = ensemble agreement
+                    (maxVotes/k) · y = human-agreement rate · dot size = pairs in bucket · dashed =
+                    perfectly calibrated.</p>
+            </div>
+        </div>
+
+        <!-- Sanity flags -->
+        <div class="panel" th:if="${latest.sanity != null}">
+            <h3>Score sanity <span class="muted" th:text="'(reference: ' + ${latest.sanity.referenceSubjectId} + ')'">ref</span></h3>
+            <div class="row-actions">
+                <span class="badge sanity-chip"
+                      th:classappend="${latest.sanity.documentsOverEndorsed == null} ? 'badge--muted' : (${latest.sanity.documentsOverEndorsed} ? 'badge--success' : 'badge--danger')"
+                      th:text="'documents &gt; endorsed: ' + (${latest.sanity.documentsOverEndorsed == null} ? 'n/a' : (${latest.sanity.documentsOverEndorsed} ? 'pass' : 'FAIL'))">chip</span>
+                <span class="badge sanity-chip"
+                      th:classappend="${latest.sanity.endorsedOverSelfPraise == null} ? 'badge--muted' : (${latest.sanity.endorsedOverSelfPraise} ? 'badge--success' : 'badge--danger')"
+                      th:text="'endorsed &gt; self-praise: ' + (${latest.sanity.endorsedOverSelfPraise == null} ? 'n/a' : (${latest.sanity.endorsedOverSelfPraise} ? 'pass' : 'FAIL'))">chip</span>
+                <span class="badge sanity-chip"
+                      th:classappend="${latest.sanity.explainedContradictionsRecover == null} ? 'badge--muted' : (${latest.sanity.explainedContradictionsRecover} ? 'badge--success' : 'badge--danger')"
+                      th:text="'explained contradictions recover: ' + (${latest.sanity.explainedContradictionsRecover == null} ? 'n/a' : (${latest.sanity.explainedContradictionsRecover} ? 'pass' : 'FAIL'))">chip</span>
+            </div>
+            <p class="muted" style="margin:0.6rem 0 0; font-size:0.88em;">
+                mean beliefs — anchored:
+                <span th:text="${latest.sanity.meanAnchoredBelief != null ? #numbers.formatDecimal(latest.sanity.meanAnchoredBelief, 1, 2) : '—'}">—</span>
+                · endorsed:
+                <span th:text="${latest.sanity.meanEndorsedBelief != null ? #numbers.formatDecimal(latest.sanity.meanEndorsedBelief, 1, 2) : '—'}">—</span>
+                · self-praise:
+                <span th:text="${latest.sanity.meanSelfPraiseBelief != null ? #numbers.formatDecimal(latest.sanity.meanSelfPraiseBelief, 1, 2) : '—'}">—</span></p>
+        </div>
+
+        <!-- History -->
+        <th:block th:if="${records.size() > 1}">
+            <h2 style="margin-top:1.4rem;">All records</h2>
+            <table class="grid">
+                <thead><tr><th>Prompt · params</th><th>Ran</th><th>Labeled</th><th>Unjudged TEST</th><th>Blocking recall</th></tr></thead>
+                <tbody>
+                <tr th:each="r : ${records}">
+                    <td><code th:text="${r.id}">id</code></td>
+                    <td><time class="js-ts" th:if="${r.ranAt != null}" th:datetime="${r.ranAt}" th:text="${r.ranAt}">when</time></td>
+                    <td th:text="${r.labeledPairs}">0</td>
+                    <td th:text="${r.unjudgedTestPairs}">0</td>
+                    <td th:text="${r.blockingRecall.recall != null ? #numbers.formatDecimal(r.blockingRecall.recall * 100, 1, 1) + '%' : '—'}">—</td>
+                </tr>
+                </tbody>
+            </table>
+        </th:block>
+    </th:block>
+</main>
+</body>
+</html>

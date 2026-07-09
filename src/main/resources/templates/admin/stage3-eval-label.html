@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<style>
+    .label-sides { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.7rem; }
+    .label-side {
+        flex: 1 1 320px; border: 1px solid var(--border); border-radius: 8px;
+        padding: 0.8rem 1rem; background: var(--bg);
+    }
+</style>
+<main class="container wide">
+    <nav th:replace="~{fragments/common :: adminnav('stage3-eval')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Blind labeling <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/admin/stage3-eval}" class="muted">&larr; eval</a>
+    </div>
+    <p class="muted">One §13-stratified pair at a time — <strong>the judge's verdict is never
+        shown</strong>. Read both claims (sidecar context included, exactly as the judge sees it)
+        and pick the true relation; the next unlabeled pair loads after each save.</p>
+
+    <div class="panel" th:if="${pair == null}">
+        <span class="badge badge--success">ALL LABELED</span>
+        <span class="muted">The sampler found no unlabeled pair in this subject's strata.</span>
+        <div style="margin-top:0.8rem;">
+            <a class="btn btn--sm" th:href="@{/admin/stage3-eval}">Back to eval &rarr;</a>
+        </div>
+    </div>
+
+    <div class="panel" th:if="${pair != null}">
+        <div class="row-actions">
+            <span class="badge badge--info">unlabeled pair</span>
+            <span class="muted"><span th:text="${batchRemaining}">10</span> in the current sample —
+                the batch reshuffles as labels accrete.</span>
+        </div>
+
+        <div class="label-sides">
+            <div class="label-side" th:each="c : ${ {pair.a, pair.b} }">
+                <p style="margin:0;" th:text="${c.text}">claim text</p>
+                <div class="row-actions" style="margin-top:0.5rem; font-size:0.85em;">
+                    <span class="badge" th:if="${c.type != null}" th:text="${c.type}">TYPE</span>
+                    <span class="badge badge--muted" th:if="${c.sourceClass != null}"
+                          th:text="${#strings.toLowerCase(c.sourceClass)}">source</span>
+                    <span class="badge badge--muted" th:if="${c.relationship != null}"
+                          th:text="${#strings.toLowerCase(c.relationship)}">relationship</span>
+                    <span class="badge badge--info" th:if="${c.speakerRole != null}"
+                          th:text="${#strings.toLowerCase(c.speakerRole)}">role</span>
+                    <span class="badge badge--muted" th:if="${c.claimedDate != null}"
+                          th:text="${c.claimedDate}">date</span>
+                </div>
+                <p class="muted" style="margin:0.5rem 0 0; font-size:0.88em;" th:if="${c.explanationText != null}">
+                    sidecar: &ldquo;<span th:text="${c.explanationText}">explanation</span>&rdquo;</p>
+            </div>
+        </div>
+
+        <p style="margin:1rem 0 0.3rem;"><strong>What is the true relation between these two claims?</strong></p>
+        <div th:replace="~{fragments/stage3-label :: label(${subject.id}, ${pair.claimIdLow}, ${pair.claimIdHigh}, '/admin/stage3-eval/label?subjectId=' + ${subject.id})}"></div>
+        <p class="muted" style="margin:0.6rem 0 0; font-size:0.82em;">REPEATS = same assertion ·
+            CORROBORATES = independent support · CONTRADICTS = they can't both hold ·
+            NEUTRAL = related but neither · IRRELEVANT = unrelated (blocking probe).</p>
+    </div>
+</main>
+</body>
+</html>

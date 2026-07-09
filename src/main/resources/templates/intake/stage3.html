@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Stage 3 <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage2(id=${subject.id})}" class="muted">&larr; Stage 2</a>
+    </div>
+    <p class="muted">Reviewed claims &rarr; entity canon &rarr; semantic matching &rarr; LLM judge
+        &rarr; facts &amp; timeline &rarr; authenticity scores &rarr; gated publish to the Claim Ledger.</p>
+
+    <!-- Gate 1: the claim review isn't submitted — Stage 3 has nothing to consume. -->
+    <div class="panel" th:if="${(manifest == null or manifest.reviewSubmittedAt == null) and run == null}">
+        <p style="margin:0;">Stage 3 consumes only the <strong>reviewed, approved</strong> claim set —
+            submit the claim review first.</p>
+        <div class="row-actions" style="margin-top:0.8rem;">
+            <a class="btn btn--sm" th:if="${manifest != null and manifest.reviewLockedAt != null}"
+               th:href="@{/intake/{id}/review/decide(id=${subject.id})}">Continue review &rarr;</a>
+            <a class="btn btn--sm" th:unless="${manifest != null and manifest.reviewLockedAt != null}"
+               th:href="@{/intake/{id}/stage2(id=${subject.id})}">Back to Stage 2 &rarr;</a>
+        </div>
+    </div>
+
+    <!-- Gate 2: review submitted, no run yet — the run button. -->
+    <div class="panel" th:if="${manifest != null and manifest.reviewSubmittedAt != null and run == null}">
+        <h3>Ready to score</h3>
+        <p class="muted">Builds the subject's authenticity graph from the approved claims — entity
+            resolution, semantic matching, LLM judging, fact assembly — then computes provisional
+            scores and parks for contradiction review. Nothing reaches the ledger until you publish.</p>
+        <form method="post" th:action="@{/intake/{id}/stage3/run(id=${subject.id})}"
+              data-confirm="Run Stage 3 for this subject? Scoring parameters are snapshotted now; the run advances while this page stays open."
+              data-confirm-title="Run Stage 3?" data-confirm-ok="Run Stage 3">
+            <button type="submit">Run Stage 3</button>
+        </form>
+    </div>
+
+    <th:block th:if="${run != null}">
+
+        <!-- FAILED: verbatim provider/graph error + Retry (phases are re-entrant). -->
+        <div class="panel" th:if="${run.status.name() == 'FAILED'}">
+            <div class="row-actions">
+                <span class="badge badge--danger">FAILED</span>
+                <span class="muted">during <strong th:text="${run.failedPhase}">PHASE</strong> —
+                    Retry resumes the failed phase; completed work is never re-done.</span>
+            </div>
+            <div class="preview" style="margin-top:0.6rem;" th:text="${run.error}">error</div>
+            <form method="post" class="inline-form" style="margin-top:0.8rem; display:inline-block;"
+                  th:action="@{/intake/stage3/runs/{rid}/retry(rid=${run.id})}">
+                <button type="submit">Retry</button>
+            </form>
+        </div>
+
+        <!-- The Q6 gate: provisional scores are graph-side; publish is queue-gated (§11.10). -->
+        <div class="panel" th:if="${run.status.name() == 'AWAITING_REVIEW'}">
+            <div class="row-actions">
+                <span class="badge badge--warning">AWAITING REVIEW</span>
+                <span class="muted">Scoring finished — scores are provisional on the graph; the
+                    ledger is untouched until you publish.</span>
+            </div>
+            <p th:if="${queueSize > 0}" style="margin:0.8rem 0 0;">
+                <strong th:text="${queueSize}">2</strong> proposed contradiction(s) await review —
+                confirm, dismiss, or explain each one before publishing.</p>
+            <p class="muted" th:if="${queueSize == 0}" style="margin:0.8rem 0 0;">
+                No unresolved contradictions — ready to publish.</p>
+            <div class="row-actions" style="margin-top:0.8rem;">
+                <a class="btn btn--sm" th:if="${queueSize > 0}"
+                   th:href="@{/intake/{id}/stage3/contradictions(id=${subject.id})}">Review contradictions &rarr;</a>
+                <a class="btn btn--ghost btn--sm"
+                   th:href="@{/intake/{id}/stage3/scores(id=${subject.id})}">Provisional scores &rarr;</a>
+                <a class="btn btn--ghost btn--sm"
+                   th:href="@{/intake/{id}/stage3/timeline(id=${subject.id})}">Timeline &rarr;</a>
+                <form th:if="${queueSize == 0}" method="post" class="inline-form"
+                      th:action="@{/intake/stage3/runs/{rid}/publish(rid=${run.id})}"
+                      data-confirm="Publish the provisional scores to the Claim Ledger? Publishing is the only door to the ledger — downstream consumers read what you publish."
+                      data-confirm-title="Publish scores?" data-confirm-ok="Publish">
+                    <button type="submit">Publish</button>
+                </form>
+                <span th:if="${queueSize > 0}"
+                      th:title="${queueSize + ' proposed contradiction(s) must be confirmed, dismissed, or explained before publishing'}">
+                    <button type="button" disabled>Publish</button>
+                </span>
+                <form th:if="${queueSize > 0}" sec:authorize="hasRole('ADMIN')" method="post" class="inline-form"
+                      th:action="@{/intake/stage3/runs/{rid}/publish(rid=${run.id})}"
+                      data-confirm="Skip the contradiction review and publish anyway? The run is permanently marked as review-skipped — the audit record of publishing over an unresolved queue — and every proposed contradiction keeps its score penalty."
+                      data-confirm-title="Skip review &amp; publish?" data-confirm-ok="Skip &amp; publish" data-confirm-danger>
+                    <input type="hidden" name="skipReview" value="true"/>
+                    <button type="submit" class="btn--danger btn--sm">Skip review &amp; publish (admin)</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- PUBLISHED: the audit stamp + the re-run chooser. -->
+        <div class="panel" th:if="${run.status.name() == 'PUBLISHED'}">
+            <div class="row-actions">
+                <span class="badge badge--success">PUBLISHED</span>
+                <span class="badge badge--warning" th:if="${run.reviewSkipped}">review skipped</span>
+                <span class="muted">
+                    <strong th:text="${run.counters['claimsPublished'] ?: '—'}">15</strong> claim
+                    vector(s) written to the ledger
+                    <time class="js-ts" th:datetime="${run.publishedAt}" th:text="${run.publishedAt}">when</time>
+                    <th:block th:if="${run.publishedBy != null}">by <span th:text="${run.publishedBy}">who</span></th:block>
+                </span>
+            </div>
+            <div class="row-actions" style="margin-top:0.8rem;">
+                <a class="btn btn--sm" th:href="@{/intake/{id}/stage3/scores(id=${subject.id})}">Scored claims &rarr;</a>
+                <a class="btn btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/timeline(id=${subject.id})}">Timeline &rarr;</a>
+                <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>
+                <dialog class="panel" style="max-width:30rem; border:none;">
+                    <h3 style="margin-top:0;">Re-run Stage 3?</h3>
+                    <p class="muted">Creates a new run; the ledger keeps these scores until the new
+                        run publishes over them.</p>
+                    <form method="post" class="form" style="max-width:none;"
+                          th:action="@{/intake/stage3/runs/{rid}/rerun(rid=${run.id})}">
+                        <button type="submit">Re-run
+                            <span class="muted">(reuses cached judge verdicts — unchanged pairs are LLM-free)</span></button>
+                    </form>
+                    <form method="post" class="form" style="max-width:none; margin-top:0.5rem;"
+                          th:action="@{/intake/stage3/runs/{rid}/rerun(rid=${run.id})}">
+                        <input type="hidden" name="fresh" value="true"/>
+                        <button type="submit" class="secondary">Fresh re-run
+                            <span class="muted">(replaces this subject's graph — wipes its evidence
+                                layer and cached judge verdicts, then re-judges everything)</span></button>
+                    </form>
+                    <button type="button" class="btn--ghost btn--sm" style="margin-top:0.8rem;"
+                            data-dialog-close>Cancel</button>
+                </dialog>
+            </div>
+        </div>
+
+        <!-- The run record: phase rail + live counters (stage3-poll.js updates them in place). -->
+        <div class="panel" id="stage3Run"
+             th:attr="data-run-id=${run.id},data-status=${run.status.name()},data-active=${active}">
+            <div class="row-between">
+                <div class="row-actions">
+                    <h3 style="margin:0;">Run</h3>
+                    <code class="copyable" th:text="${run.id}">run-id</code>
+                    <span class="badge"
+                          th:classappend="${run.status.name() == 'PUBLISHED'} ? 'badge--success' : (${run.status.name() == 'FAILED'} ? 'badge--danger' : (${run.status.name() == 'AWAITING_REVIEW'} ? 'badge--warning' : 'badge--info'))"
+                          th:text="${run.status}">STATUS</span>
+                    <span class="badge badge--muted" th:if="${run.fresh}">fresh</span>
+                </div>
+                <form th:if="${active}" method="post" class="inline-form"
+                      th:action="@{/intake/stage3/runs/{rid}/poll(rid=${run.id})}">
+                    <button type="submit" class="btn--ghost btn--sm">Poll now</button>
+                </form>
+            </div>
+            <p class="muted" style="margin:0.5rem 0 0.9rem; font-size:0.88em;">
+                created <time class="js-ts" th:datetime="${run.createdAt}" th:text="${run.createdAt}">when</time>
+                <th:block th:if="${run.createdBy != null}">by <span th:text="${run.createdBy}">who</span></th:block>
+                <th:block th:if="${run.startedAt != null}">&middot; started
+                    <time class="js-ts" th:datetime="${run.startedAt}" th:text="${run.startedAt}">when</time></th:block>
+                <th:block th:if="${active and run.phaseSince != null}">&middot; phase since
+                    <time class="js-ts" th:datetime="${run.phaseSince}" th:text="${run.phaseSince}">when</time></th:block>
+            </p>
+
+            <!-- §9.7 phase rail -->
+            <div class="row-actions" style="margin-bottom:0.4rem;">
+                <th:block th:each="p,iter : ${phaseChips}">
+                    <span class="badge"
+                          th:classappend="${iter.index < phaseIndex} ? 'badge--success' : (${iter.index == phaseIndex and run.status.name() == 'FAILED'} ? 'badge--danger' : (${iter.index == phaseIndex and active} ? 'badge--info' : 'badge--muted'))"
+                          th:text="${p}">Phase</span>
+                    <span class="muted" th:unless="${iter.last}" style="font-size:0.75em;">&rarr;</span>
+                </th:block>
+            </div>
+            <p class="muted" th:if="${active}" style="margin:0 0 0.4rem; font-size:0.88em;">
+                The run advances one bounded step per poll — this page polls and refreshes itself
+                automatically while you keep it open.</p>
+
+            <table class="grid" style="margin-top:0.6rem;">
+                <tbody>
+                <tr th:if="${phaseIndex >= 0}">
+                    <th style="width:8.5rem;">Sync</th>
+                    <td>claims <strong data-counter="claimsSynced" th:text="${run.counters['claimsSynced'] ?: '—'}">—</strong>
+                        &middot; sources <strong data-counter="sourcesSynced" th:text="${run.counters['sourcesSynced'] ?: '—'}">—</strong>
+                        &middot; attestors <strong data-counter="attestorsSynced" th:text="${run.counters['attestorsSynced'] ?: '—'}">—</strong>
+                        &middot; explanations <strong data-counter="explanationsSynced" th:text="${run.counters['explanationsSynced'] ?: '—'}">—</strong>
+                        <span class="badge badge--warning" th:if="${(run.counters['citationsDropped'] ?: 0) > 0}"
+                              style="margin-left:0.4rem;">citations dropped:
+                            <span data-counter="citationsDropped" th:text="${run.counters['citationsDropped']}">0</span></span>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 1}">
+                    <th>Entities</th>
+                    <td>claims resolved <strong data-counter="claimsEntityResolved" th:text="${run.counters['claimsEntityResolved'] ?: '—'}">—</strong>
+                        &middot; mentions linked <strong data-counter="mentionsLinked" th:text="${run.counters['mentionsLinked'] ?: '—'}">—</strong>
+                        &middot; minted <strong data-counter="entitiesMinted" th:text="${run.counters['entitiesMinted'] ?: '—'}">—</strong>
+                        &middot; review-listed <strong data-counter="mentionsReviewListed" th:text="${run.counters['mentionsReviewListed'] ?: '—'}">—</strong>
+                        <span class="muted" th:if="${(run.counters['issuerAttestorsUpgraded'] ?: 0) > 0}">
+                            &middot; issuer upgrades <strong data-counter="issuerAttestorsUpgraded" th:text="${run.counters['issuerAttestorsUpgraded']}">0</strong></span>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 2}">
+                    <th>Embedding</th>
+                    <td>claims embedded <strong data-counter="claimsEmbedded" th:text="${run.counters['claimsEmbedded'] ?: '—'}">—</strong>
+                        <span class="muted" th:if="${(run.counters['entitiesReembedded'] ?: 0) > 0}">
+                            &middot; entities re-embedded <strong data-counter="entitiesReembedded" th:text="${run.counters['entitiesReembedded']}">0</strong></span>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 3}">
+                    <th>Matching</th>
+                    <td>candidates <strong data-counter="pairsCandidate" th:text="${run.counters['pairsCandidate'] ?: '—'}">—</strong>
+                        &middot; auto-resolved <strong data-counter="pairsAutoResolved" th:text="${run.counters['pairsAutoResolved'] ?: '—'}">—</strong>
+                        &middot; discarded <strong data-counter="pairsDiscarded" th:text="${run.counters['pairsDiscarded'] ?: '—'}">—</strong>
+                        &middot; queued for judge <strong data-counter="pairsQueued" th:text="${run.counters['pairsQueued'] ?: '—'}">—</strong>
+                        <br/><span class="muted" style="font-size:0.85em;">arms:
+                            kNN <span data-counter="pairsKnn" th:text="${run.counters['pairsKnn'] ?: '—'}">—</span>
+                            &middot; co-mention <span data-counter="pairsCoMention" th:text="${run.counters['pairsCoMention'] ?: '—'}">—</span>
+                            &middot; structural <span data-counter="pairsStructural" th:text="${run.counters['pairsStructural'] ?: '—'}">—</span>
+                            &middot; human <span data-counter="pairsHumanAsserted" th:text="${run.counters['pairsHumanAsserted'] ?: '—'}">—</span></span>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 4}">
+                    <th>Judging</th>
+                    <td>judged <strong data-counter="pairsJudged" th:text="${run.counters['pairsJudged'] ?: '0'}">0</strong>
+                        / <span data-counter="pairsQueued" th:text="${run.counters['pairsQueued'] ?: '—'}">—</span>
+                        &middot; cache hits <strong data-counter="judgeCacheHits" th:text="${run.counters['judgeCacheHits'] ?: '0'}">0</strong>
+                        &middot; sampler calls <strong data-counter="judgeSamplerCalls" th:text="${run.counters['judgeSamplerCalls'] ?: '0'}">0</strong>
+                        <span class="muted" th:if="${(run.counters['judgeTies'] ?: 0) > 0}">
+                            &middot; ties <strong data-counter="judgeTies" th:text="${run.counters['judgeTies']}">0</strong></span>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 5}">
+                    <th>Facts</th>
+                    <td><strong data-counter="facts" th:text="${run.counters['facts'] ?: '—'}">—</strong> facts
+                        <span class="muted" style="font-size:0.85em;">(state
+                            <span data-counter="factsState" th:text="${run.counters['factsState'] ?: '—'}">—</span>
+                            &middot; event <span data-counter="factsEvent" th:text="${run.counters['factsEvent'] ?: '—'}">—</span>
+                            &middot; timeless <span data-counter="factsTimeless" th:text="${run.counters['factsTimeless'] ?: '—'}">—</span>)</span>
+                        &middot; corroborates <strong data-counter="factCorroborates" th:text="${run.counters['factCorroborates'] ?: '—'}">—</strong>
+                        &middot; contradicts <strong data-counter="factContradicts" th:text="${run.counters['factContradicts'] ?: '—'}">—</strong>
+                        <span class="muted" th:if="${(run.counters['contradictionsGated'] ?: 0) > 0}">
+                            (+<span data-counter="contradictionsGated" th:text="${run.counters['contradictionsGated']}">0</span> temporally gated)</span>
+                        &middot; succeeds <strong data-counter="succeedsEdges" th:text="${run.counters['succeedsEdges'] ?: '—'}">—</strong>
+                    </td>
+                </tr>
+                <tr th:if="${phaseIndex >= 6}">
+                    <th>Scoring</th>
+                    <td>claims scored <strong data-counter="claimsScored" th:text="${run.counters['claimsScored'] ?: '—'}">—</strong>
+                        &middot; contradiction queue <strong data-counter="contradictionQueue" th:text="${run.counters['contradictionQueue'] ?: '—'}">—</strong>
+                        <th:block th:if="${run.converged != null}">
+                            &middot; <span th:if="${run.converged}">converged in
+                                <strong th:text="${run.iterations}">4</strong> iteration(s)</span>
+                            <span class="badge badge--warning" th:unless="${run.converged}">did not converge
+                                (<span th:text="${run.iterations}">30</span> iterations)</span>
+                        </th:block>
+                        <span class="badge badge--warning" th:if="${(run.counters['scoreI2Clamped'] ?: 0) > 0}"
+                              style="margin-left:0.4rem;">I2 clamped:
+                            <span data-counter="scoreI2Clamped" th:text="${run.counters['scoreI2Clamped']}">0</span></span>
+                    </td>
+                </tr>
+                <tr th:if="${run.counters.containsKey('claimsPublished')}">
+                    <th>Publish</th>
+                    <td>claim vectors written <strong data-counter="claimsPublished" th:text="${run.counters['claimsPublished']}">—</strong></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </th:block>
+</main>
+<script th:src="@{/js/stage3-poll.js}" defer></script>
+</body>
+</html>

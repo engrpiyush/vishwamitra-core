@@ -1917,7 +1917,9 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
     /**
      * The §21 A.3 read-back for `GET /subjects/{id}/scores`: every scored claim with its vector,
      * its fact (label/kind/interval/beliefs) and the fact's judged edges — the "why this score"
-     * decomposition panel's data, one row per claim.
+     * decomposition panel's data, one row per claim. VA-22 rides claim provenance
+     * (basis/source/sensitive), the entity chips and the attestor behind the claim on the same
+     * read.
      */
     fun scoresReadback(subjectId: String): List<ScoredClaimView> =
         driver.session(sessionConfig()).use { s ->
@@ -1926,17 +1928,26 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                         """
                         MATCH (c:Claim {subjectId: ${'$'}subjectId})-[:ASSERTS]->(f:Fact)
                         WHERE c.score IS NOT NULL
+                        OPTIONAL MATCH (a:Attestor {attestorKey: c.attestorKey})
                         RETURN c.claimId AS claimId, c.text AS text, c.type AS type,
                                c.tierSeed AS tierSeed, c.prior AS prior, c.score AS score,
                                c.scoreBare AS scoreBare, c.signals AS signals,
+                               c.basis AS basis, c.sourceClass AS sourceClass,
+                               c.sensitive AS sensitive, c.claimedDate AS claimedDate,
+                               c.attestorKey AS attestorKey, a.name AS attestorName,
+                               a.kind AS attestorKind, a.trust AS attestorTrust,
                                f.factId AS factId, f.label AS factLabel,
                                f.factKind AS factKind, f.slot AS slot,
                                f.validFrom AS validFrom, f.validTo AS validTo,
                                f.datePrecision AS datePrecision, f.anchored AS anchored,
                                f.belief AS belief, f.beliefBare AS beliefBare,
+                               [ (c)-[m:MENTIONS]->(e:Entity) |
+                                 {name: e.canonicalName, type: e.entityType,
+                                  provisional: m.provisional} ] AS entities,
                                [ (f)-[r:CORROBORATES|CONTRADICTS]-(g:Fact) |
                                  {relation: type(r), otherFactId: g.factId,
-                                  otherLabel: g.label, confidence: r.confidence,
+                                  otherLabel: g.label, otherExemplar: g.exemplarClaimId,
+                                  confidence: r.confidence,
                                   votes: r.votes, rationale: r.rationale,
                                   explained: r.explained, temporalOverlap: r.temporalOverlap,
                                   reviewStatus: r.reviewStatus,
@@ -1957,6 +1968,14 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                             score = r["score"].asDouble(0.0),
                             scoreBare = r["scoreBare"].takeUnless { it.isNull }?.asDouble(),
                             signalsJson = r["signals"].takeUnless { it.isNull }?.asString(),
+                            basis = r["basis"].takeUnless { it.isNull }?.asString(),
+                            sourceClass = r["sourceClass"].takeUnless { it.isNull }?.asString(),
+                            sensitive = r["sensitive"].asBoolean(false),
+                            claimedDate = r["claimedDate"].takeUnless { it.isNull }?.asString(),
+                            attestorKey = r["attestorKey"].takeUnless { it.isNull }?.asString(),
+                            attestorName = r["attestorName"].takeUnless { it.isNull }?.asString(),
+                            attestorKind = r["attestorKind"].takeUnless { it.isNull }?.asString(),
+                            attestorTrust = r["attestorTrust"].takeUnless { it.isNull }?.asDouble(),
                             factId = r["factId"].asString(),
                             factLabel = r["factLabel"].asString(""),
                             factKind = r["factKind"].takeUnless { it.isNull }?.asString(),
@@ -1967,6 +1986,7 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                             anchored = r["anchored"].asBoolean(false),
                             belief = r["belief"].takeUnless { it.isNull }?.asDouble(),
                             beliefBare = r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
+                            entities = r["entities"].asList { it.asMap() },
                             edges = r["edges"].asList { it.asMap() },
                             explanation = r["explanation"].takeUnless { it.isNull }?.asString(),
                         )
@@ -1999,12 +2019,16 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                                f.belief AS fromBelief, f.beliefBare AS fromBeliefBare,
                                [ (c:Claim)-[:ASSERTS]->(f) |
                                  {claimId: c.claimId, text: c.text,
-                                  sourceClass: c.sourceClass, assetId: c.assetId} ] AS fromClaims,
+                                  sourceClass: c.sourceClass, assetId: c.assetId,
+                                  relationship: c.relationship, speakerRole: c.speakerRole,
+                                  claimedDate: c.claimedDate} ] AS fromClaims,
                                g.factId AS toFactId, g.label AS toLabel,
                                g.belief AS toBelief, g.beliefBare AS toBeliefBare,
                                [ (c:Claim)-[:ASSERTS]->(g) |
                                  {claimId: c.claimId, text: c.text,
-                                  sourceClass: c.sourceClass, assetId: c.assetId} ] AS toClaims
+                                  sourceClass: c.sourceClass, assetId: c.assetId,
+                                  relationship: c.relationship, speakerRole: c.speakerRole,
+                                  claimedDate: c.claimedDate} ] AS toClaims
                         ORDER BY r.confidence DESC, fromFactId, toFactId
                         """
                             .trimIndent(),
@@ -2391,8 +2415,7 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                                 validTo = r["validTo"].takeUnless { it.isNull }?.asString(),
                                 datePrecision = r["datePrecision"].asString("NONE"),
                                 belief = r["belief"].takeUnless { it.isNull }?.asDouble(),
-                                beliefBare =
-                                    r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
+                                beliefBare = r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
                                 anchored = r["anchored"].asBoolean(false),
                                 memberClaimIds = r["members"].asList { v -> v.asString() }.sorted(),
                                 conflictEdgeIds =
@@ -2486,8 +2509,7 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                             mergedInto = r["mergedInto"].takeUnless { it.isNull }?.asString(),
                             escoId = r["escoId"].takeUnless { it.isNull }?.asString(),
                             rorId = r["rorId"].takeUnless { it.isNull }?.asString(),
-                            wikidataQid =
-                                r["wikidataQid"].takeUnless { it.isNull }?.asString(),
+                            wikidataQid = r["wikidataQid"].takeUnless { it.isNull }?.asString(),
                             mentionCount = r["mentionCount"].asLong(0),
                             provisionalCount = r["provisionalCount"].asLong(0),
                             subjectCount = r["subjectCount"].asLong(0),
@@ -2618,6 +2640,16 @@ data class ScoredClaimView(
     val score: Double,
     val scoreBare: Double?,
     val signalsJson: String?,
+    /** Claim provenance for the VA-22 row badges. */
+    val basis: String? = null,
+    val sourceClass: String? = null,
+    val sensitive: Boolean = false,
+    val claimedDate: String? = null,
+    /** Whose word the claim rests on (§11.2) + its current global trust. */
+    val attestorKey: String? = null,
+    val attestorName: String? = null,
+    val attestorKind: String? = null,
+    val attestorTrust: Double? = null,
     val factId: String,
     val factLabel: String,
     val factKind: String?,
@@ -2628,6 +2660,8 @@ data class ScoredClaimView(
     val anchored: Boolean,
     val belief: Double?,
     val beliefBare: Double?,
+    /** `{name, type, provisional}` per resolved mention — the row's entity chips (§11.3). */
+    val entities: List<Map<String, Any?>> = emptyList(),
     val edges: List<Map<String, Any?>>,
     val explanation: String?,
 )

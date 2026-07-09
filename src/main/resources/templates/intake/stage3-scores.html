@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<link rel="stylesheet" th:href="@{/webjars/datatables/1.13.5/css/jquery.dataTables.min.css}"/>
+<style>
+    /* Make DataTables' default (light) chrome legible on the app theme (decide.html idiom). */
+    .dataTables_wrapper { color: inherit; margin-top: 0.5rem; }
+    .dataTables_wrapper .dataTables_filter input,
+    .dataTables_wrapper .dataTables_length select {
+        color: inherit; background: transparent; border: 1px solid #4b5563;
+        border-radius: 4px; padding: 0.2rem 0.4rem; margin: 0 0.3rem;
+    }
+    .dataTables_wrapper .dataTables_info,
+    .dataTables_wrapper .dataTables_paginate .paginate_button { color: inherit !important; }
+    #scoresTable tbody tr { cursor: pointer; }
+    #scoresTable tbody tr.shown { background: rgba(245, 158, 11, 0.10); }
+    #scoresTable td.conflict-bad { color: #f87171; font-weight: 600; }
+    .score-panel-wrap { padding: 0.7rem 0.5rem; cursor: default; }
+    .score-panel .signals-mini th { text-transform: none; font-weight: 600; }
+    .edge-card {
+        border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px;
+        padding: 0.5rem 0.7rem; margin: 0.4rem 0;
+    }
+    .edge-card--support { border-left-color: #16a34a; }
+    .edge-card--conflict { border-left-color: #dc2626; }
+    .sidecar-block {
+        border: 1px dashed var(--border-strong); border-radius: 6px;
+        padding: 0.5rem 0.7rem; margin-top: 0.6rem;
+    }
+</style>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Scored claims <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+    </div>
+
+    <!-- Provisional-vs-published: the same table serves both sides of the Q6 gate (§11.10). -->
+    <div class="row-actions" style="margin:0.4rem 0 0.8rem;">
+        <span class="badge badge--success" th:if="${run != null and run.status.name() == 'PUBLISHED'}">PUBLISHED &middot; ledger values</span>
+        <span class="badge badge--warning" th:if="${run != null and run.status.name() == 'AWAITING_REVIEW'}">PROVISIONAL &middot; awaiting contradiction review</span>
+        <span class="badge badge--info"
+              th:if="${run != null and run.status.name() != 'PUBLISHED' and run.status.name() != 'AWAITING_REVIEW'}"
+              th:text="'PROVISIONAL · run ' + ${run.status}">PROVISIONAL</span>
+        <span class="muted"><span th:text="${rows.size()}">0</span> scored claim(s) —
+            <strong>click a row</strong> for the &ldquo;why this score&rdquo; decomposition.</span>
+    </div>
+
+    <div th:if="${rows.isEmpty()}" class="empty-state">
+        No scored claims yet — they appear once a Stage 3 run reaches SCORING.
+        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}">Go to the run page &rarr;</a>
+    </div>
+
+    <th:block th:unless="${rows.isEmpty()}">
+        <table id="scoresTable" class="grid" style="width:100%;">
+            <thead>
+            <tr>
+                <th>Score</th><th>Tier</th><th>Type</th><th>Claim</th><th>Fact</th><th>Support</th><th>Conflict</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="row : ${rows}" th:attr="data-claim-id=${row.claimId}">
+                <td th:attr="data-order=${row.score}">
+                    <strong th:text="${row.scoreText}">0.90</strong>
+                    <span class="badge badge--muted" th:if="${row.scoreBareText != null}"
+                          title="score without sidecar explanations">bare
+                        <span th:text="${row.scoreBareText}">0.31</span></span>
+                </td>
+                <td th:attr="data-order=${row.tierRank}">
+                    <th:block th:if="${row.tierSeed != null and row.tierSeed != row.scoredTier}">
+                        <span class="badge badge--muted" th:text="${row.tierSeed}">LOW</span>
+                        <span class="muted">&rarr;</span>
+                    </th:block>
+                    <span class="badge" th:classappend="'badge--' + ${#strings.toLowerCase(row.scoredTier)}"
+                          th:text="${row.scoredTier}">HIGH</span>
+                </td>
+                <td><span class="badge" th:text="${row.type}">TYPE</span></td>
+                <td>
+                    <span class="truncate" style="display:inline-block; max-width:340px; vertical-align:bottom;"
+                          th:text="${row.text}">claim text</span>
+                    <span class="badge badge--danger" th:if="${row.sensitive}">sensitive</span>
+                    <span class="badge badge--muted" th:if="${row.basis != null}"
+                          th:text="${#strings.toLowerCase(row.basis)}">basis</span>
+                    <div th:if="${!row.entities.isEmpty()}" style="margin-top:0.25rem;">
+                        <span class="chip" th:each="en : ${row.entities}"
+                              style="font-size:0.75rem; padding:0.08rem 0.5rem;"
+                              th:title="${en.type + (en.provisional ? ' · provisional link' : '')}">
+                            <span th:text="${en.name}">entity</span><span class="muted" th:if="${en.provisional}">?</span>
+                        </span>
+                    </div>
+                </td>
+                <td th:attr="data-order=${row.factSize}" th:title="${row.factLabel}">
+                    <span th:text="${row.factSize}">3</span> <span class="muted">claim(s)</span>
+                </td>
+                <td th:text="${row.supportCount}">1</td>
+                <td th:classappend="${row.conflictCount > 0} ? 'conflict-bad'" th:text="${row.conflictCount}">0</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <!-- Panel bank: one read-only "why this score" panel per claim, moved into the
+             DataTables child row on expand (the decide.html editor-bank idiom). -->
+        <div id="scorePanels" hidden>
+            <div class="score-panel" th:each="row : ${rows}" th:attr="data-claim-id=${row.claimId}">
+                <p style="margin:0 0 0.4rem;" th:text="${row.text}">full claim text</p>
+                <div class="row-actions" style="margin-bottom:0.4rem;">
+                    <span class="badge" th:text="${row.type}">TYPE</span>
+                    <span class="badge badge--muted" th:if="${row.sourceClass != null}"
+                          th:text="${#strings.toLowerCase(row.sourceClass)}">source</span>
+                    <span class="badge badge--muted" th:if="${row.basis != null}"
+                          th:text="${#strings.toLowerCase(row.basis)}">basis</span>
+                    <span class="badge badge--danger" th:if="${row.sensitive}">sensitive</span>
+                </div>
+
+                <table class="grid signals-mini" style="width:auto; margin:0.5rem 0;">
+                    <thead>
+                    <tr><th th:each="sig : ${row.signals}" th:text="${sig.first}">term</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr><td th:each="sig : ${row.signals}" th:text="${sig.second}">0.50</td></tr>
+                    </tbody>
+                </table>
+
+                <p style="margin:0.4rem 0;">
+                    <span class="muted">Fact:</span> <strong th:text="${row.factLabel}">label</strong>
+                    <span class="badge badge--muted" th:if="${row.factKind != null}"
+                          th:text="${#strings.toLowerCase(row.factKind)}">state</span>
+                    <span class="badge badge--muted" th:if="${row.slot != null}"
+                          th:text="${#strings.toLowerCase(row.slot)}">slot</span>
+                    <span class="muted" th:text="${row.intervalText}">interval</span>
+                    <span class="badge badge--success" th:if="${row.anchored}"
+                          title="anchored by documentary evidence">anchored</span>
+                    <span class="muted" th:if="${row.beliefText != null}">&middot; belief
+                        <strong th:text="${row.beliefText}">0.8</strong><th:block
+                            th:if="${row.beliefBareText != null}"> (bare <span
+                            th:text="${row.beliefBareText}">0.7</span>)</th:block></span>
+                    <span class="muted">&middot; <span th:text="${row.factSize}">3</span> member claim(s)</span>
+                </p>
+
+                <p class="muted" style="margin:0.4rem 0;" th:if="${row.attestorText != null}">
+                    Rests on: <span th:text="${row.attestorText}">attestor · trust</span></p>
+
+                <th:block th:if="${!row.edges.isEmpty()}">
+                    <p class="muted" style="margin:0.6rem 0 0.2rem;">Judged edges on this fact:</p>
+                    <div th:each="e : ${row.edges}" class="edge-card"
+                         th:classappend="${e.relation == 'CONTRADICTS'} ? 'edge-card--conflict' : 'edge-card--support'">
+                        <div class="row-actions">
+                            <span class="badge" th:classappend="${e.relation == 'CONTRADICTS'} ? 'badge--danger' : 'badge--success'"
+                                  th:text="${e.relation}">RELATION</span>
+                            <span>vs <strong th:text="${e.otherLabel}">the other fact</strong></span>
+                            <span class="muted" th:if="${e.confidenceText != null}">confidence
+                                <strong th:text="${e.confidenceText}">0.72</strong></span>
+                            <span class="muted" th:if="${e.majorityText != null}">votes
+                                <strong th:text="${e.majorityText}">4/5</strong></span>
+                            <span class="badge badge--info" th:if="${e.explained}"
+                                  title="a sidecar explanation neutralised or contextualised this edge">explained</span>
+                            <span class="badge badge--muted" th:if="${e.reviewStatus != null}"
+                                  th:text="${#strings.toLowerCase(e.reviewStatus)}">proposed</span>
+                            <span class="badge badge--warning"
+                                  th:if="${e.temporalOverlap == true and e.relation == 'CONTRADICTS'}"
+                                  title="the two facts' validity intervals overlap — a real conflict, not a succession">overlap</span>
+                        </div>
+                        <p class="muted" style="margin:0.3rem 0 0; font-size:0.88em;"
+                           th:if="${e.votesText != null}" th:text="'vote split: ' + ${e.votesText}">split</p>
+                        <p class="muted" style="margin:0.3rem 0 0; font-style:italic;"
+                           th:if="${e.rationale != null}" th:text="'“' + ${e.rationale} + '”'">rationale</p>
+                        <p class="muted" style="margin:0.2rem 0 0; font-size:0.85em;"
+                           th:if="${!e.viaEntities.isEmpty()}"
+                           th:text="'via ' + ${#strings.listJoin(e.viaEntities, ', ')}">via entities</p>
+                        <!-- §13 ride-along: label this claim vs the other fact's exemplar (VA-26). -->
+                        <div style="margin-top:0.35rem;" th:if="${e.otherExemplarClaimId != null and e.otherExemplarClaimId != row.claimId}">
+                            <div th:replace="~{fragments/stage3-label :: label(${subject.id}, ${row.claimId}, ${e.otherExemplarClaimId}, '/intake/' + ${subject.id} + '/stage3/scores')}"></div>
+                        </div>
+                    </div>
+                </th:block>
+                <p class="muted" th:if="${row.edges.isEmpty()}" style="margin:0.4rem 0;">
+                    No judged edges touch this fact.</p>
+
+                <div th:if="${row.explanation != null}" class="sidecar-block">
+                    <div class="row-actions">
+                        <span class="badge badge--info">sidecar</span>
+                        <span class="badge badge--success" th:if="${row.sidecarDeltaText != null}">
+                            your explanation moved this claim
+                            <span th:text="${row.sidecarDeltaText}">+0.04</span></span>
+                    </div>
+                    <p class="muted" style="margin:0.3rem 0 0;"
+                       th:text="'“' + ${row.explanation} + '”'">sidecar text</p>
+                </div>
+            </div>
+        </div>
+    </th:block>
+</main>
+<script th:src="@{/webjars/jquery/3.7.1/jquery.min.js}"></script>
+<script th:src="@{/webjars/datatables/1.13.5/js/jquery.dataTables.min.js}"></script>
+<script th:src="@{/js/stage3-scores.js}" defer></script>
+</body>
+</html>

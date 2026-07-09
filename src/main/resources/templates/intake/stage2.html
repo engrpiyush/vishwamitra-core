@@ -52,6 +52,7 @@
             <span class="muted">Claims reviewed and submitted — the approved set is the Stage-3 gate.</span>
         </div>
         <div class="row-actions" style="margin-top:0.8rem;">
+            <a class="btn btn--sm" th:href="@{/intake/{id}/stage3(id=${subject.id})}">Run Stage 3 &rarr;</a>
             <a class="btn btn--sm" th:href="@{/intake/{id}/review/preview(id=${subject.id})}">View review &rarr;</a>
             <form sec:authorize="hasRole('ADMIN')" method="post" class="inline-form"
                   th:action="@{/intake/{id}/review/reopen(id=${subject.id})}"

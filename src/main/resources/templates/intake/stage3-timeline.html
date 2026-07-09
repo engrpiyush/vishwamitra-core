@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<style>
+    #stage3Timeline { margin-top: 0.8rem; }
+    #stage3Timeline svg { display: block; width: 100%; height: auto; }
+    .tl-legend { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.82rem; align-items: center; }
+    .tl-swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: baseline; margin-right: 0.3rem; }
+    .tl-popover {
+        position: absolute; z-index: 60; max-width: 24rem; background: var(--surface);
+        border: 1px solid var(--border-strong); border-radius: 8px; padding: 0.7rem 0.9rem;
+        box-shadow: var(--shadow-lg); font-size: 0.88rem;
+    }
+</style>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Timeline <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+    </div>
+    <p class="muted">The subject's STATE facts as slot lanes (employer, role, education, …) with
+        SUCCEEDS successions; EVENT facts as diamonds. Click a bar or diamond for the fact's
+        details. <span style="color:#dc2626;">&#9888;</span> marks a fact in a surviving
+        (overlap-gated) contradiction — the marker links to its queue card.</p>
+
+    <div class="tl-legend panel" style="padding:0.6rem 0.9rem;">
+        <span><span class="tl-swatch" style="background:#16a34a;"></span>high belief</span>
+        <span><span class="tl-swatch" style="background:#3b82f6;"></span>medium</span>
+        <span><span class="tl-swatch" style="background:#6b7280;"></span>low / unscored</span>
+        <span><span class="tl-swatch" style="background:transparent; border:1.5px dashed #9ca3af;"></span>YEAR precision</span>
+        <span><span class="tl-swatch" style="background:linear-gradient(90deg,#3b82f6,transparent);"></span>open-ended (present)</span>
+        <span style="color:#dc2626;">&#9888; anachronism candidate</span>
+        <span>&#9670; EVENT</span>
+    </div>
+
+    <div class="empty-state" th:unless="${hasDated}">
+        Nothing datable yet — the timeline appears once a run reaches ASSEMBLING and produces
+        dated STATE or EVENT facts.
+        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}">Go to the run page &rarr;</a>
+    </div>
+
+    <div id="stage3Timeline" th:if="${hasDated}"
+         th:attr="data-tier-high=${tierHigh},data-tier-medium=${tierMedium},data-queue-url=@{/intake/{id}/stage3/contradictions(id=${subject.id})},data-scores-url=@{/intake/{id}/stage3/scores(id=${subject.id})}"></div>
+
+    <!-- Off-axis facts: undated STATE + all TIMELESS — listed, never dropped silently (§12). -->
+    <th:block th:if="${!timeline.undated.isEmpty()}">
+        <h2 style="margin-top:1.4rem;">Undated <span class="muted"
+            th:text="'(' + ${timeline.undated.size()} + ')'">(0)</span></h2>
+        <table class="grid">
+            <tbody>
+            <tr th:each="f : ${timeline.undated}">
+                <td>
+                    <strong th:text="${f.label}">label</strong>
+                    <span class="badge badge--muted" th:text="${#strings.toLowerCase(f.factKind)}">kind</span>
+                    <span class="badge badge--muted" th:if="${f.slot != null}"
+                          th:text="${#strings.toLowerCase(f.slot)}">slot</span>
+                    <span class="badge badge--success" th:if="${f.anchored}">anchored</span>
+                </td>
+                <td>
+                    <span class="muted" th:if="${f.belief != null}">belief
+                        <strong th:text="${#numbers.formatDecimal(f.belief, 1, 2)}">0.8</strong></span>
+                    <span class="muted" th:text="'· ' + ${f.memberClaimIds.size()} + ' claim(s)'">· 2 claims</span>
+                    <a th:if="${!f.conflictEdgeIds.isEmpty()}" style="color:#dc2626;"
+                       th:href="@{/intake/{id}/stage3/contradictions(id=${subject.id})} + '#edge-' + ${f.conflictEdgeIds[0]}"
+                       title="in a surviving contradiction — open the queue card">&#9888; conflict</a>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </th:block>
+</main>
+<script th:inline="javascript">
+    window.STAGE3_TIMELINE = JSON.parse(/*[[${timelineJson}]]*/ "{}");
+</script>
+<script th:src="@{/js/stage3-timeline.js}" defer></script>
+</body>
+</html>
