@@ -196,6 +196,11 @@ data class AppProperties(
         val embeddingLocation: String = "",
         /** Claims embedded per poll tick (bounded work per request; VA-13). */
         val embedBatchPerPoll: Int = 32,
+        /**
+         * Claims mention-resolved per poll tick — one Gemini extraction call per tick (the §16
+         * sizing: ~20 claims/call), then per-mention resolution against the global canon (VA-11).
+         */
+        val entityBatchPerPoll: Int = 20,
         /** PRUNED (blocking + cascade) or EXHAUSTIVE (calibration benchmark, eval database). */
         val matchingMode: String = "PRUNED",
         /** Vector blocking: neighbours fetched per claim. */

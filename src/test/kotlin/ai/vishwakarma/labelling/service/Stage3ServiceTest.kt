@@ -24,12 +24,23 @@ import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
+import ai.vishwakarma.labelling.stage3.ClaimRow
 import ai.vishwakarma.labelling.stage3.ClaimToEmbed
+import ai.vishwakarma.labelling.stage3.ClaimToResolve
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
+import ai.vishwakarma.labelling.stage3.EntityCandidate
+import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
+import ai.vishwakarma.labelling.stage3.EntityRef
+import ai.vishwakarma.labelling.stage3.EntityResolutionWrite
+import ai.vishwakarma.labelling.stage3.EntityResolver
+import ai.vishwakarma.labelling.stage3.EntityType
 import ai.vishwakarma.labelling.stage3.EvidenceProjection
+import ai.vishwakarma.labelling.stage3.ExtractedMention
+import ai.vishwakarma.labelling.stage3.ExtractedMentions
 import ai.vishwakarma.labelling.stage3.GraphPing
+import ai.vishwakarma.labelling.stage3.MentionLinkRow
 import ai.vishwakarma.labelling.stage3.PseudoEmbeddingService
 import ai.vishwakarma.labelling.stage3.SchemaStatus
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
@@ -123,7 +134,7 @@ private class FakeS3ReviewRepo : ClaimReviewRepository(mock(Firestore::class.jav
     }
 }
 
-/** In-memory graph: captures projections and mimics the embedding-staleness cursor semantics. */
+/** In-memory graph: captures projections and mimics the two stamp-cursor phases (§11.3/§11.4). */
 private class FakeGraphRepo(props: AppProperties) :
     Stage3GraphRepository(mock(Driver::class.java), props) {
     var pingResult = GraphPing(reachable = true, latencyMs = 1, database = "neo4j")
@@ -132,7 +143,15 @@ private class FakeGraphRepo(props: AppProperties) :
     val projections = mutableListOf<EvidenceProjection>()
     /** claimId → embedding stamp (null = not yet embedded). */
     val claimStamps = linkedMapOf<String, String?>()
-    val claimRows = linkedMapOf<String, ClaimToEmbed>()
+    /** claimId → entity-resolution stamp (null = mentions unresolved). */
+    val claimResolutionStamps = linkedMapOf<String, String?>()
+    val claimRows = linkedMapOf<String, ClaimRow>()
+    /** "type|key" → entity, so later batches exact-match what earlier batches minted. */
+    val entities = linkedMapOf<String, EntityRef>()
+    val mentionLinks = mutableListOf<MentionLinkRow>()
+    /** assetId → issuerTypeAndKey (the Source stamp the Q2 sweep keys on). */
+    val sourceIssuers = linkedMapOf<String, String>()
+    private var issuersUpgraded = false
 
     override fun ping(): GraphPing = pingResult
 
@@ -147,7 +166,9 @@ private class FakeGraphRepo(props: AppProperties) :
         wipes++
         val removed = claimStamps.size
         claimStamps.clear()
+        claimResolutionStamps.clear()
         claimRows.clear()
+        sourceIssuers.clear() // Source nodes are evidence-layer; the global canon survives
         return removed.toLong()
     }
 
@@ -155,7 +176,8 @@ private class FakeGraphRepo(props: AppProperties) :
         projections += projection
         projection.claims.forEach { row ->
             claimStamps.putIfAbsent(row.claimId, null) // re-merge never clears an embedding
-            claimRows[row.claimId] = ClaimToEmbed(row.claimId, row.type, row.text, row.claimedDate)
+            claimResolutionStamps.putIfAbsent(row.claimId, null) // …nor a resolution stamp
+            claimRows[row.claimId] = row
         }
     }
 
@@ -169,7 +191,9 @@ private class FakeGraphRepo(props: AppProperties) :
             .keys
             .sorted()
             .take(limit)
-            .mapNotNull { claimRows[it] }
+            .mapNotNull { id ->
+                claimRows[id]?.let { ClaimToEmbed(it.claimId, it.type, it.text, it.claimedDate) }
+            }
 
     override fun countClaimsNeedingEmbedding(subjectId: String, versionStamp: String): Long =
         claimStamps.values.count { it == null || it != versionStamp }.toLong()
@@ -182,6 +206,69 @@ private class FakeGraphRepo(props: AppProperties) :
         versionStamp: String,
     ) {
         rows.forEach { claimStamps[it.claimId] = versionStamp }
+    }
+
+    override fun claimsNeedingEntityResolution(
+        subjectId: String,
+        versionStamp: String,
+        limit: Int,
+    ): List<ClaimToResolve> =
+        claimResolutionStamps
+            .filterValues { it == null || it != versionStamp }
+            .keys
+            .sorted()
+            .take(limit)
+            .mapNotNull { id ->
+                claimRows[id]?.let {
+                    ClaimToResolve(it.claimId, it.type, it.text, it.sourceClass, it.assetId)
+                }
+            }
+
+    override fun countClaimsNeedingEntityResolution(subjectId: String, versionStamp: String): Long =
+        claimResolutionStamps.values.count { it == null || it != versionStamp }.toLong()
+
+    override fun findEntityByKey(entityType: String, canonicalKey: String): EntityRef? =
+        entities["$entityType|$canonicalKey"]
+
+    override fun findEntityById(entityId: String): EntityRef? =
+        entities.values.firstOrNull { it.entityId == entityId }
+
+    override fun entityKnn(
+        entityType: String,
+        embedding: List<Double>,
+        k: Int,
+    ): List<EntityCandidate> = emptyList() // empty canon neighbourhood → unmatched surfaces mint
+
+    override fun applyEntityResolution(subjectId: String, write: EntityResolutionWrite) {
+        write.mints.forEach {
+            entities["${it.entityType}|${it.canonicalKey}"] =
+                EntityRef(it.entityId, it.entityType, it.canonicalKey, it.canonicalName, null)
+        }
+        mentionLinks += write.links
+        write.sourceIssuers.forEach { sourceIssuers[it.assetId] = it.issuerTypeAndKey }
+        write.claimIds.forEach { claimResolutionStamps[it] = write.stamp }
+    }
+
+    override fun upgradeIssuerAttestors(subjectId: String): Long {
+        if (issuersUpgraded || sourceIssuers.isEmpty()) return 0
+        issuersUpgraded = true
+        return sourceIssuers.size.toLong()
+    }
+}
+
+/** Scriptable extractor: canned per-claim mentions, observable batches, a failure switch. */
+private class ScriptedExtractor(var mentionsByClaim: Map<String, ExtractedMentions> = emptyMap()) :
+    EntityMentionExtractor {
+    override val versionStamp = "test:1:abc123"
+    var failNext = false
+    val batches = mutableListOf<List<String>>()
+
+    override fun extract(claims: List<ClaimToResolve>): Map<String, ExtractedMentions> {
+        if (failNext) throw IllegalStateException("Gemini entity extraction 500 INTERNAL")
+        batches += claims.map { it.claimId }
+        return claims.associate {
+            it.claimId to (mentionsByClaim[it.claimId] ?: ExtractedMentions(emptyList()))
+        }
     }
 }
 
@@ -199,7 +286,11 @@ class Stage3ServiceTest {
     private val props =
         AppProperties(
             stage3 =
-                AppProperties.Stage3(embedBatchPerPoll = 2, phaseTimeout = Duration.ofMinutes(15))
+                AppProperties.Stage3(
+                    embedBatchPerPoll = 2,
+                    entityBatchPerPoll = 2,
+                    phaseTimeout = Duration.ofMinutes(15),
+                )
         )
 
     private val runs = FakeStage3RunRepo()
@@ -211,6 +302,7 @@ class Stage3ServiceTest {
     private val reviews = FakeS3ReviewRepo()
     private val graph = FakeGraphRepo(props)
     private val reviewService = ClaimReviewService(manifests, jobs, claims, reviews, props)
+    private val extractor = ScriptedExtractor()
 
     private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
         Stage3Service(
@@ -223,6 +315,8 @@ class Stage3ServiceTest {
             reviewService,
             graph,
             embeddings,
+            extractor,
+            EntityResolver(graph, embeddings, props),
             props,
         )
 
@@ -302,8 +396,10 @@ class Stage3ServiceTest {
     // ---- the state machine walk ----------------------------------------------------
 
     @Test
-    fun `polling walks PENDING through to AWAITING_REVIEW with real sync and embed`() {
+    fun `polling walks PENDING through to AWAITING_REVIEW with real sync, entities and embed`() {
         seedSubject(claimCount = 3)
+        extractor.mentionsByClaim =
+            mapOf("c1" to ExtractedMentions(listOf(ExtractedMention("Kotlin", EntityType.SKILL))))
         val svc = service()
         var run = svc.submit(subjectId, "op").valueOrNull()!!
         assertEquals(Stage3RunStatus.PENDING, run.status)
@@ -314,8 +410,18 @@ class Stage3ServiceTest {
         assertEquals(1L, run.counters[Stage3Counters.SOURCES_SYNCED])
         assertEquals(1L, run.counters[Stage3Counters.ATTESTORS_SYNCED])
 
-        run = svc.poll(run.id).valueOrNull()!! // VA-11 stub slot
+        run = svc.poll(run.id).valueOrNull()!! // resolves c1, c2 (batch = 2)
+        assertEquals(Stage3RunStatus.RESOLVING_ENTITIES, run.status)
+        assertEquals(2L, run.counters[Stage3Counters.CLAIMS_ENTITY_RESOLVED])
+        assertEquals(1L, run.counters[Stage3Counters.ENTITIES_MINTED])
+
+        run = svc.poll(run.id).valueOrNull()!! // resolves c3
+        assertEquals(Stage3RunStatus.RESOLVING_ENTITIES, run.status)
+        assertEquals(3L, run.counters[Stage3Counters.CLAIMS_ENTITY_RESOLVED])
+
+        run = svc.poll(run.id).valueOrNull()!! // none left → issuer sweep → EMBEDDING
         assertEquals(Stage3RunStatus.EMBEDDING, run.status)
+        assertEquals(0L, run.counters[Stage3Counters.ISSUER_ATTESTORS_UPGRADED])
 
         run = svc.poll(run.id).valueOrNull()!! // embeds c1, c2 (batch = 2)
         assertEquals(Stage3RunStatus.EMBEDDING, run.status)
@@ -383,7 +489,8 @@ class Stage3ServiceTest {
         val failing = service(embeddings = FailingEmbeddings())
         var run = failing.submit(subjectId, "op").valueOrNull()!!
         run = failing.poll(run.id).valueOrNull()!! // SYNC
-        run = failing.poll(run.id).valueOrNull()!! // entities stub → EMBEDDING
+        run = failing.poll(run.id).valueOrNull()!! // resolves c1 (no mentions → no embed calls)
+        run = failing.poll(run.id).valueOrNull()!! // none left → EMBEDDING
         run = failing.poll(run.id).valueOrNull()!! // embed fails
         assertEquals(Stage3RunStatus.FAILED, run.status)
         assertEquals(Stage3RunStatus.EMBEDDING, run.failedPhase)
@@ -430,6 +537,85 @@ class Stage3ServiceTest {
         claims.failNext = false
         run = svc.poll(run.id).valueOrNull()!!
         assertEquals(Stage3RunStatus.RESOLVING_ENTITIES, run.status)
+    }
+
+    // ---- RESOLVE_ENTITIES (VA-11) --------------------------------------------------
+
+    @Test
+    fun `entity resolution chunks per poll and later batches link what earlier ones minted`() {
+        seedSubject(claimCount = 3)
+        extractor.mentionsByClaim =
+            mapOf(
+                "c1" to ExtractedMentions(listOf(ExtractedMention("Neo4j", EntityType.SKILL))),
+                // c3 lands in the second batch — its mention must hit the c1-minted entity.
+                "c3" to ExtractedMentions(listOf(ExtractedMention("Neo4j,", EntityType.SKILL))),
+            )
+        val svc = service()
+        var run = svc.submit(subjectId, "op").valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!! // SYNC
+        run = svc.poll(run.id).valueOrNull()!! // resolves c1, c2
+        assertEquals(1L, run.counters[Stage3Counters.ENTITIES_MINTED])
+        run = svc.poll(run.id).valueOrNull()!! // resolves c3
+        assertEquals(1L, run.counters[Stage3Counters.ENTITIES_MINTED])
+        assertEquals(1L, run.counters[Stage3Counters.MENTIONS_LINKED])
+        run = svc.poll(run.id).valueOrNull()!! // none left → EMBEDDING
+        assertEquals(Stage3RunStatus.EMBEDDING, run.status)
+        assertEquals(listOf(listOf("c1", "c2"), listOf("c3")), extractor.batches)
+        assertTrue(graph.mentionLinks.all { it.canonicalKey == "neo4j" })
+        assertEquals(setOf("c1", "c3"), graph.mentionLinks.map { it.claimId }.toSet())
+    }
+
+    @Test
+    fun `an extraction failure fails the run verbatim and retry resumes the stamp cursor`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = svc.submit(subjectId, "op").valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!! // SYNC
+        run = svc.poll(run.id).valueOrNull()!! // resolves c1, c2
+        extractor.failNext = true
+        run = svc.poll(run.id).valueOrNull()!! // c3's batch blows up
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertEquals(Stage3RunStatus.RESOLVING_ENTITIES, run.failedPhase)
+        assertTrue(run.error!!.contains("Gemini entity extraction 500 INTERNAL"))
+
+        extractor.failNext = false
+        run = svc.retry(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.RESOLVING_ENTITIES, run.status)
+        run = svc.poll(run.id).valueOrNull()!! // only c3 is still unstamped
+        assertEquals(listOf("c3"), extractor.batches.last())
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.EMBEDDING, run.status)
+    }
+
+    @Test
+    fun `a resolved documentary issuer upgrades the fallback attestor at phase completion`() {
+        seedSubject(claimCount = 1)
+        assets.store["a1"] =
+            assets.store["a1"]!!.copy(
+                sourceClass = SourceClass.DOCUMENTARY,
+                relationship = Relationship.INSTITUTION,
+            )
+        claims.store["c1"] =
+            claims.store["c1"]!!.copy(
+                sourceClass = SourceClass.DOCUMENTARY,
+                relationship = Relationship.INSTITUTION,
+            )
+        extractor.mentionsByClaim =
+            mapOf(
+                "c1" to
+                    ExtractedMentions(
+                        listOf(ExtractedMention("Coursera", EntityType.INSTITUTION)),
+                        issuerSurface = "Coursera",
+                    )
+            )
+        val svc = service()
+        var run = svc.submit(subjectId, "op").valueOrNull()!!
+        run = svc.poll(run.id).valueOrNull()!! // SYNC
+        run = svc.poll(run.id).valueOrNull()!! // resolves c1 → Source stamped
+        assertEquals("INSTITUTION|coursera", graph.sourceIssuers["a1"])
+        run = svc.poll(run.id).valueOrNull()!! // completion sweep upgrades the attestation
+        assertEquals(Stage3RunStatus.EMBEDDING, run.status)
+        assertEquals(1L, run.counters[Stage3Counters.ISSUER_ATTESTORS_UPGRADED])
     }
 
     // ---- rerun -------------------------------------------------------------------

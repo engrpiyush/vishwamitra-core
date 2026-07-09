@@ -277,3 +277,17 @@ TEACHING_SESSION: >-
   it is visible in the explanation) and for instructional ability itself. Also extract the
   session as an EPISODE claim (audience, setting, topic) and any factual self-statements
   made while teaching.
+
+# --- Stage 3 (reserved non-ContentType rows, LLD §11.3/§11.6) -----------------
+# Same override mechanics: a Firestore `extraction_prompts` row with this id wins;
+# the extractor stamps version:hash onto resolved claims, so an edit re-resolves
+# mentions on the next run (the graph-as-cursor idiom).
+
+STAGE3_ENTITY: >-
+  Extract only entities that could help match this claim against other claims about the
+  same person: concrete skills and technologies, named organizations, institutions,
+  credentials, projects, people, and places. Skip generic nouns ("a company", "the team",
+  "software"), job-title boilerplate, pronouns, and anything not actually named in the
+  claim. Prefer the most specific surface written ("Google Cloud Spanner" as one mention,
+  not "Google" plus "Cloud" plus "Spanner") and never invent an entity the claim does not
+  name.

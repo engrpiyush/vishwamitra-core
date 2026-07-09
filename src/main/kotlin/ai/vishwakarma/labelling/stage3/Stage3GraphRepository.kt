@@ -38,6 +38,24 @@ data class ClaimToEmbed(
     val claimedDate: String?,
 )
 
+/** An `:Entity` as the exact-match lookup sees it ([mergedInto] ≠ null ⇒ tombstone redirect). */
+data class EntityRef(
+    val entityId: String,
+    val entityType: String,
+    val canonicalKey: String,
+    val canonicalName: String,
+    val mergedInto: String?,
+)
+
+/** One entity-kNN candidate (LLD §21 A.2) — tombstones already excluded. */
+data class EntityCandidate(
+    val entityId: String,
+    val entityType: String,
+    val canonicalKey: String,
+    val canonicalName: String,
+    val score: Double,
+)
+
 /**
  * All Neo4j access for Stage 3 — plain driver + hand-written Cypher (LLD §8.1: no OGM; the access
  * pattern is MERGE/MATCH + vector queries). Three structural rules this class enforces:
@@ -448,6 +466,330 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
             }
         }
     }
+
+    // ---- RESOLVE_ENTITIES phase (LLD §11.3) ---------------------------------------
+
+    /**
+     * Claims whose mentions are unresolved or resolved under a different extractor stamp (prompt
+     * version:hash / dry-run flip) — the graph-as-cursor idiom, mirroring [claimsNeedingEmbedding].
+     */
+    fun claimsNeedingEntityResolution(
+        subjectId: String,
+        versionStamp: String,
+        limit: Int,
+    ): List<ClaimToResolve> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim {subjectId: ${'$'}subjectId})
+                        WHERE c.entityResolutionStamp IS NULL
+                           OR c.entityResolutionStamp <> ${'$'}stamp
+                        RETURN c.claimId AS claimId, c.type AS type, c.text AS text,
+                               c.sourceClass AS sourceClass, c.assetId AS assetId
+                        ORDER BY c.claimId LIMIT ${'$'}limit
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "stamp" to versionStamp, "limit" to limit),
+                    )
+                    .list { r ->
+                        ClaimToResolve(
+                            claimId = r["claimId"].asString(),
+                            type = r["type"].takeUnless { it.isNull }?.asString(),
+                            text = r["text"].asString(""),
+                            sourceClass = r["sourceClass"].takeUnless { it.isNull }?.asString(),
+                            assetId = r["assetId"].takeUnless { it.isNull }?.asString(),
+                        )
+                    }
+            }
+        }
+
+    fun countClaimsNeedingEntityResolution(subjectId: String, versionStamp: String): Long =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        "MATCH (c:Claim {subjectId: ${'$'}subjectId}) " +
+                            "WHERE c.entityResolutionStamp IS NULL " +
+                            "OR c.entityResolutionStamp <> ${'$'}stamp " +
+                            "RETURN count(c) AS c",
+                        mapOf("subjectId" to subjectId, "stamp" to versionStamp),
+                    )
+                    .single()["c"]
+                    .asLong()
+            }
+        }
+
+    /**
+     * Exact-match leg of §11.3: `canonicalKey` first, adopted alias keys second, type-scoped,
+     * global (deliberately not subject-scoped — the Q1 cross-subject canon). Tombstones are
+     * returned as-is; the caller follows [EntityRef.mergedInto].
+     */
+    fun findEntityByKey(entityType: String, canonicalKey: String): EntityRef? =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (e:Entity {entityType: ${'$'}type})
+                        WHERE e.canonicalKey = ${'$'}key
+                           OR ${'$'}key IN coalesce(e.aliasKeys, [])
+                        RETURN e.entityId AS entityId, e.entityType AS entityType,
+                               e.canonicalKey AS canonicalKey, e.canonicalName AS canonicalName,
+                               e.mergedInto AS mergedInto
+                        ORDER BY CASE WHEN e.canonicalKey = ${'$'}key THEN 0 ELSE 1 END
+                        LIMIT 1
+                        """
+                            .trimIndent(),
+                        mapOf("type" to entityType, "key" to canonicalKey),
+                    )
+                    .list { it.toEntityRef() }
+                    .firstOrNull()
+            }
+        }
+
+    fun findEntityById(entityId: String): EntityRef? =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        "MATCH (e:Entity {entityId: ${'$'}id}) " +
+                            "RETURN e.entityId AS entityId, e.entityType AS entityType, " +
+                            "e.canonicalKey AS canonicalKey, e.canonicalName AS canonicalName, " +
+                            "e.mergedInto AS mergedInto LIMIT 1",
+                        mapOf("id" to entityId),
+                    )
+                    .list { it.toEntityRef() }
+                    .firstOrNull()
+            }
+        }
+
+    private fun org.neo4j.driver.Record.toEntityRef(): EntityRef =
+        EntityRef(
+            entityId = this["entityId"].asString(),
+            entityType = this["entityType"].asString(),
+            canonicalKey = this["canonicalKey"].asString(),
+            canonicalName = this["canonicalName"].asString(""),
+            mergedInto = this["mergedInto"].takeUnless { it.isNull }?.asString(),
+        )
+
+    /**
+     * Entity-surface kNN (LLD §21 A.2 verbatim): fetch [k] nearest over the shared index, then
+     * type-scope and drop tombstones — so fewer than [k] same-type candidates can come back.
+     */
+    fun entityKnn(entityType: String, embedding: List<Double>, k: Int): List<EntityCandidate> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        CALL db.index.vector.queryNodes('entity_embedding', ${'$'}k, ${'$'}embedding)
+                        YIELD node, score
+                        WHERE node.entityType = ${'$'}type AND node.mergedInto IS NULL
+                        RETURN node.entityId AS entityId, node.entityType AS entityType,
+                               node.canonicalKey AS canonicalKey,
+                               node.canonicalName AS canonicalName, score
+                        ORDER BY score DESC
+                        """
+                            .trimIndent(),
+                        mapOf("k" to k, "embedding" to embedding, "type" to entityType),
+                    )
+                    .list { r ->
+                        EntityCandidate(
+                            entityId = r["entityId"].asString(),
+                            entityType = r["entityType"].asString(),
+                            canonicalKey = r["canonicalKey"].asString(),
+                            canonicalName = r["canonicalName"].asString(""),
+                            score = r["score"].asDouble(),
+                        )
+                    }
+            }
+        }
+
+    /**
+     * Persist one resolution tick as a single transaction — mints, MENTIONS links, adopted aliases,
+     * `Source.issuerTypeAndKey` stamps, then the claim stamps. A failed tick persists nothing, so
+     * the stamp cursor retries it whole. Stale MENTIONS of the batch's claims are cleared first:
+     * re-resolution (prompt bump, dry-run flip) replaces a claim's mentions rather than accreting
+     * them.
+     *
+     * Mint MERGE is keyed `(entityType, canonicalKey)` — the planned `entityId` survives only on ON
+     * CREATE, and links address entities by the key pair, so losing a mint race is harmless.
+     * `typeAndKey` is always written (the §21 A.1 Community-fallback constraint keys on it).
+     */
+    fun applyEntityResolution(subjectId: String, write: EntityResolutionWrite) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                if (write.mints.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MERGE (e:Entity {entityType: row.entityType,
+                                             canonicalKey: row.canonicalKey})
+                            ON CREATE SET e.entityId = row.entityId,
+                                          e.canonicalName = row.canonicalName,
+                                          e.typeAndKey = row.entityType + '|' + row.canonicalKey,
+                                          e.aliases = [], e.aliasKeys = [],
+                                          e.embedding = row.embedding,
+                                          e.embeddingModelVersion = row.embeddingStamp,
+                                          e.createdFrom = row.createdFrom,
+                                          e.createdAt = datetime()
+                            """
+                                .trimIndent(),
+                            mapOf("rows" to write.mints.map { it.toMap() }),
+                        )
+                        .consume()
+                tx.run(
+                        """
+                        UNWIND ${'$'}claimIds AS cid
+                        MATCH (c:Claim {claimId: cid}) WHERE c.subjectId = ${'$'}subjectId
+                        OPTIONAL MATCH (c)-[m:MENTIONS]->()
+                        DELETE m
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "claimIds" to write.claimIds),
+                    )
+                    .consume()
+                if (write.links.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (c:Claim {claimId: row.claimId})
+                            WHERE c.subjectId = ${'$'}subjectId
+                            MATCH (e:Entity {entityType: row.entityType,
+                                             canonicalKey: row.canonicalKey})
+                            MERGE (c)-[m:MENTIONS {surface: row.surface}]->(e)
+                            SET m.confidence = row.confidence, m.provisional = row.provisional,
+                                m.method = row.method
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to write.links.map { it.toMap() }
+                            ),
+                        )
+                        .consume()
+                if (write.aliasAppends.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (e:Entity {entityType: row.entityType,
+                                             canonicalKey: row.canonicalKey})
+                            SET e.aliases = CASE WHEN row.surface IN coalesce(e.aliases, [])
+                                                 THEN e.aliases
+                                                 ELSE coalesce(e.aliases, []) + row.surface END,
+                                e.aliasKeys = CASE WHEN row.aliasKey IN coalesce(e.aliasKeys, [])
+                                                   THEN e.aliasKeys
+                                                   ELSE coalesce(e.aliasKeys, []) + row.aliasKey
+                                              END
+                            """
+                                .trimIndent(),
+                            mapOf("rows" to write.aliasAppends.map { it.toMap() }),
+                        )
+                        .consume()
+                if (write.sourceIssuers.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (s:Source {assetId: row.assetId})
+                            WHERE s.subjectId = ${'$'}subjectId
+                            SET s.issuerTypeAndKey = row.issuerTypeAndKey
+                            """
+                                .trimIndent(),
+                            mapOf(
+                                "subjectId" to subjectId,
+                                "rows" to write.sourceIssuers.map { it.toMap() },
+                            ),
+                        )
+                        .consume()
+                tx.run(
+                        """
+                        UNWIND ${'$'}claimIds AS cid
+                        MATCH (c:Claim {claimId: cid}) WHERE c.subjectId = ${'$'}subjectId
+                        SET c.entityResolutionStamp = ${'$'}stamp
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "claimIds" to write.claimIds,
+                            "stamp" to write.stamp,
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /**
+     * The §18.2 Q2 decision, **UPGRADE** (2026-07-09): once resolution stamps a documentary
+     * source's issuer entity (`Source.issuerTypeAndKey`), its claims migrate from the per-asset
+     * fallback attestor (`issuer:asset:<assetId>`) to the entity-keyed one
+     * (`issuer:entity:<entityId>`) — so the same issuer accrues one global trust node across assets
+     * and subjects, the §11.2 intent. Runs as an idempotent sweep at phase completion: derived
+     * state, so a re-synced claim (whose SYNC re-MERGEd the fallback edge) heals on the next run's
+     * sweep. Orphaned fallback attestors are deleted; trust priors carry over unchanged, so scores
+     * are unaffected beyond cross-asset aggregation. Journal = the run's `issuerAttestorsUpgraded`
+     * counter + the service log line.
+     */
+    fun upgradeIssuerAttestors(subjectId: String): Long =
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        MATCH (s:Source {subjectId: ${'$'}subjectId})
+                        WHERE s.issuerTypeAndKey IS NOT NULL
+                        MATCH (e:Entity {typeAndKey: s.issuerTypeAndKey})
+                        MERGE (a:Attestor {attestorKey: 'issuer:entity:' + e.entityId})
+                        ON CREATE SET a.kind = 'ISSUER', a.relationship = s.relationship,
+                                      a.name = e.canonicalName, a.trustPrior = ${'$'}prior,
+                                      a.trust = ${'$'}prior, a.claimCount = 0, a.subjectSpan = 0
+                        ON MATCH SET a.name = coalesce(a.name, e.canonicalName)
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId, "prior" to TRUST_PRIOR_ISSUER),
+                    )
+                    .consume()
+                val upgraded =
+                    tx.run(
+                            """
+                            MATCH (s:Source {subjectId: ${'$'}subjectId})
+                            WHERE s.issuerTypeAndKey IS NOT NULL
+                            MATCH (e:Entity {typeAndKey: s.issuerTypeAndKey})
+                            MATCH (a:Attestor {attestorKey: 'issuer:entity:' + e.entityId})
+                            MATCH (c:Claim)-[r:ATTESTED_BY]->
+                                  (fb:Attestor {attestorKey: 'issuer:asset:' + s.assetId})
+                            WHERE (c)-[:FROM]->(s)
+                            MERGE (c)-[:ATTESTED_BY]->(a)
+                            DELETE r
+                            RETURN count(*) AS upgraded
+                            """
+                                .trimIndent(),
+                            mapOf("subjectId" to subjectId),
+                        )
+                        .single()["upgraded"]
+                        .asLong()
+                tx.run(
+                        """
+                        MATCH (s:Source {subjectId: ${'$'}subjectId})-[v:VOICED_BY]->(fb:Attestor)
+                        WHERE s.issuerTypeAndKey IS NOT NULL
+                          AND fb.attestorKey = 'issuer:asset:' + s.assetId
+                        MATCH (e:Entity {typeAndKey: s.issuerTypeAndKey})
+                        MATCH (a:Attestor {attestorKey: 'issuer:entity:' + e.entityId})
+                        MERGE (s)-[:VOICED_BY]->(a)
+                        DELETE v
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .consume()
+                // Fallback attestors left with no voice anywhere are clutter, not history —
+                // the upgrade itself is the journaled event.
+                tx.run(
+                        "MATCH (fb:Attestor) WHERE fb.attestorKey STARTS WITH 'issuer:asset:' " +
+                            "AND NOT (fb)<-[:ATTESTED_BY]-() AND NOT (fb)<-[:VOICED_BY]-() " +
+                            "DELETE fb"
+                    )
+                    .consume()
+                upgraded
+            }
+        }
 }
 
 /** One embedded claim ready to persist. */

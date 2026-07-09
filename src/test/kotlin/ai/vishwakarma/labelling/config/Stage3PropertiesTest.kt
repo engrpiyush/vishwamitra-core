@@ -20,6 +20,8 @@ class Stage3PropertiesTest {
         assertEquals("neo4j", s3.neo4jDatabase)
         assertEquals("gemini-embedding-001", s3.embeddingModel)
         assertEquals(3072, s3.embeddingDimensions)
+        assertEquals(32, s3.embedBatchPerPoll)
+        assertEquals(20, s3.entityBatchPerPoll)
         assertEquals("PRUNED", s3.matchingMode)
         assertEquals(20, s3.knnK)
         assertEquals(0.60, s3.simFloor)
@@ -67,6 +69,7 @@ class Stage3PropertiesTest {
                 mapOf(
                     "app.stage3.neo4j-uri" to "neo4j+s://abcd1234.databases.neo4j.io",
                     "app.stage3.knn-k" to "33",
+                    "app.stage3.entity-batch-per-poll" to "7",
                     "app.stage3.sim-floor" to "0.7",
                     "app.stage3.connection-liveness-check-timeout" to "90s",
                     "app.stage3.volatile-half-life-years.SKILL" to "4.5",
@@ -77,6 +80,7 @@ class Stage3PropertiesTest {
             Binder(source).bind("app.stage3", Bindable.of(AppProperties.Stage3::class.java)).get()
         assertEquals("neo4j+s://abcd1234.databases.neo4j.io", bound.neo4jUri)
         assertEquals(33, bound.knnK)
+        assertEquals(7, bound.entityBatchPerPoll)
         assertEquals(0.7, bound.simFloor)
         assertEquals(Duration.ofSeconds(90), bound.connectionLivenessCheckTimeout)
         assertEquals(mapOf("SKILL" to 4.5), bound.volatileHalfLifeYears)

@@ -14,6 +14,8 @@ import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.stage3.EmbeddedClaim
 import ai.vishwakarma.labelling.stage3.EmbeddingService
 import ai.vishwakarma.labelling.stage3.EmbeddingTaskType
+import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
+import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import ai.vishwakarma.labelling.stage3.buildEvidenceProjection
 import ai.vishwakarma.labelling.stage3.embeddingText
@@ -26,7 +28,7 @@ import org.springframework.stereotype.Service
 
 /**
  * Stage 3 (reviewed claims → authenticity graph/scores) — the run lifecycle chassis (LLD §9.6–9.7)
- * plus the phases built so far: SYNC (§11.2) and EMBED (§11.4). RESOLVE_ENTITIES (VA-11), MATCH
+ * plus the phases built so far: SYNC (§11.2), RESOLVE_ENTITIES (§11.3) and EMBED (§11.4). MATCH
  * (VA-14), JUDGE (VA-15), ASSEMBLE (VA-16), SCORE (VA-17) and the publish gate (VA-18) plug into
  * the [poll] dispatch as they land; until then their slots log and advance so the state machine is
  * walkable end-to-end (the VA-9 contract) without pretending any judgment happened — counters stay
@@ -49,6 +51,8 @@ class Stage3Service(
     private val reviewService: ClaimReviewService,
     private val graph: Stage3GraphRepository,
     private val embeddings: EmbeddingService,
+    private val entityExtractor: EntityMentionExtractor,
+    private val entityResolver: EntityResolver,
     private val props: AppProperties,
 ) {
 
@@ -116,8 +120,7 @@ class Stage3Service(
         return when (run.status) {
             Stage3RunStatus.PENDING -> runSync(enterPhase(run, Stage3RunStatus.SYNCING))
             Stage3RunStatus.SYNCING -> runSync(run) // re-entrant after a crashed poll
-            Stage3RunStatus.RESOLVING_ENTITIES ->
-                stubAdvance(run, Stage3RunStatus.EMBEDDING, "RESOLVE_ENTITIES", "VA-11").right()
+            Stage3RunStatus.RESOLVING_ENTITIES -> runResolveEntitiesChunk(run).right()
             Stage3RunStatus.EMBEDDING -> runEmbedChunk(run).right()
             Stage3RunStatus.MATCHING ->
                 stubAdvance(run, Stage3RunStatus.JUDGING, "MATCH", "VA-14").right()
@@ -254,6 +257,76 @@ class Stage3Service(
             }
             .right()
     }
+
+    /**
+     * RESOLVE_ENTITIES (LLD §11.3): one bounded chunk per poll — one Gemini typed-mention
+     * extraction call over the next claim batch, resolved against the **global** canon (link / mint
+     * / review-list, the [EntityResolver] pipeline) and persisted as a single transaction. The
+     * graph is the cursor (`entityResolutionStamp` vs the extractor's prompt stamp), so a killed
+     * poll resumes free and a prompt edit or dry-run flip re-resolves on the next run. When nothing
+     * remains, the §18.2 Q2 issuer-attestor upgrade sweep runs (documentary fallback attestors
+     * migrate to the freshly resolved issuer entities) and the phase advances.
+     */
+    private fun runResolveEntitiesChunk(run: Stage3Run): Stage3Run =
+        inPhase(run, "RESOLVE_ENTITIES") {
+            val stamp = entityExtractor.versionStamp
+            val batch =
+                graph.claimsNeedingEntityResolution(
+                    run.subjectId,
+                    stamp,
+                    props.stage3.entityBatchPerPoll,
+                )
+            if (batch.isEmpty()) {
+                val upgraded = graph.upgradeIssuerAttestors(run.subjectId)
+                if (upgraded > 0)
+                    log.info(
+                        "Run {}: upgraded {} documentary attestation(s) to issuer-entity keys " +
+                            "(LLD §18.2 Q2)",
+                        run.id,
+                        upgraded,
+                    )
+                advance(
+                    run,
+                    Stage3RunStatus.EMBEDDING,
+                    mapOf(
+                        Stage3Counters.CLAIMS_ENTITY_RESOLVED to graph.countClaims(run.subjectId),
+                        Stage3Counters.ISSUER_ATTESTORS_UPGRADED to upgraded,
+                    ),
+                )
+            } else {
+                val outcome =
+                    entityResolver.resolve(
+                        run.subjectId,
+                        batch,
+                        entityExtractor.extract(batch),
+                        stamp,
+                    )
+                val done =
+                    graph.countClaims(run.subjectId) -
+                        graph.countClaimsNeedingEntityResolution(run.subjectId, stamp)
+                val counters = run.counters
+                val progressed =
+                    run.copy(
+                        counters =
+                            counters +
+                                mapOf(
+                                    Stage3Counters.CLAIMS_ENTITY_RESOLVED to done,
+                                    Stage3Counters.MENTIONS_LINKED to
+                                        (counters[Stage3Counters.MENTIONS_LINKED] ?: 0L) +
+                                            outcome.linked,
+                                    Stage3Counters.ENTITIES_MINTED to
+                                        (counters[Stage3Counters.ENTITIES_MINTED] ?: 0L) +
+                                            outcome.minted,
+                                    Stage3Counters.MENTIONS_REVIEW_LISTED to
+                                        (counters[Stage3Counters.MENTIONS_REVIEW_LISTED] ?: 0L) +
+                                            outcome.reviewListed,
+                                ),
+                        phaseSince = Instant.now(),
+                    )
+                runs.save(progressed)
+                progressed
+            }
+        }
 
     /**
      * EMBED (LLD §11.4): one bounded chunk per poll. The graph is the cursor — claims with a

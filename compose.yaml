@@ -1,0 +1,29 @@
+# Local-dev Neo4j — the Stage 3 claim graph (VA-6). Runs beside the Firestore emulator; see
+# README "Local development". Community edition: every Cypher feature Stage 3 requires except
+# NODE KEY constraints is Community-compatible, and the schema initializer degrades those
+# automatically (stage3/Stage3GraphRepository, LLD §21 A.1).
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: vishwamitra-neo4j
+    ports:
+      - "7687:7687" # bolt — the app dev default (bolt://localhost:7687)
+      - "7474:7474" # Browser
+    environment:
+      # Dev-only credentials; the app's dev profile defaults to the same pair. Override the
+      # password via NEO4J_LOCAL_PASSWORD (compose) + NEO4J_PASSWORD (app) together.
+      NEO4J_AUTH: neo4j/${NEO4J_LOCAL_PASSWORD:-vishwamitra-dev}
+      # Small-footprint memory posture — plenty for dev corpora incl. 3072-dim vectors.
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  # Graph survives container restarts; `docker compose down -v` wipes it (documented reset).
+  neo4j-data:

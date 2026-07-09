@@ -63,9 +63,17 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     }
 
     /** The block extraction uses for [contentType]: the stored row when present, else built-in. */
-    fun resolve(contentType: ContentType): ResolvedExtractionPrompt {
-        val row = prompts.findById(contentType.name)?.takeIf { it.instructions.isNotBlank() }
-        val instructions = row?.instructions ?: ExtractionPrompt.builtinFor(contentType)
+    fun resolve(contentType: ContentType): ResolvedExtractionPrompt = resolveKey(contentType.name)
+
+    /**
+     * Same resolution for the reserved non-ContentType rows Stage 3 rides on the collection
+     * (`STAGE3_ENTITY` now, `STAGE3_JUDGE` with VA-15). Not listed on the admin page yet — that
+     * surface arrives with the judge prompt; until then an override row created directly in
+     * Firestore is picked up by the very next run, same as any admin edit.
+     */
+    fun resolveKey(key: String): ResolvedExtractionPrompt {
+        val row = prompts.findById(key)?.takeIf { it.instructions.isNotBlank() }
+        val instructions = row?.instructions ?: ExtractionPrompt.builtinForKey(key)
         return ResolvedExtractionPrompt(instructions, row?.version ?: 0, hash(instructions))
     }
 

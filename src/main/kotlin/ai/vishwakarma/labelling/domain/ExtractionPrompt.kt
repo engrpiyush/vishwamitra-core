@@ -23,19 +23,27 @@ data class ExtractionPrompt(
         /** Classpath source of the per-content-type default blocks. */
         const val DEFAULTS_RESOURCE = "/extraction-prompts.yaml"
 
-        private val defaults: Map<ContentType, String> by lazy {
+        private val rawDefaults: Map<String, String> by lazy {
             val stream =
                 ExtractionPrompt::class.java.getResourceAsStream(DEFAULTS_RESOURCE)
                     ?: error("Missing classpath resource $DEFAULTS_RESOURCE")
             val raw: Map<String, String> = stream.use { Yaml().load(it) } ?: emptyMap()
-            raw.entries
-                .mapNotNull { (key, text) ->
-                    ContentType.fromOrNull(key)?.let { it to text.trim() }
-                }
+            raw.mapValues { (_, text) -> text.trim() }
+        }
+
+        private val defaults: Map<ContentType, String> by lazy {
+            rawDefaults.entries
+                .mapNotNull { (key, text) -> ContentType.fromOrNull(key)?.let { it to text } }
                 .toMap()
         }
 
         /** The code-default instruction block for [contentType] (empty = base contract only). */
         fun builtinFor(contentType: ContentType): String = defaults[contentType] ?: ""
+
+        /**
+         * Raw-key lookup for the reserved non-ContentType rows the Stage 3 prompts ride on (LLD
+         * §11.3/§11.6 "an `extraction_prompts`-style row"): `STAGE3_ENTITY`, `STAGE3_JUDGE`.
+         */
+        fun builtinForKey(key: String): String = rawDefaults[key] ?: ""
     }
 }

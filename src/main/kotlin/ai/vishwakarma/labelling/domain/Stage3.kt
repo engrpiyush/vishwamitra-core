@@ -41,7 +41,15 @@ object Stage3Counters {
     const val EXPLANATIONS_SYNCED = "explanationsSynced"
     /** Sidecar citations pointing at non-approved claims, dropped at projection (see VA-10). */
     const val CITATIONS_DROPPED = "citationsDropped"
-    const val ENTITIES_RESOLVED = "entitiesResolved"
+    /** RESOLVE_ENTITIES progress: claims whose mentions are resolved under the current stamp. */
+    const val CLAIMS_ENTITY_RESOLVED = "claimsEntityResolved"
+    /** Mentions linked to existing canon — exact/alias hits and ≥-threshold kNN merges (§11.3). */
+    const val MENTIONS_LINKED = "mentionsLinked"
+    const val ENTITIES_MINTED = "entitiesMinted"
+    /** Near-miss provisional links routed to the entity-review list (§11.3 band). */
+    const val MENTIONS_REVIEW_LISTED = "mentionsReviewListed"
+    /** Claim attestations migrated from per-asset fallback to issuer-entity keys (§18.2 Q2). */
+    const val ISSUER_ATTESTORS_UPGRADED = "issuerAttestorsUpgraded"
     const val CLAIMS_EMBEDDED = "claimsEmbedded"
 }
 
