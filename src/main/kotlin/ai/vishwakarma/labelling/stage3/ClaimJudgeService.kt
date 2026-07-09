@@ -251,16 +251,19 @@ class GeminiJudgeSampler(
 }
 
 /**
- * Dry-run ensemble member (LLD §11.12): every pair votes NEUTRAL at zero confidence, so dev runs
- * walk JUDGING without GCP and without inventing edges. The §11.12 scripted verdict table for the
- * sample corpus — which exercises every cascade/judge branch through this same seam — is VA-19's
- * remaining scope. The distinct [versionStamp] keeps dry-run verdicts out of real runs' cache hits.
+ * Dry-run ensemble member (LLD §11.12): each sample answers from [DryRunStage3Corpus]'s scripted
+ * verdict table (matched by text marker), so the sample corpus exercises every judge branch —
+ * REPEATS / CORROBORATES / overlap- and disjoint-CONTRADICTS / the below-floor ctx verdict / a
+ * NEUTRAL-precedence tie — through the REAL [JudgeAggregator] path; pairs outside the table vote
+ * NEUTRAL, so arbitrary dev subjects still walk JUDGING without inventing edges. The distinct
+ * [versionStamp] keeps dry-run verdicts out of real runs' cache hits (and the `dryrun:0` →
+ * `dryrun:1` bump retires the pre-corpus NEUTRAL stub's cached verdicts).
  */
 class DryRunJudgeSampler : JudgeSampler {
 
     private val log = LoggerFactory.getLogger(DryRunJudgeSampler::class.java)
 
-    override val versionStamp: String = "dryrun:0"
+    override val versionStamp: String = "dryrun:1"
 
     override val modelId: String = "dryrun"
 
@@ -271,25 +274,23 @@ class DryRunJudgeSampler : JudgeSampler {
     ): Map<ClaimPair, JudgeSample> {
         if (sampleIndex == 0)
             log.info(
-                "Stage 3 dry-run: judge votes NEUTRAL for {} pair(s) (withContext={}; scripted " +
-                    "verdict table arrives with VA-19)",
+                "Stage 3 dry-run: scripted judge answering {} pair(s) (withContext={}) from " +
+                    "the §11.12 corpus table",
                 pairs.size,
                 withContext,
             )
         return pairs.associate {
             it.pair to
-                JudgeSample(
-                    relation = JudgeRelation.NEUTRAL,
-                    confidence = 0.0,
-                    rationale = "dry-run",
-                    temporalNote = null,
-                    explanationRelevant = if (withContext) false else null,
-                )
+                DryRunStage3Corpus.verdictSample(it.a.text, it.b.text, withContext, sampleIndex)
         }
     }
 }
 
-/** Picks the ensemble member: NEUTRAL stub in dry-run (dev), Vertex Gemini otherwise. */
+/**
+ * Picks the ensemble member: the §11.12 scripted table in dry-run (dev), Vertex Gemini otherwise —
+ * per-leg flag, so `dry-run=true` + `dry-run-judge=false` runs the REAL judge over pseudo
+ * embeddings (the gated live smoke).
+ */
 @Configuration
 class ClaimJudgeConfig {
 
@@ -299,6 +300,6 @@ class ClaimJudgeConfig {
         gemini: GeminiDrafting,
         prompts: ExtractionPromptService,
     ): JudgeSampler =
-        if (props.stage3.dryRun) DryRunJudgeSampler()
+        if (props.stage3.judgeDryRun) DryRunJudgeSampler()
         else GeminiJudgeSampler(gemini, prompts, props)
 }

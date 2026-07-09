@@ -35,6 +35,7 @@ private class FakeEntityGraph(props: AppProperties) :
 
     val store = mutableListOf<Stored>()
     val writes = mutableListOf<EntityResolutionWrite>()
+    val compressions = mutableListOf<Pair<List<String>, String>>()
 
     fun seed(
         id: String,
@@ -77,6 +78,15 @@ private class FakeEntityGraph(props: AppProperties) :
             }
             .sortedByDescending { it.score }
             .take(k)
+
+    override fun compressRedirects(entityIds: List<String>, targetEntityId: String) {
+        compressions += entityIds to targetEntityId
+        entityIds.forEach { id ->
+            val idx = store.indexOfFirst { it.ref.entityId == id }
+            if (idx >= 0)
+                store[idx] = store[idx].copy(ref = store[idx].ref.copy(mergedInto = targetEntityId))
+        }
+    }
 
     override fun applyEntityResolution(subjectId: String, write: EntityResolutionWrite) {
         writes += write
@@ -194,6 +204,39 @@ class EntityResolverTest {
         assertEquals("javascript", byType["SKILL"]!!.canonicalKey)
         // The alias key resolved to the aliased entity.
         assertEquals("goog", byType["ORG"]!!.canonicalKey)
+    }
+
+    @Test
+    fun `redirect chains resolve transitively and compress on read (VA-12)`() {
+        graph.seed("e1", "SKILL", "js", "JS", mergedInto = "e2")
+        graph.seed("e2", "SKILL", "java script", "Java Script", mergedInto = "e3")
+        graph.seed("e3", "SKILL", "javascript", "JavaScript")
+        val outcome =
+            resolver()
+                .resolve(
+                    "s1",
+                    listOf(claim("c1")),
+                    mapOf("c1" to mentions("JS" to EntityType.SKILL)),
+                    "st",
+                )
+        // Followed a→b→c to the live target…
+        assertEquals(1, outcome.linked)
+        assertEquals("javascript", graph.writes.single().links.single().canonicalKey)
+        // …and compressed the traversed chain: e1 now points straight at e3 (e2 already did).
+        assertEquals(listOf(listOf("e1") to "e3"), graph.compressions)
+        assertEquals("e3", graph.store.first { it.ref.entityId == "e1" }.ref.mergedInto)
+        // A second read walks the compressed edge and has nothing left to compress.
+        graph.writes.clear()
+        graph.compressions.clear()
+        resolver()
+            .resolve(
+                "s1",
+                listOf(claim("c2")),
+                mapOf("c2" to mentions("JS" to EntityType.SKILL)),
+                "st",
+            )
+        assertEquals("javascript", graph.writes.single().links.single().canonicalKey)
+        assertTrue(graph.compressions.isEmpty())
     }
 
     // ---- kNN bands -----------------------------------------------------------------

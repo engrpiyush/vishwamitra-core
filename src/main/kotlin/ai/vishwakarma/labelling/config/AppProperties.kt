@@ -267,8 +267,26 @@ data class AppProperties(
         val publishRequiresReview: Boolean = true,
         /** Dev/test: deterministic pseudo-embeddings + canned judge; Neo4j itself stays real. */
         val dryRun: Boolean = false,
+        /**
+         * Per-leg overrides (the Stage 2 mix-and-match idiom, LLD §11.12): null follows [dryRun].
+         * The gated live smoke sets `dry-run=true` + `dry-run-judge=false` — pseudo embeddings and
+         * canned extraction with the REAL Gemini judge.
+         */
+        val dryRunEmbeddings: Boolean? = null,
+        val dryRunExtraction: Boolean? = null,
+        val dryRunJudge: Boolean? = null,
     ) {
         val exhaustiveMatching: Boolean
             get() = matchingMode.equals("EXHAUSTIVE", ignoreCase = true)
+
+        /** Effective per-leg dry-run switches — explicit override wins, else the master flag. */
+        val embeddingsDryRun: Boolean
+            get() = dryRunEmbeddings ?: dryRun
+
+        val extractionDryRun: Boolean
+            get() = dryRunExtraction ?: dryRun
+
+        val judgeDryRun: Boolean
+            get() = dryRunJudge ?: dryRun
     }
 }

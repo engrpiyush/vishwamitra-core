@@ -243,29 +243,36 @@ private fun salvageTruncated(json: String): List<*>? {
 }
 
 /**
- * Dry-run extraction (LLD §11.12): no GCP, no mentions — every claim resolves to an empty mention
- * list so the phase completes and the run walks on. The §11.12 canned typed mentions for the sample
- * corpus (so dev exercises linking/minting/review branches offline) are VA-19's remaining scope;
- * the distinct [versionStamp] means flipping dry-run off re-resolves everything for real.
+ * Dry-run extraction (LLD §11.12): canned typed mentions from [DryRunStage3Corpus], matched by text
+ * marker — the sample corpus exercises linking / minting / near-miss-review / type-scoping / issuer
+ * branches offline; non-corpus claims resolve to no mentions so any subject's phase still
+ * completes. The distinct [versionStamp] means flipping dry-run off (or the VA-19 table landing,
+ * `dryrun:0` → `dryrun:1`) re-resolves everything.
  */
 class DryRunEntityMentionExtractor : EntityMentionExtractor {
 
     private val log = LoggerFactory.getLogger(DryRunEntityMentionExtractor::class.java)
 
-    override val versionStamp: String = "dryrun:0"
+    override val versionStamp: String = "dryrun:1"
 
     override fun extract(claims: List<ClaimToResolve>): Map<String, ExtractedMentions> {
+        val resolved =
+            claims.associate {
+                it.claimId to
+                    (DryRunStage3Corpus.mentionsFor(it.text) ?: ExtractedMentions(emptyList()))
+            }
         log.info(
-            "Stage 3 dry-run: entity extraction returns no mentions for {} claim(s) " +
-                "(canned corpus mentions arrive with VA-19)",
+            "Stage 3 dry-run: canned extraction answered {} of {} claim(s) from the §11.12 corpus",
+            resolved.values.count { it.mentions.isNotEmpty() },
             claims.size,
         )
-        return claims.associate { it.claimId to ExtractedMentions(emptyList()) }
+        return resolved
     }
 }
 
 /**
- * Picks the extractor implementation: no-mention stub in dry-run (dev), Vertex Gemini otherwise.
+ * Picks the extractor implementation: the §11.12 canned corpus in dry-run (dev), Vertex Gemini
+ * otherwise — per-leg flag, so extraction can be canned while the judge is real (and vice versa).
  */
 @Configuration
 class EntityExtractionConfig {
@@ -276,6 +283,6 @@ class EntityExtractionConfig {
         gemini: GeminiDrafting,
         prompts: ExtractionPromptService,
     ): EntityMentionExtractor =
-        if (props.stage3.dryRun) DryRunEntityMentionExtractor()
+        if (props.stage3.extractionDryRun) DryRunEntityMentionExtractor()
         else GeminiEntityMentionExtractor(gemini, prompts)
 }

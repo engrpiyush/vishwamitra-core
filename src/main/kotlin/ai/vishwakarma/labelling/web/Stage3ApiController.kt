@@ -2,6 +2,9 @@ package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
+import ai.vishwakarma.labelling.service.EntityAdminService
+import ai.vishwakarma.labelling.service.Stage3CorpusSeeder
+import ai.vishwakarma.labelling.service.Stage3EvalService
 import ai.vishwakarma.labelling.service.Stage3Service
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import arrow.core.Either
@@ -11,9 +14,23 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+
+/** `POST /entities/{id}/merge` body (LLD §10, VA-12). */
+data class EntityMergeRequest(val intoId: String? = null)
+
+/** `POST /eval/pairs` body — one golden-pair label (LLD §13, VA-20). */
+data class GoldenPairRequest(
+    val subjectId: String? = null,
+    val claimIdA: String? = null,
+    val claimIdB: String? = null,
+    val humanRelation: String? = null,
+    /** CALIBRATION / TEST; omitted → deterministic hash assignment. */
+    val split: String? = null,
+)
 
 /**
  * Stage 3 (Claims → Authenticity graph/scores) JSON API — LLD §10. Same conventions as
@@ -27,6 +44,9 @@ import org.springframework.web.bind.annotation.RestController
 class Stage3ApiController(
     private val stage3: Stage3Service,
     private val graph: Stage3GraphRepository,
+    private val corpusSeeder: Stage3CorpusSeeder,
+    private val entityAdmin: EntityAdminService,
+    private val eval: Stage3EvalService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -113,6 +133,83 @@ class Stage3ApiController(
     @PostMapping("/runs/{id}/reopen")
     @PreAuthorize("hasRole('ADMIN')")
     fun reopen(@PathVariable id: String): ResponseEntity<Any> = stage3.reopen(id).toResponse()
+
+    /**
+     * ADMIN, dry-run only (LLD §11.12): seed the sample corpus as a review-submitted subject so a
+     * dev run reproduces the §11.8 worked example end-to-end. Idempotent — fixed ids, wholesale
+     * replace; refused while the corpus subject has an active run.
+     */
+    @PostMapping("/dev/seed-corpus")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun seedCorpus(): ResponseEntity<Any> =
+        corpusSeeder.seed(actor()).toResponse(HttpStatus.CREATED)
+
+    /**
+     * ADMIN (LLD §11.3 "Human repair", §21 A.2): merge entity `{id}` into `body.intoId` — MENTIONS
+     * rewired in batches, aliases unioned, tombstone redirect left behind, journaled. 409 when
+     * either side is already a tombstone or the types differ.
+     */
+    @PostMapping("/entities/{id}/merge")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun mergeEntity(
+        @PathVariable id: String,
+        @RequestBody body: EntityMergeRequest,
+    ): ResponseEntity<Any> {
+        val intoId =
+            body.intoId?.trim()?.takeIf { it.isNotBlank() }
+                ?: return ResponseEntity.badRequest().body(mapOf("error" to "intoId is required"))
+        return entityAdmin.merge(id, intoId, actor()).toResponse()
+    }
+
+    /**
+     * ADMIN (LLD §11.3): split entity `{id}` — its mentions re-resolve with the entity excluded
+     * (exact → kNN bands → mint); only surfaces that re-resolve to it stay. Journaled with the
+     * affected subject ids so stale MATCH blocking can be re-run by hand.
+     */
+    @PostMapping("/entities/{id}/split")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun splitEntity(@PathVariable id: String): ResponseEntity<Any> =
+        entityAdmin.split(id, actor()).toResponse()
+
+    // ---- Eval harness (LLD §13, VA-20) --------------------------------------------
+
+    /** Record one golden-pair label (the queue/row-expand/eval-page ride-alongs). */
+    @PostMapping("/eval/pairs")
+    fun labelGoldenPair(@RequestBody body: GoldenPairRequest): ResponseEntity<Any> =
+        eval
+            .label(
+                subjectId = body.subjectId.orEmpty(),
+                claimIdA = body.claimIdA.orEmpty(),
+                claimIdB = body.claimIdB.orEmpty(),
+                humanRelation = body.humanRelation.orEmpty(),
+                split = body.split,
+                actor = actor(),
+            )
+            .toResponse(HttpStatus.CREATED)
+
+    /**
+     * The "label N random pairs" feed — stratified ~40% judge-queue hard cases / ~40% blocking
+     * survivors / ~20% blocking-discarded probes; already-labeled pairs are never re-served.
+     */
+    @GetMapping("/eval/pairs/sample")
+    fun sampleGoldenPairs(
+        @RequestParam subjectId: String,
+        @RequestParam(required = false, defaultValue = "10") n: Int,
+    ): ResponseEntity<Any> = eval.samplePairs(subjectId, n).toResponse()
+
+    /**
+     * Run the §13 metrics job for the CURRENT judge prompt + params: judge P/R/F1 + confusion on
+     * the TEST split, blocking recall, the calibration curve, and (when `referenceSubjectId` is
+     * given) the score-sanity flags. Persisted per `promptStamp|paramsHash`.
+     */
+    @PostMapping("/eval/run")
+    fun runEvalMetrics(
+        @RequestParam(required = false) referenceSubjectId: String?,
+    ): ResponseEntity<Any> = eval.runMetrics(referenceSubjectId, actor()).toResponse()
+
+    /** Every persisted metrics record, newest first — the cross-version comparison read. */
+    @GetMapping("/eval/metrics")
+    fun evalMetrics(): ResponseEntity<Any> = ResponseEntity.ok(eval.allMetrics())
 
     /**
      * Connectivity diagnostic — verifies the service can reach the configured Neo4j (AuraDB in

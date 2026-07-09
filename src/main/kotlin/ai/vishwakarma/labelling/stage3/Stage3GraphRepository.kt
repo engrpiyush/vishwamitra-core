@@ -792,6 +792,252 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
             }
         }
 
+    // ---- Entity admin: merge / split / redirects (LLD §11.3 "Human repair", VA-12) ------
+
+    /** The full entity row the admin operations read (EntityRef + the alias arrays). */
+    fun findEntityAdmin(entityId: String): EntityAdminRow? =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (e:Entity {entityId: ${'$'}id})
+                        RETURN e.entityId AS entityId, e.entityType AS entityType,
+                               e.canonicalKey AS canonicalKey, e.canonicalName AS canonicalName,
+                               e.mergedInto AS mergedInto,
+                               coalesce(e.aliases, []) AS aliases,
+                               coalesce(e.aliasKeys, []) AS aliasKeys
+                        LIMIT 1
+                        """
+                            .trimIndent(),
+                        mapOf("id" to entityId),
+                    )
+                    .list { r ->
+                        EntityAdminRow(
+                            entityId = r["entityId"].asString(),
+                            entityType = r["entityType"].asString(),
+                            canonicalKey = r["canonicalKey"].asString(),
+                            canonicalName = r["canonicalName"].asString(""),
+                            mergedInto = r["mergedInto"].takeUnless { it.isNull }?.asString(),
+                            aliases = r["aliases"].asList { v -> v.asString() },
+                            aliasKeys = r["aliasKeys"].asList { v -> v.asString() },
+                        )
+                    }
+                    .firstOrNull()
+            }
+        }
+
+    /** Every MENTIONS edge into the entity — the split's re-resolution work list. */
+    fun entityMentionRows(entityId: String): List<EntityMentionRow> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (c:Claim)-[m:MENTIONS]->(e:Entity {entityId: ${'$'}id})
+                        RETURN c.claimId AS claimId, c.subjectId AS subjectId,
+                               m.surface AS surface,
+                               coalesce(m.provisional, false) AS provisional
+                        ORDER BY claimId, surface
+                        """
+                            .trimIndent(),
+                        mapOf("id" to entityId),
+                    )
+                    .list { r ->
+                        EntityMentionRow(
+                            claimId = r["claimId"].asString(),
+                            subjectId = r["subjectId"].asString(""),
+                            surface = r["surface"].asString(""),
+                            provisional = r["provisional"].asBoolean(false),
+                        )
+                    }
+            }
+        }
+
+    /**
+     * The §21 A.2 merge rewire: move every MENTIONS edge off the source onto the target, batched
+     * `CALL … IN TRANSACTIONS` (an implicit transaction — auto-commit session run, not a managed
+     * write). MERGE by `{surface}` dedupes a claim already mentioning the target with the same
+     * surface; edge properties copy on create. Returns relationships deleted (= edges moved or
+     * dropped as duplicates). Resumable: a crash mid-batch leaves the remaining edges on the
+     * source, and re-issuing the merge completes the move.
+     */
+    fun rewireMentions(fromEntityId: String, intoEntityId: String): Long =
+        driver.session(sessionConfig()).use { s ->
+            s.run(
+                    """
+                    MATCH (a:Entity {entityId: ${'$'}from}), (b:Entity {entityId: ${'$'}into})
+                    CALL {
+                        WITH a, b
+                        MATCH (c:Claim)-[m:MENTIONS]->(a)
+                        MERGE (c)-[m2:MENTIONS {surface: m.surface}]->(b)
+                        ON CREATE SET m2.confidence = m.confidence,
+                                      m2.provisional = m.provisional,
+                                      m2.method = m.method
+                        DELETE m
+                    } IN TRANSACTIONS OF 200 ROWS
+                    """
+                        .trimIndent(),
+                    mapOf("from" to fromEntityId, "into" to intoEntityId),
+                )
+                .consume()
+                .counters()
+                .relationshipsDeleted()
+                .toLong()
+        }
+
+    /** Merge finalization: the unioned alias arrays on the target, the tombstone on the source. */
+    fun finalizeEntityMerge(
+        fromEntityId: String,
+        intoEntityId: String,
+        aliases: List<String>,
+        aliasKeys: List<String>,
+    ) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        MATCH (a:Entity {entityId: ${'$'}from}), (b:Entity {entityId: ${'$'}into})
+                        SET b.aliases = ${'$'}aliases, b.aliasKeys = ${'$'}aliasKeys,
+                            a.mergedInto = ${'$'}into
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "from" to fromEntityId,
+                            "into" to intoEntityId,
+                            "aliases" to aliases,
+                            "aliasKeys" to aliasKeys,
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /** Exact key/alias lookup with one entity excluded — the split's resolution leg (§11.3). */
+    fun findEntityByKeyExcluding(
+        entityType: String,
+        canonicalKey: String,
+        excludeEntityId: String,
+    ): EntityRef? =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (e:Entity {entityType: ${'$'}type})
+                        WHERE e.entityId <> ${'$'}exclude
+                          AND (e.canonicalKey = ${'$'}key
+                               OR ${'$'}key IN coalesce(e.aliasKeys, []))
+                        RETURN e.entityId AS entityId, e.entityType AS entityType,
+                               e.canonicalKey AS canonicalKey, e.canonicalName AS canonicalName,
+                               e.mergedInto AS mergedInto
+                        ORDER BY CASE WHEN e.canonicalKey = ${'$'}key THEN 0 ELSE 1 END
+                        LIMIT 1
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "type" to entityType,
+                            "key" to canonicalKey,
+                            "exclude" to excludeEntityId,
+                        ),
+                    )
+                    .list { it.toEntityRef() }
+                    .firstOrNull()
+            }
+        }
+
+    /**
+     * Persist one split as a single transaction: mint the new homes (MERGE by type+key — a mention
+     * whose key equals an existing entity's lands there, never duplicates), move the re-resolved
+     * mentions, and reset the split entity's alias arrays to the surfaces that stayed.
+     */
+    fun applyEntitySplit(
+        entityId: String,
+        keptAliases: List<String>,
+        keptAliasKeys: List<String>,
+        mints: List<EntityMintRow>,
+        moves: List<MentionLinkRow>,
+    ) {
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                if (mints.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MERGE (e:Entity {entityType: row.entityType,
+                                             canonicalKey: row.canonicalKey})
+                            ON CREATE SET e.entityId = row.entityId,
+                                          e.canonicalName = row.canonicalName,
+                                          e.typeAndKey = row.entityType + '|' + row.canonicalKey,
+                                          e.aliases = [], e.aliasKeys = [],
+                                          e.embedding = row.embedding,
+                                          e.embeddingModelVersion = row.embeddingStamp,
+                                          e.createdFrom = row.createdFrom,
+                                          e.createdAt = datetime()
+                            """
+                                .trimIndent(),
+                            mapOf("rows" to mints.map { it.toMap() }),
+                        )
+                        .consume()
+                if (moves.isNotEmpty())
+                    tx.run(
+                            """
+                            UNWIND ${'$'}rows AS row
+                            MATCH (c:Claim {claimId: row.claimId})
+                                  -[m:MENTIONS {surface: row.surface}]->
+                                  (a:Entity {entityId: ${'$'}id})
+                            MATCH (t:Entity {entityType: row.entityType,
+                                             canonicalKey: row.canonicalKey})
+                            MERGE (c)-[m2:MENTIONS {surface: row.surface}]->(t)
+                            ON CREATE SET m2.confidence = row.confidence,
+                                          m2.provisional = row.provisional,
+                                          m2.method = row.method
+                            DELETE m
+                            """
+                                .trimIndent(),
+                            mapOf("id" to entityId, "rows" to moves.map { it.toMap() }),
+                        )
+                        .consume()
+                tx.run(
+                        """
+                        MATCH (e:Entity {entityId: ${'$'}id})
+                        SET e.aliases = ${'$'}aliases, e.aliasKeys = ${'$'}aliasKeys
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "id" to entityId,
+                            "aliases" to keptAliases,
+                            "aliasKeys" to keptAliasKeys,
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
+    /**
+     * Path-compress a followed redirect chain (VA-12: "compress on read") — every traversed
+     * tombstone points straight at the final live target afterwards.
+     */
+    fun compressRedirects(entityIds: List<String>, targetEntityId: String) {
+        if (entityIds.isEmpty()) return
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}ids AS eid
+                        MATCH (e:Entity {entityId: eid})
+                        SET e.mergedInto = ${'$'}target
+                        """
+                            .trimIndent(),
+                        mapOf("ids" to entityIds, "target" to targetEntityId),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
     // ---- MATCH phase (LLD §11.5) ----------------------------------------------------
 
     /**
@@ -1987,6 +2233,122 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                     }
             }
         }
+
+    // ---- Eval harness reads (LLD §13, VA-20) --------------------------------------------
+
+    /** The subject's claim ids — the probe sampler's pair universe. */
+    fun claimIds(subjectId: String): List<String> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        "MATCH (c:Claim {subjectId: ${'$'}subjectId}) " +
+                            "RETURN c.claimId AS id ORDER BY id",
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { it["id"].asString() }
+            }
+        }
+
+    /** Pairs the judge queue holds (any status) — the §13 "hard cases" sampling stratum. */
+    fun judgeQueuePairs(subjectId: String): List<ClaimPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (a:Claim {subjectId: ${'$'}subjectId})-[q:JUDGE_QUEUED]->(b:Claim)
+                        RETURN a.claimId AS a, b.claimId AS b ORDER BY a, b
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+            }
+        }
+
+    /** Auto-REPEATS pairs (rungs 2/3) — blocking survivors resolved without the judge (§13). */
+    fun autoRepeatsPairs(subjectId: String): List<ClaimPair> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (a:Claim {subjectId: ${'$'}subjectId})-[r:REPEATS {method: 'AUTO'}]
+                              -(b:Claim)
+                        WHERE a.claimId < b.claimId
+                        RETURN DISTINCT a.claimId AS a, b.claimId AS b ORDER BY a, b
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+            }
+        }
+
+    /**
+     * Which of [pairs] survived PRUNED blocking — a pair record exists: a JUDGE_QUEUED entry (any
+     * status) or a REPEATS edge (auto or judged). The §13 blocking-recall numerator test.
+     */
+    fun pairRecords(subjectId: String, pairs: Collection<ClaimPair>): Set<ClaimPair> {
+        if (pairs.isEmpty()) return emptySet()
+        return driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}pairs AS p
+                        MATCH (a:Claim {claimId: p.a}), (b:Claim {claimId: p.b})
+                        WHERE a.subjectId = ${'$'}subjectId AND b.subjectId = ${'$'}subjectId
+                          AND (EXISTS { MATCH (a)-[:JUDGE_QUEUED]-(b) }
+                               OR EXISTS { MATCH (a)-[:REPEATS]-(b) })
+                        RETURN p.a AS a, p.b AS b
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "pairs" to pairs.map { mapOf("a" to it.a, "b" to it.b) },
+                        ),
+                    )
+                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+                    .toSet()
+            }
+        }
+    }
+
+    /** Per-fact rows behind the §13 score-sanity flags on the reference subject. */
+    fun factSanityRows(subjectId: String): List<FactSanityRow> =
+        driver.session(sessionConfig()).use { s ->
+            s.executeRead { tx ->
+                tx.run(
+                        """
+                        MATCH (f:Fact {subjectId: ${'$'}subjectId})
+                        OPTIONAL MATCH (c:Claim)-[:ASSERTS]->(f)
+                        WITH f, collect(c.sourceClass) AS classes,
+                             collect(c.favorability) AS favorabilities
+                        OPTIONAL MATCH (f)-[r:CONTRADICTS]-(:Fact)
+                        WITH f, classes, favorabilities,
+                             max(CASE WHEN r.explained THEN 1 ELSE 0 END) AS explained
+                        RETURN f.factId AS factId, f.belief AS belief,
+                               f.beliefBare AS beliefBare,
+                               coalesce(f.anchored, false) AS anchored,
+                               classes, favorabilities,
+                               explained = 1 AS hasExplainedContradiction
+                        ORDER BY factId
+                        """
+                            .trimIndent(),
+                        mapOf("subjectId" to subjectId),
+                    )
+                    .list { r ->
+                        FactSanityRow(
+                            factId = r["factId"].asString(),
+                            belief = r["belief"].takeUnless { it.isNull }?.asDouble(),
+                            beliefBare = r["beliefBare"].takeUnless { it.isNull }?.asDouble(),
+                            anchored = r["anchored"].asBoolean(false),
+                            sourceClasses = r["classes"].asList { v -> v.asString() },
+                            favorabilities = r["favorabilities"].asList { v -> v.asDouble() },
+                            hasExplainedContradiction =
+                                r["hasExplainedContradiction"].asBoolean(false),
+                        )
+                    }
+            }
+        }
 }
 
 /** The §3.2 per-claim signal vector as persisted (claim `signals` JSON; ledger shape VA-18). */
@@ -2093,6 +2455,40 @@ data class EmbeddedClaim(val claimId: String, val embedding: List<Double>)
 
 /** An entity whose vector is stale/missing — MATCH's §15 #6 re-embed work unit (VA-14). */
 data class EntityToReembed(val entityId: String, val canonicalName: String)
+
+/** Full entity row for the VA-12 admin operations (EntityRef + the alias arrays). */
+data class EntityAdminRow(
+    val entityId: String,
+    val entityType: String,
+    val canonicalKey: String,
+    val canonicalName: String,
+    val mergedInto: String?,
+    val aliases: List<String>,
+    val aliasKeys: List<String>,
+) {
+    fun toRef(): EntityRef =
+        EntityRef(entityId, entityType, canonicalKey, canonicalName, mergedInto)
+}
+
+/** One MENTIONS edge into an entity — the split's re-resolution work unit (VA-12). */
+data class EntityMentionRow(
+    val claimId: String,
+    val subjectId: String,
+    val surface: String,
+    val provisional: Boolean,
+)
+
+/** One fact's inputs to the §13 score-sanity flags (VA-20). */
+data class FactSanityRow(
+    val factId: String,
+    val belief: Double?,
+    val beliefBare: Double?,
+    val anchored: Boolean,
+    /** Member claims' source classes (nulls dropped by collect). */
+    val sourceClasses: List<String>,
+    val favorabilities: List<Double>,
+    val hasExplainedContradiction: Boolean,
+)
 
 /** One re-embedded entity ready to persist. */
 data class EntityEmbedding(val entityId: String, val embedding: List<Double>)

@@ -175,7 +175,8 @@ class PseudoEmbeddingService(override val dimensions: Int) : EmbeddingService {
 }
 
 /**
- * Picks the embedding implementation: pseudo vectors in dry-run (dev default), Vertex otherwise.
+ * Picks the embedding implementation: pseudo vectors in dry-run (dev default), Vertex otherwise —
+ * per-leg flag (LLD §11.12), so pseudo embeddings can pair with a real judge and vice versa.
  */
 @Configuration
 class EmbeddingConfig {
@@ -184,7 +185,7 @@ class EmbeddingConfig {
 
     @Bean
     fun embeddingService(props: AppProperties): EmbeddingService =
-        if (props.stage3.dryRun) {
+        if (props.stage3.embeddingsDryRun) {
             log.info(
                 "Stage 3 dry-run: pseudo embeddings ({} dims)",
                 props.stage3.embeddingDimensions

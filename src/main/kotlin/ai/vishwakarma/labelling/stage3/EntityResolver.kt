@@ -213,14 +213,24 @@ class EntityResolver(
     private fun dedupeMentions(mentions: List<ExtractedMention>): List<ExtractedMention> =
         mentions.distinctBy { "${it.entityType.name}|${normalizeSurface(it.surface)}" }
 
-    /** Exact canonicalKey/alias match, tombstone redirects followed (bounded — see §11.3). */
+    /**
+     * Exact canonicalKey/alias match, tombstone redirects followed transitively (bounded) and
+     * **path-compressed on read** (VA-12): after a human merge chain a→b→c, the first resolution
+     * that walks it rewrites every traversed tombstone to point straight at the live target, so
+     * chains never accumulate walk cost.
+     */
     private fun lookupExact(type: String, key: String): EntityRef? {
         var current = graph.findEntityByKey(type, key) ?: return null
+        val traversed = mutableListOf<EntityRef>()
         var hops = 0
         while (current.mergedInto != null && hops < MAX_REDIRECT_HOPS) {
+            traversed += current
             current = graph.findEntityById(current.mergedInto!!) ?: return current
             hops++
         }
+        val stale =
+            traversed.filter { it.mergedInto != current.entityId }.map { it.entityId }.distinct()
+        if (stale.isNotEmpty()) graph.compressRedirects(stale, current.entityId)
         return current
     }
 
@@ -228,6 +238,11 @@ class EntityResolver(
      * The kNN leg: embed the surface (same model as claims, `CLASSIFICATION` task — §11.4) and take
      * the nearest same-type live entity. Threshold semantics per §11.3; a mint stores the surface
      * embedding on the new entity so future mentions can find it.
+     *
+     * Candidates are the graph's kNN **plus this batch's pending mints** (cosine computed in-app —
+     * they are not indexed yet): without the batch-local arm, two variant surfaces arriving in one
+     * tick would mint duplicate entities that only arrive-in-different-ticks ordering could have
+     * merged, making the canon depend on batch boundaries.
      */
     private fun resolveByEmbedding(
         mention: ExtractedMention,
@@ -237,7 +252,20 @@ class EntityResolver(
         mints: LinkedHashMap<String, EntityMintRow>,
     ): ResolvedTarget? {
         val vector = embeddings.embed(mention.surface, EmbeddingTaskType.CLASSIFICATION)
-        val top = graph.entityKnn(type, vector, ENTITY_KNN_K).firstOrNull()
+        val top =
+            (graph.entityKnn(type, vector, ENTITY_KNN_K) +
+                    mints.values
+                        .filter { it.entityType == type }
+                        .map {
+                            EntityCandidate(
+                                entityId = it.entityId,
+                                entityType = it.entityType,
+                                canonicalKey = it.canonicalKey,
+                                canonicalName = it.canonicalName,
+                                score = cosine(vector, it.embedding),
+                            )
+                        })
+                .maxByOrNull { it.score }
         val threshold = props.stage3.entityMergeThreshold
         return when {
             top != null && top.score >= threshold ->
@@ -309,6 +337,13 @@ class EntityResolver(
 
         private val ISSUER_ENTITY_TYPES = setOf(EntityType.ORG.name, EntityType.INSTITUTION.name)
     }
+}
+
+/** Cosine over unit-normalized vectors ([EmbeddingService] output is always unit-norm). */
+internal fun cosine(a: List<Double>, b: List<Double>): Double {
+    var dot = 0.0
+    for (i in a.indices) dot += a[i] * b[i]
+    return dot
 }
 
 /**

@@ -102,14 +102,20 @@ class EntityExtractionTest {
         assertTrue(prompt.contains("Output ONLY a JSON array"))
     }
 
-    // ---- dry-run stub -------------------------------------------------------------------
+    // ---- dry-run extractor (the §11.12 corpus table; VA-19) ------------------------------
 
     @Test
-    fun `dry-run extraction stamps every claim with zero mentions`() {
+    fun `dry-run extraction answers corpus claims from the table and stamps the rest empty`() {
         val extractor = DryRunEntityMentionExtractor()
-        val result = extractor.extract(listOf(claim("c1", "t"), claim("c2", "t")))
+        val corpusClaim = DryRunStage3Corpus.claims.first()
+        val result =
+            extractor.extract(
+                listOf(claim("c1", corpusClaim.text), claim("c2", "Not a corpus claim."))
+            )
         assertEquals(setOf("c1", "c2"), result.keys)
-        assertTrue(result.values.all { it.mentions.isEmpty() && it.issuerSurface == null })
-        assertEquals("dryrun:0", extractor.versionStamp)
+        assertEquals(corpusClaim.mentions, result["c1"]!!.mentions)
+        assertTrue(result["c2"]!!.mentions.isEmpty() && result["c2"]!!.issuerSurface == null)
+        // The stamp bumped with the table — pre-corpus `dryrun:0` resolutions re-resolve.
+        assertEquals("dryrun:1", extractor.versionStamp)
     }
 }
