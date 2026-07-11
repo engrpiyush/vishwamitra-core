@@ -19,7 +19,11 @@
 
     <div class="row-between">
         <h1>Timeline <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
-        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        <span>
+            <a th:href="@{/intake/{id}/stage3/dashboard(id=${subject.id})}" class="muted">Dashboard</a>
+            <span class="muted">·</span>
+            <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        </span>
     </div>
     <p class="muted">The subject's STATE facts as slot lanes (employer, role, education, …) with
         SUCCEEDS successions; EVENT facts as diamonds. Click a bar or diamond for the fact's

@@ -35,7 +35,11 @@
 
     <div class="row-between">
         <h1>Scored claims <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
-        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        <span>
+            <a th:href="@{/intake/{id}/stage3/dashboard(id=${subject.id})}" class="muted">Dashboard</a>
+            <span class="muted">·</span>
+            <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        </span>
     </div>
 
     <!-- Provisional-vs-published: the same table serves both sides of the Q6 gate (§11.10). -->
@@ -58,7 +62,12 @@
         <table id="scoresTable" class="grid" style="width:100%;">
             <thead>
             <tr>
-                <th>Score</th><th>Tier</th><th>Type</th><th>Claim</th><th>Fact</th><th>Support</th><th>Conflict</th>
+                <th title="the published authenticity score — belief in [0.02, 0.98], explanation effects included">Score</th>
+                <th title="score against the tier bands (tier-high / tier-medium params)">Tier</th>
+                <th>Type</th><th>Claim</th>
+                <th title="the fact this claim asserts — clustered claims share one belief">Fact</th>
+                <th title="CORROBORATES edges touching the fact">Support</th>
+                <th title="CONTRADICTS edges touching the fact (any review state)">Conflict</th>
             </tr>
             </thead>
             <tbody>

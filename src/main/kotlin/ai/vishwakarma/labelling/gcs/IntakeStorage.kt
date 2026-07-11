@@ -158,12 +158,27 @@ class IntakeStorage(private val props: AppProperties) {
     /** Best-effort delete of a stored object (missing object is not an error). */
     fun deleteObject(objectPath: String) {
         if (bucket.isBlank()) {
-            0
             Files.deleteIfExists(localPath(objectPath))
             return
         }
         storage().delete(BlobId.of(bucket, objectPath))
         log.info("Deleted gs://{}/{}", bucket, objectPath)
+    }
+
+    /**
+     * Server-side write of a small generated artifact (the Stage 3.5 profile PDF) — overwrites in
+     * place, which is what keeps "one current report per object path" true by construction. Blank
+     * bucket (local dev) falls back to `var/intake/`.
+     */
+    fun writeBytes(objectPath: String, bytes: ByteArray, contentType: String) {
+        if (bucket.isBlank()) {
+            writeLocalBytes(objectPath, bytes)
+            return
+        }
+        val blobInfo =
+            BlobInfo.newBuilder(BlobId.of(bucket, objectPath)).setContentType(contentType).build()
+        storage().create(blobInfo, bytes)
+        log.info("Stored gs://{}/{} ({} bytes)", bucket, objectPath, bytes.size)
     }
 
     /** Local-dev only: persist bytes uploaded to the dev endpoint under `var/intake/`. */

@@ -293,6 +293,34 @@ data class AppProperties(
         /** Score → refreshed tier bands. */
         val tierHigh: Double = 0.75,
         val tierMedium: Double = 0.45,
+        /**
+         * Subject Authenticity Index (Stage 3.5 LLD §3): the subject-level aggregate. Mass
+         * saturation midpoint m0 — `sat(m) = m/(m+m0)`; higher = sterner on thin evidence.
+         */
+        val aggMassMidpoint: Double = 2.0,
+        /** λ_D — max sag from shallow average evidence mass. */
+        val aggDepthWeight: Double = 0.30,
+        /** λ_I — max sag from the self-only fact share. */
+        val aggSelfOnlyPenalty: Double = 0.30,
+        /** λ_V — max sag from a monoculture of sources. */
+        val aggDiversityWeight: Double = 0.15,
+        /** λ_C — max drag from surviving contradictions. */
+        val aggContradictionWeight: Double = 0.25,
+        /** c0 — residual conflict mass at which the drag reaches half of λ_C. */
+        val aggContradictionMidpoint: Double = 2.0,
+        /** a0 — independent (non-SUBJECT) attestors for full diversity credit. */
+        val aggAttestorTarget: Int = 4,
+        /** d0 — documentary/anchored fact fraction for full diversity credit. */
+        val aggDocCoverageTarget: Double = 0.25,
+        /** Diversity mix (must sum to 1): independent attestors / attestor kinds / doc coverage. */
+        val aggDiversityAttestorShare: Double = 0.5,
+        val aggDiversityKindShare: Double = 0.3,
+        val aggDiversityDocShare: Double = 0.2,
+        /** SAI grade-band cutoffs (Stage 3.5 LLD §3.4); ~90 is the practical ceiling by design. */
+        val aggBandStrong: Double = 0.80,
+        val aggBandGood: Double = 0.65,
+        val aggBandModerate: Double = 0.45,
+        val aggBandWeak: Double = 0.25,
         /** Reserved v2+ flag (§9.4): read cross-subject evidence edges in scoring. Off in v1. */
         val crossSubjectEvidence: Boolean = false,
         /** The Q6 gate: ledger write-back only from AWAITING_REVIEW via explicit publish. */

@@ -24,7 +24,8 @@
                  Hidden while sealed; the backend also 409s a register/re-mint on a sealed manifest. -->
             <div class="panel" th:unless="${manifest.sealed}" id="uploadPanel"
                  th:attr="data-subject-id=${subject.id}">
-                <details>
+                <!-- Open by default (2026-07-11 UX fix): the dropzone is the page's main job. -->
+                <details open>
                     <summary><span class="link">Add asset</span>
                         <span class="muted">— upload audio, video, image, document, text or archive</span>
                     </summary>

@@ -18,6 +18,8 @@
     #claimsTable tbody tr.shown { background: rgba(245, 158, 11, 0.10); }
     #claimsTable td.favor-bad { color: #f87171; font-weight: 600; }
     .claim-editor-wrap { padding: 0.7rem 0.5rem; }
+    .js-save-note--ok { color: var(--ok-fg); }
+    .js-save-note--err { color: var(--err-fg); }
 </style>
 <main class="container wide">
     <div th:replace="~{fragments/common :: flash}"></div>
@@ -82,6 +84,7 @@
                               th:text="${rev?.justification}"></textarea></label>
                 <div class="row-actions" style="margin-top:0.6rem;">
                     <button type="submit" class="btn--sm">Save</button>
+                    <span class="js-save-note" role="status"></span>
                     <span class="muted">Leave blank to keep it approved · add text to sidecar · check reject to exclude</span>
                 </div>
             </form>

@@ -27,6 +27,8 @@ import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
+import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
+import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.stage3.AssembleOutcome
 import ai.vishwakarma.labelling.stage3.AttestorSnapshot
 import ai.vishwakarma.labelling.stage3.ClaimCard
@@ -73,6 +75,7 @@ import ai.vishwakarma.labelling.stage3.PseudoEmbeddingService
 import ai.vishwakarma.labelling.stage3.SchemaStatus
 import ai.vishwakarma.labelling.stage3.ScoreOutcome
 import ai.vishwakarma.labelling.stage3.ScoredClaimForPublish
+import ai.vishwakarma.labelling.stage3.ScoredClaimView
 import ai.vishwakarma.labelling.stage3.ScoredPair
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import arrow.core.Either
@@ -574,6 +577,58 @@ private class FakeGraphRepo(props: AppProperties) :
             )
         }
 
+    /** The §21 A.3 readback the Stage 3.5 aggregate folds — derived from the last score pass. */
+    override fun scoresReadback(subjectId: String): List<ScoredClaimView> {
+        val outcome = scoreOutcomes.lastOrNull() ?: return emptyList()
+        val factById = outcome.facts.associateBy { it.factId }
+        return outcome.claims.map { c ->
+            val row = claimRows[c.claimId]
+            val fact = factById[c.factId]
+            ScoredClaimView(
+                claimId = c.claimId,
+                text = row?.text ?: "",
+                type = row?.type,
+                tierSeed = row?.tierSeed,
+                prior = c.prior,
+                score = c.score,
+                scoreBare = c.scoreBare,
+                signalsJson =
+                    fact?.let {
+                        """{"independence":${it.signals.independence},""" +
+                            """"evidenceMass":${it.signals.evidenceMass}}"""
+                    },
+                basis = row?.basis,
+                sourceClass = row?.sourceClass,
+                sensitive = row?.sensitive ?: false,
+                claimedDate = row?.claimedDate,
+                attestorKey = row?.attestorKey,
+                attestorName = null,
+                attestorKind =
+                    row?.attestorKey?.let { key ->
+                        when {
+                            key.startsWith("subject:") -> "SUBJECT"
+                            key.startsWith("issuer:") -> "ISSUER"
+                            else -> "ENDORSER"
+                        }
+                    },
+                attestorTrust = null,
+                factId = c.factId,
+                factLabel = c.factId,
+                factKind = "EVENT",
+                slot = null,
+                validFrom = null,
+                validTo = null,
+                datePrecision = null,
+                anchored = false,
+                belief = fact?.belief,
+                beliefBare = fact?.beliefBare,
+                entities = emptyList(),
+                edges = emptyList(),
+                explanation = null,
+            )
+        }
+    }
+
     // ---- SCORE (VA-17): snapshot derived from the last assembly ----
 
     val scoreOutcomes = mutableListOf<ScoreOutcome>()
@@ -779,6 +834,16 @@ private class ScriptedExtractor(var mentionsByClaim: Map<String, ExtractedMentio
     }
 }
 
+private class FakeSubjectScoreRepo : SubjectScoreRepository(mock(Firestore::class.java)) {
+    val store = mutableMapOf<String, SubjectScoreRecord>()
+
+    override fun save(record: SubjectScoreRecord) {
+        store[record.subjectId] = record
+    }
+
+    override fun find(subjectId: String): SubjectScoreRecord? = store[subjectId]
+}
+
 private class FailingEmbeddings : EmbeddingService {
     override val versionStamp = "gemini-embedding-001:3072"
     override val dimensions = 3072
@@ -814,6 +879,7 @@ class Stage3ServiceTest {
     private val extractor = ScriptedExtractor()
     private val judgeSampler = ScriptedJudgeSampler()
     private val judgeEdges = FakeJudgeEdgeRepo()
+    private val subjectScores = FakeSubjectScoreRepo()
 
     private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
         Stage3Service(
@@ -831,6 +897,7 @@ class Stage3ServiceTest {
             ClaimJudgeService(judgeSampler, judgeEdges, props),
             judgeEdges,
             claims,
+            subjectScores,
             props,
         )
 
@@ -1625,6 +1692,8 @@ class Stage3ServiceTest {
         assertEquals(Stage3RunStatus.PUBLISHING, failed.failedPhase)
         assertTrue(failed.error!!.contains("ledger batch write failed"))
         assertTrue(claims.published.isEmpty())
+        // A failed publish leaves no frozen subject aggregate either.
+        assertNull(subjectScores.find(subjectId))
 
         claims.failPublish = false
         var resumed = svc.retry(failed.id).valueOrNull()!!
@@ -1655,6 +1724,30 @@ class Stage3ServiceTest {
         assertEquals("op2", second.publishedBy)
         assertTrue(second.publishedAt!! >= firstPublishedAt)
         assertEquals(4, claims.published.size) // two publishes × two claims
+    }
+
+    @Test
+    fun `publish freezes the subject aggregate and a re-publish overwrites it`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        assertNull(subjectScores.find(subjectId))
+
+        val published = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        val record = subjectScores.find(subjectId)!!
+        assertEquals(published.id, record.scoreRunId)
+        assertEquals("op", record.publishedBy)
+        assertNotNull(record.publishedAt)
+        assertTrue(record.score > 0.0)
+        assertTrue(record.factCount > 0)
+        assertTrue(record.components.containsKey("weightedBelief"))
+        // The 0–100 display value rides the run counters for at-a-glance audit.
+        assertEquals(record.display.toLong(), published.counters[Stage3Counters.SUBJECT_SCORE])
+
+        val reopened = svc.reopen(published.id).valueOrNull()!!
+        val second = svc.publish(reopened.id, skipReview = true, actor = "op2").valueOrNull()!!
+        val replaced = subjectScores.find(subjectId)!!
+        assertEquals(second.id, replaced.scoreRunId)
+        assertEquals("op2", replaced.publishedBy)
     }
 
     // ---- rerun -------------------------------------------------------------------

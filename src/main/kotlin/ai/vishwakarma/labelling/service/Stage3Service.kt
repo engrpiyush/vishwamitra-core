@@ -14,6 +14,8 @@ import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
+import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
+import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.stage3.ClaimJudgeService
 import ai.vishwakarma.labelling.stage3.ClaimMatcher
@@ -32,6 +34,8 @@ import ai.vishwakarma.labelling.stage3.ScoreOutcome
 import ai.vishwakarma.labelling.stage3.Scorer
 import ai.vishwakarma.labelling.stage3.ScorerParams
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
+import ai.vishwakarma.labelling.stage3.SubjectScore
+import ai.vishwakarma.labelling.stage3.SubjectScorer
 import ai.vishwakarma.labelling.stage3.buildEvidenceProjection
 import ai.vishwakarma.labelling.stage3.embeddingText
 import arrow.core.Either
@@ -70,6 +74,7 @@ class Stage3Service(
     private val judge: ClaimJudgeService,
     private val judgeCache: Stage3EdgeRepository,
     private val claimLedger: ClaimRepository,
+    private val subjectScores: SubjectScoreRepository,
     private val props: AppProperties,
 ) {
 
@@ -818,7 +823,9 @@ class Stage3Service(
     /**
      * PUBLISHING (§11.11): read every provisionally scored claim off the graph and batch-write the
      * §3.2 vector to the Firestore ledger — idempotent and resumable (per-claim updates are atomic;
-     * a resumed tick re-writes identical values). Then PUBLISHED, terminal.
+     * a resumed tick re-writes identical values). The Stage 3.5 §5 subject aggregate freezes in the
+     * same envelope: SAI over the §21 A.3 readback, replace-on-set into `subject_scores` (a
+     * resumed/re-published tick overwrites with identical/refreshed values). Then PUBLISHED.
      */
     private fun runPublishTick(run: Stage3Run): Stage3Run =
         inPhase(run, "PUBLISH") {
@@ -837,18 +844,70 @@ class Stage3Service(
                 }
             )
             log.info("Run {}: published {} claim vector(s) to the ledger", run.id, rows.size)
+            val aggregate = SubjectScorer.score(graph.scoresReadback(run.subjectId), props.stage3)
+            subjectScores.save(aggregate.toRecord(run, now))
+            log.info(
+                "Run {}: subject aggregate frozen — SAI {} ({})",
+                run.id,
+                aggregate.display,
+                aggregate.band,
+            )
             val published =
                 run.copy(
                     status = Stage3RunStatus.PUBLISHED,
                     publishedAt = now,
                     finishedAt = now,
                     counters =
-                        run.counters + (Stage3Counters.CLAIMS_PUBLISHED to rows.size.toLong()),
+                        run.counters +
+                            (Stage3Counters.CLAIMS_PUBLISHED to rows.size.toLong()) +
+                            (Stage3Counters.SUBJECT_SCORE to aggregate.display.toLong()),
                     phaseSince = now,
                 )
             runs.save(published)
             published
         }
+
+    /** Flatten the pure [SubjectScore] into the Firestore ledger record (Stage 3.5 LLD §5). */
+    private fun SubjectScore.toRecord(run: Stage3Run, at: Instant): SubjectScoreRecord =
+        SubjectScoreRecord(
+            subjectId = run.subjectId,
+            score = score,
+            display = display,
+            band = band,
+            components =
+                mapOf(
+                    "weightedBelief" to components.weightedBelief,
+                    "evidenceDepth" to components.evidenceDepth,
+                    "independentCoverage" to components.independentCoverage,
+                    "sourceDiversity" to components.sourceDiversity,
+                    "contradictionDrag" to components.contradictionDrag,
+                    "depthFactor" to components.depthFactor,
+                    "coverageFactor" to components.coverageFactor,
+                    "diversityFactor" to components.diversityFactor,
+                    "contradictionFactor" to components.contradictionFactor,
+                ),
+            inputs =
+                mapOf(
+                    "selfOnlyFactCount" to inputs.selfOnlyFactCount,
+                    "independentAttestorCount" to inputs.independentAttestorCount,
+                    "attestorKindCount" to inputs.attestorKindCount,
+                    "attestorsByKind" to inputs.attestorsByKind,
+                    "documentaryFactFraction" to inputs.documentaryFactFraction,
+                    "corroborationCount" to inputs.corroborationCount,
+                    "contradictionCount" to inputs.contradictionCount,
+                    "explainedContradictionCount" to inputs.explainedContradictionCount,
+                    "confirmedContradictionCount" to inputs.confirmedContradictionCount,
+                    "proposedContradictionCount" to inputs.proposedContradictionCount,
+                    "meanEvidenceMass" to inputs.meanEvidenceMass,
+                    "medianEvidenceMass" to inputs.medianEvidenceMass,
+                    "anchoredFactCount" to inputs.anchoredFactCount,
+                ),
+            factCount = inputs.factCount,
+            claimCount = inputs.claimCount,
+            scoreRunId = run.id,
+            publishedAt = at,
+            publishedBy = run.publishedBy,
+        )
 
     /**
      * ADMIN reopen (§15 #12): PUBLISHED → AWAITING_REVIEW for another review round. The ledger

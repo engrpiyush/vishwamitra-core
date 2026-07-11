@@ -1,10 +1,12 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.persistence.Stage3EntityJournalRepository
+import ai.vishwakarma.labelling.report.PdfReportService
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.EntityAdminService
 import ai.vishwakarma.labelling.service.Stage3CorpusSeeder
+import ai.vishwakarma.labelling.service.Stage3DashboardService
 import ai.vishwakarma.labelling.service.Stage3EvalService
 import ai.vishwakarma.labelling.service.Stage3Service
 import ai.vishwakarma.labelling.stage3.EntityType
@@ -13,6 +15,7 @@ import arrow.core.Either
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -53,6 +56,8 @@ class Stage3ApiController(
     private val entityAdmin: EntityAdminService,
     private val eval: Stage3EvalService,
     private val entityJournal: Stage3EntityJournalRepository,
+    private val dashboards: Stage3DashboardService,
+    private val pdfReports: PdfReportService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -112,6 +117,33 @@ class Stage3ApiController(
     @GetMapping("/subjects/{id}/timeline")
     fun timeline(@PathVariable id: String): ResponseEntity<Any> =
         ResponseEntity.ok(graph.timeline(id))
+
+    /**
+     * The Stage 3.5 §6 dashboard read: the live SAI + components + every derivation series the
+     * dashboard plots (no SVG — presentation stays client-side of this contract). Provisional until
+     * the run publishes; `published` carries the frozen `subject_scores` doc when one exists.
+     */
+    @GetMapping("/subjects/{id}/dashboard")
+    fun dashboard(@PathVariable id: String): ResponseEntity<Any> =
+        dashboards.dashboard(id).toResponse()
+
+    // ---- Stage 3.5 §7: the profile PDF (one current report per subject, D6) ----------------
+
+    /** Generate/regenerate the profile PDF — replaces the previous one at the same object path. */
+    @PostMapping("/subjects/{id}/report")
+    fun generateReport(@PathVariable id: String): ResponseEntity<Any> =
+        pdfReports.generate(id, actor()).toResponse(HttpStatus.CREATED)
+
+    /** The current report's metadata (404 before the first generate). */
+    @GetMapping("/subjects/{id}/report")
+    fun reportMetadata(@PathVariable id: String): ResponseEntity<Any> =
+        pdfReports.metadata(id)?.let { ResponseEntity.ok<Any>(it) }
+            ?: notFound("Report for subject $id")
+
+    /** Delete the current report (object + metadata). */
+    @DeleteMapping("/subjects/{id}/report")
+    fun deleteReport(@PathVariable id: String): ResponseEntity<Any> =
+        pdfReports.delete(id).toResponse()
 
     /** Entity-browser search (VA-46): type filter + name/alias contains + usage counts. */
     @GetMapping("/entities")

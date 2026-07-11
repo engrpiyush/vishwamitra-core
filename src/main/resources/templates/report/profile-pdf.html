@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<!-- Stage 3.5 §7: the A4 profile PDF. Rendered by openhtmltopdf — keep this STRICT XHTML
+     (self-closed voids, no unescaped ampersands) and use only CSS it supports (no var()/flex/grid;
+     tables + floats). Charts are the same ChartSvg output as the dashboard, PRINT palette. -->
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title th:text="'Authenticity profile · ' + ${data.subjectName}">Authenticity profile</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 16mm 14mm 18mm 14mm;
+            @bottom-center { content: "Page " counter(page) " of " counter(pages); font-size: 8pt; color: #5e6976; }
+            @bottom-right { content: "vishwakarma.ai · Project Neo"; font-size: 8pt; color: #5e6976; }
+        }
+        body { font-family: 'DejaVu Sans', sans-serif; font-size: 9.5pt; color: #1a2330; margin: 0; }
+        h1 { font-size: 17pt; margin: 0 0 2pt 0; }
+        h2 { font-size: 11.5pt; margin: 14pt 0 4pt 0; border-bottom: 0.75pt solid #dce2e9; padding-bottom: 2pt; }
+        p { margin: 3pt 0; }
+        .muted { color: #5e6976; }
+        .small { font-size: 8pt; }
+        table { border-collapse: collapse; width: 100%; }
+        td, th { vertical-align: top; }
+        table.data td, table.data th { border-bottom: 0.5pt solid #e8edf2; padding: 3pt 5pt; font-size: 8.5pt; text-align: left; }
+        table.data th { color: #5e6976; font-weight: 700; border-bottom: 0.75pt solid #c4ccd6; }
+        table.layout td { padding: 0 6pt 8pt 0; }
+        .band-chip {
+            display: inline-block; padding: 1pt 8pt; border: 1.2pt solid; border-radius: 8pt;
+            font-weight: 700; font-size: 10pt; letter-spacing: 0.4pt;
+        }
+        .swatch { display: inline-block; width: 7pt; height: 7pt; border-radius: 1.5pt; margin-right: 3pt; }
+        .legend-line { font-size: 8.5pt; margin: 2pt 0; }
+        .watermark {
+            position: fixed; top: 42%; left: 8%; transform: rotate(-28deg);
+            font-size: 64pt; font-weight: 700; color: #b3261e; opacity: 0.10; letter-spacing: 6pt;
+        }
+        .contra { border-left: 2.2pt solid #b3261e; padding: 3pt 6pt; margin: 4pt 0; font-size: 8.5pt; }
+        .contra-explained { border-left-color: #b45309; }
+        .kv { font-size: 8.5pt; }
+        .kv td { padding: 1.5pt 8pt 1.5pt 0; }
+    </style>
+</head>
+<body>
+
+<div class="watermark" th:if="${data.provisional}">PROVISIONAL</div>
+
+<!-- Header: the audit stamp. -->
+<table class="layout">
+    <tr>
+        <td style="width: 62%;">
+            <h1 th:text="${data.subjectName}">Subject</h1>
+            <p class="muted">Authenticity profile — Project Neo Stage 3</p>
+            <table class="kv">
+                <tr><td class="muted">Generated</td><td th:text="${generatedAt}">when</td></tr>
+                <tr><td class="muted">Scoring run</td><td th:text="${data.runId} ?: '—'">run</td></tr>
+                <tr><td class="muted">Run state</td><td th:text="${data.runStatus} ?: '—'">state</td></tr>
+                <tr th:if="${data.published != null}">
+                    <td class="muted">Published value</td>
+                    <td th:text="${data.published.display} + ' (' + ${data.published.band} + ')'">65</td></tr>
+            </table>
+        </td>
+        <td style="width: 38%; text-align: center;">
+            <div th:utext="${charts.gaugeSvg}">gauge</div>
+            <span class="band-chip" th:text="${data.aggregate.band}"
+                  th:style="'color:' + ${charts.bandPaint} + '; border-color:' + ${charts.bandPaint} + ';'">BAND</span>
+        </td>
+    </tr>
+</table>
+
+<!-- The derivation. -->
+<h2>How the score derives</h2>
+<p class="muted small">Fact-level aggregate — deliberately stricter than the per-claim scores: it is
+    weighted by independent evidence mass, sags on thin evidence, and keeps a residual for explained
+    contradictions. ~90 is the practical ceiling.</p>
+<table class="data">
+    <tr><th style="width:8%;">Part</th><th style="width:30%;">Component</th><th style="width:14%;">Value</th><th style="width:14%;">Multiplier</th><th>Meaning</th></tr>
+    <tr th:each="c : ${charts.components}">
+        <td th:text="${c.code}">B</td>
+        <td th:text="${c.name}">name</td>
+        <td th:text="${c.valueText}">0.00</td>
+        <td th:text="${c.factorText} ?: '(base)'">×1.000</td>
+        <td class="muted" th:text="${c.hint}">hint</td>
+    </tr>
+</table>
+
+<!-- Chart grid. -->
+<h2>Evidence overview</h2>
+<table class="layout">
+    <tr>
+        <td style="width:50%;">
+            <p class="small muted">Facts by confidence tier</p>
+            <div th:utext="${charts.tierSvg}">tiers</div>
+        </td>
+        <td style="width:50%;">
+            <p class="small muted">Judged edges by review state</p>
+            <div th:utext="${charts.edgesSvg}">edges</div>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <p class="small muted">Claims by source class</p>
+            <div th:utext="${charts.sourceDonutSvg}">donut</div>
+            <div class="legend-line" th:each="s : ${charts.sourceLegend}">
+                <span class="swatch" th:style="'background:' + ${s.paint} + ';'"></span>
+                <span th:text="${s.label}">label</span> — <strong th:text="${s.value}">0</strong>
+            </div>
+        </td>
+        <td>
+            <p class="small muted">Attestors by kind</p>
+            <div th:utext="${charts.attestorDonutSvg}">donut</div>
+            <div class="legend-line" th:each="s : ${charts.attestorLegend}">
+                <span class="swatch" th:style="'background:' + ${s.paint} + ';'"></span>
+                <span th:text="${s.label}">label</span> — <strong th:text="${s.value}">0</strong>
+            </div>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <p class="small muted">Claim score distribution (tier cutoffs marked)</p>
+            <div th:utext="${charts.histogramSvg}">histogram</div>
+        </td>
+        <td>
+            <p class="small muted">Evidence saturation vs belief, per fact (tier-colored)</p>
+            <div th:utext="${charts.scatterSvg}">scatter</div>
+        </td>
+    </tr>
+</table>
+
+<!-- Timeline. -->
+<h2>Timeline</h2>
+<div th:utext="${charts.stripSvg}">strip</div>
+
+<!-- Fact highlights. -->
+<h2>Strongest facts</h2>
+<table class="data">
+    <tr><th>Fact</th><th style="width:12%;">Slot</th><th style="width:10%;">Tier</th><th style="width:10%;">Belief</th><th style="width:12%;">Evidence mass</th><th style="width:10%;">Claims</th></tr>
+    <tr th:each="f : ${topFacts}">
+        <td th:text="${f.label}">label</td>
+        <td class="muted" th:text="${f.slot} ?: '—'">slot</td>
+        <td th:text="${f.tier}">HIGH</td>
+        <td th:text="${#numbers.formatDecimal(f.belief, 1, 2)}">0.90</td>
+        <td th:text="${#numbers.formatDecimal(f.evidenceMass, 1, 1)}">4.0</td>
+        <td th:text="${f.claimCount}">2</td>
+    </tr>
+</table>
+
+<th:block th:if="${!flaggedFacts.isEmpty()}">
+    <h2>Flagged facts <span class="muted small">(low belief or the subject&#8217;s word alone)</span></h2>
+    <table class="data">
+        <tr><th>Fact</th><th style="width:12%;">Slot</th><th style="width:10%;">Belief</th><th style="width:14%;">Why flagged</th></tr>
+        <tr th:each="f : ${flaggedFacts}">
+            <td th:text="${f.label}">label</td>
+            <td class="muted" th:text="${f.slot} ?: '—'">slot</td>
+            <td th:text="${#numbers.formatDecimal(f.belief, 1, 2)}">0.30</td>
+            <td class="muted" th:text="${f.selfOnly} ? 'self-only' : 'low belief'">self-only</td>
+        </tr>
+    </table>
+</th:block>
+
+<!-- Contradictions. -->
+<h2>Contradictions <span class="muted small" th:text="'(' + ${data.aggregate.inputs.contradictionCount} + ' surviving)'">(0)</span></h2>
+<p class="muted small" th:if="${data.topContradictions.isEmpty()}">None — no judged contradiction touches this subject&#8217;s facts.</p>
+<div th:each="c : ${data.topContradictions}" class="contra" th:classappend="${c.explained} ? 'contra-explained' : ''">
+    <strong th:text="${c.fromLabel}">A</strong> &#215; <strong th:text="${c.toLabel}">B</strong>
+    — confidence <span th:text="${#numbers.formatDecimal(c.confidence, 1, 2)}">0.75</span>
+    <span th:if="${c.explained}">&#183; explained (residual drag retained)</span>
+    <span th:if="${!c.explained and c.reviewStatus == 'CONFIRMED'}">&#183; confirmed</span>
+    <span th:if="${!c.explained and c.reviewStatus == 'PROPOSED'}">&#183; awaiting review</span>
+    <div class="muted" th:if="${c.rationale != null}" th:text="${c.rationale}">rationale</div>
+</div>
+
+<!-- Appendix. -->
+<h2>Appendix — inputs</h2>
+<table class="kv">
+    <tr><td class="muted">Scored claims</td><td th:text="${data.aggregate.inputs.claimCount}">0</td>
+        <td class="muted">Facts</td><td th:text="${data.aggregate.inputs.factCount}">0</td></tr>
+    <tr><td class="muted">Entities</td><td th:text="${data.entityCount}">0</td>
+        <td class="muted">Independent attestors</td><td th:text="${data.aggregate.inputs.independentAttestorCount}">0</td></tr>
+    <tr><td class="muted">Corroborations</td><td th:text="${data.edgeSummary.corroborations}">0</td>
+        <td class="muted">Contradictions</td><td th:text="${data.aggregate.inputs.contradictionCount}">0</td></tr>
+    <tr><td class="muted">Self-only facts</td><td th:text="${data.aggregate.inputs.selfOnlyFactCount}">0</td>
+        <td class="muted">Anchored facts</td><td th:text="${data.aggregate.inputs.anchoredFactCount}">0</td></tr>
+    <tr><td class="muted">Mean evidence mass</td><td th:text="${#numbers.formatDecimal(data.aggregate.inputs.meanEvidenceMass, 1, 2)}">0</td>
+        <td class="muted">Documentary coverage</td><td th:text="${#numbers.formatDecimal(data.aggregate.inputs.documentaryFactFraction, 1, 2)}">0</td></tr>
+</table>
+<p class="muted small">Scoring parameters are frozen on the run record (paramsSnapshot); the SAI
+    formula is Stage 3.5 LLD &#167;3. Scores measure evidential support within the submitted
+    material — they never verify claims against the outside world.</p>
+
+</body>
+</html>

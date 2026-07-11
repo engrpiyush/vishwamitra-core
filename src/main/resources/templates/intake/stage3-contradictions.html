@@ -4,6 +4,8 @@
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
 <style>
+    /* Deep-link highlight: timeline ⚠ markers and dashboard cards land on #edge-… anchors. */
+    .panel:target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--ring); }
     .queue-sides { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.7rem; }
     .queue-side {
         flex: 1 1 320px; border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem;
@@ -17,7 +19,11 @@
 
     <div class="row-between">
         <h1>Contradiction queue <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
-        <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        <span>
+            <a th:href="@{/intake/{id}/stage3/dashboard(id=${subject.id})}" class="muted">Dashboard</a>
+            <span class="muted">·</span>
+            <a th:href="@{/intake/{id}/stage3(id=${subject.id})}" class="muted">&larr; Stage 3</a>
+        </span>
     </div>
     <p class="muted">The human gate (§11.10): ratify a real conflict (<strong>Confirm</strong> — the
         penalty stands), reject a judge false-positive (<strong>Dismiss</strong> — edge deleted,

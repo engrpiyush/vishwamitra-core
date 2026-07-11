@@ -4,9 +4,13 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
+import ai.vishwakarma.labelling.report.DashboardCharts
+import ai.vishwakarma.labelling.report.PdfReportService
+import ai.vishwakarma.labelling.report.VizPalette
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.IntakeService
+import ai.vishwakarma.labelling.service.Stage3DashboardService
 import ai.vishwakarma.labelling.service.Stage3EvalService
 import ai.vishwakarma.labelling.service.Stage3Service
 import ai.vishwakarma.labelling.service.SubjectService
@@ -43,6 +47,8 @@ class Stage3Controller(
     private val stage3: Stage3Service,
     private val graph: Stage3GraphRepository,
     private val eval: Stage3EvalService,
+    private val dashboards: Stage3DashboardService,
+    private val pdfReports: PdfReportService,
     private val props: AppProperties,
 ) {
 
@@ -258,6 +264,93 @@ class Stage3Controller(
         model.addAttribute("tierMedium", props.stage3.tierMedium)
         model.addAttribute("hasDated", view.state.isNotEmpty() || view.events.isNotEmpty())
         return "intake/stage3-timeline"
+    }
+
+    /**
+     * The Stage 3.5 §6 authenticity dashboard: the SAI headline + every number that derives it.
+     * Charts are server-rendered SVG (report/ChartSvg, the D8 decision) painted through CSS tokens
+     * so both themes read; stage3-dashboard.js only adds fact popovers. Provisional at
+     * AWAITING_REVIEW (same badge idiom as the scores page), frozen-vs-live drift is surfaced.
+     */
+    @GetMapping("/{id}/stage3/dashboard")
+    fun dashboard(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
+        val data =
+            runCatching { dashboards.dashboard(id) }
+                .getOrElse {
+                    ra.addFlashAttribute("error", "Could not read the dashboard: ${it.message}")
+                    return "redirect:/intake/$id/stage3"
+                }
+                .fold(
+                    { err ->
+                        ra.addFlashAttribute("error", err.message)
+                        return "redirect:/intake"
+                    },
+                    { it },
+                )
+        model.addAttribute("pageTitle", "Authenticity · ${data.subjectName}")
+        model.addAttribute("data", data)
+        model.addAttribute("run", stage3.latestForSubject(id))
+        // The shared chart set (report/DashboardCharts — the PDF renders the same builders with
+        // the PRINT palette); web paints ride CSS tokens so the theme toggle recolors live.
+        model.addAttribute("charts", DashboardCharts.build(data, props.stage3, VizPalette.WEB))
+        model.addAttribute("report", pdfReports.metadata(id))
+        model.addAttribute("staleReport", pdfReports.isStale(id))
+        // Fact details for the popover layer, keyed by factId.
+        model.addAttribute(
+            "dashboardJson",
+            Json.writeLine(
+                mapOf(
+                    "facts" to data.factPoints.associateBy { it.factId },
+                    "scoresUrl" to "/intake/${data.subjectId}/stage3/scores",
+                )
+            ),
+        )
+        return "intake/stage3-dashboard"
+    }
+
+    // ---- Stage 3.5 §7: the profile-PDF buttons (PRG + flash, D6 replace semantics) ----------
+
+    /** Generate (or regenerate — same object path, replaces) the subject's profile PDF. */
+    @PostMapping("/{id}/stage3/report/generate")
+    fun generateReport(@PathVariable id: String, ra: RedirectAttributes): String {
+        pdfReports
+            .generate(id, actor())
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Profile PDF generated (${it.sizeBytes / 1024} KB)" +
+                            if (it.provisional) " — PROVISIONAL watermark applied" else "",
+                    )
+                },
+            )
+        return "redirect:/intake/$id/stage3/dashboard"
+    }
+
+    /** Download: 302 to the signed URL (or the dev sink locally). */
+    @GetMapping("/{id}/stage3/report")
+    fun downloadReport(@PathVariable id: String, ra: RedirectAttributes): String =
+        pdfReports
+            .downloadUrl(id)
+            .fold(
+                {
+                    ra.addFlashAttribute("error", it.message)
+                    "redirect:/intake/$id/stage3/dashboard"
+                },
+                { "redirect:$it" },
+            )
+
+    /** Delete the current report (object + metadata). */
+    @PostMapping("/{id}/stage3/report/delete")
+    fun deleteReport(@PathVariable id: String, ra: RedirectAttributes): String {
+        pdfReports
+            .delete(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Profile PDF deleted") },
+            )
+        return "redirect:/intake/$id/stage3/dashboard"
     }
 
     /**

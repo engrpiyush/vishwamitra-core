@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<style>
+    /* Chart paint tokens (Stage 3.5 §6, D8) — dark defaults, light overrides; the SVG marks
+       reference these via var(--viz-…) so the theme toggle recolors them live. The values are
+       the dataviz-validated palettes (see report/ChartSvg.kt VizPalette). */
+    :root {
+        --viz-s1: #3987e5; --viz-s2: #199e70; --viz-s3: #c98500; --viz-s4: #008300; --viz-s5: #9085e9;
+        --viz-muted: #6b7280;
+        --viz-tier-high: #16a34a; --viz-tier-medium: #3b82f6; --viz-tier-low: #6b7280;
+        --viz-accent: #2dd4bf;
+        --viz-good: #16a34a; --viz-warn: #e3b341; --viz-serious: #ea580c; --viz-critical: #f87171;
+    }
+    :root[data-theme="light"] {
+        --viz-s1: #2a78d6; --viz-s2: #1baf7a; --viz-s3: #eda100; --viz-s4: #008300; --viz-s5: #4a3aa7;
+        --viz-muted: #8a94a1;
+        --viz-accent: #0d9488;
+        --viz-warn: #b45309; --viz-serious: #c2410c; --viz-critical: #b3261e;
+    }
+    .dash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+    .dash-grid .panel { margin: 0; }
+    .dash-wide { grid-column: 1 / -1; }
+    @media (max-width: 900px) { .dash-grid { grid-template-columns: 1fr; } }
+    .panel h3 { margin: 0 0 0.2rem; font-size: 0.98rem; }
+    .panel .chart-note { margin: 0 0 0.6rem; font-size: 0.82rem; color: var(--muted); }
+    .chart-host svg { display: block; width: 100%; height: auto; }
+    .sai-hero { display: flex; gap: 1.4rem; align-items: center; flex-wrap: wrap; }
+    .sai-hero .chart-host { flex: 0 0 220px; max-width: 240px; }
+    .sai-band {
+        display: inline-block; padding: 0.15rem 0.7rem; border-radius: var(--radius-pill);
+        border: 1.5px solid; font-weight: 700; font-size: 0.9rem; letter-spacing: 0.04em;
+    }
+    .comp-row { display: grid; grid-template-columns: 1.4rem 11rem 1fr 3.4rem 4.4rem; gap: 0.6rem; align-items: center; margin: 0.45rem 0; font-size: 0.88rem; }
+    .comp-track { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+    .comp-fill { height: 100%; border-radius: 4px 0 0 4px; background: var(--viz-accent); }
+    .comp-row--drag .comp-fill { background: var(--viz-critical); }
+    .viz-legend { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.85rem; }
+    .viz-legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 0.45rem; vertical-align: -1px; }
+    .donut-pair { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+    .donut-cell { display: flex; gap: 0.9rem; align-items: center; flex: 1 1 240px; }
+    .donut-cell .chart-host { flex: 0 0 130px; }
+    .contra-card { border: 1px solid var(--border); border-left: 3px solid var(--viz-critical); border-radius: 6px; padding: 0.55rem 0.75rem; margin: 0.45rem 0; font-size: 0.9rem; }
+    .contra-card--explained { border-left-color: var(--viz-warn); }
+    .contra-card--confirmed { border-left-color: var(--viz-serious); }
+    .tl-popover {
+        position: absolute; z-index: 60; max-width: 24rem; background: var(--surface);
+        border: 1px solid var(--border-strong); border-radius: 8px; padding: 0.7rem 0.9rem;
+        box-shadow: var(--shadow-lg); font-size: 0.88rem;
+    }
+    .tiles.dash-tiles { margin-top: 0; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.7rem; }
+    .dash-tiles .tile { padding: 0.8rem 0.9rem; }
+    .dash-tiles .tile-value { font-size: 1.45rem; }
+    .dash-tiles .tile-label { font-size: 0.8rem; color: var(--muted); }
+</style>
+<main class="container wide">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Authenticity <span class="muted">·</span> <span th:text="${data.subjectName}">Name</span></h1>
+        <a th:href="@{/intake/{id}/stage3(id=${data.subjectId})}" class="muted">&larr; Stage 3</a>
+    </div>
+
+    <!-- Provisional-vs-published, the scores-page idiom + the drift note (Stage 3.5 §5). -->
+    <div class="row-actions" style="margin:0.4rem 0 0.2rem;">
+        <span class="badge badge--success" th:if="${!data.provisional}">PUBLISHED</span>
+        <span class="badge badge--warning" th:if="${data.provisional and data.runStatus != null}"
+              th:text="'PROVISIONAL · run ' + ${data.runStatus}">PROVISIONAL</span>
+        <span class="muted" th:if="${data.published != null}">
+            frozen at publish: <strong th:text="${data.published.display}">0</strong>
+            (<span th:text="${data.published.band}">BAND</span>)
+        </span>
+        <span class="badge badge--warning" th:if="${data.divergesFromPublished}"
+              title="the live recompute no longer matches the frozen ledger value — params or the graph moved since publish">
+            differs from published — re-publish to refresh</span>
+    </div>
+
+    <div class="empty-state" th:if="${data.aggregate.inputs.factCount == 0}">
+        No scored facts yet — the dashboard lights up once a Stage 3 run reaches SCORING.
+        <a th:href="@{/intake/{id}/stage3(id=${data.subjectId})}">Go to the run page &rarr;</a>
+    </div>
+
+    <th:block th:unless="${data.aggregate.inputs.factCount == 0}">
+    <div class="dash-grid">
+        <!-- Headline: the SAI meter + band + component breakdown. -->
+        <section class="panel">
+            <h3>Subject Authenticity Index</h3>
+            <p class="chart-note">fact-level aggregate — stricter than per-claim scores by design; ~90 is the practical ceiling</p>
+            <div class="sai-hero">
+                <div class="chart-host" th:utext="${charts.gaugeSvg}"></div>
+                <div>
+                    <span class="sai-band" th:text="${data.aggregate.band}"
+                          th:style="'color:' + ${charts.bandPaint} + ';border-color:' + ${charts.bandPaint}">BAND</span>
+                    <p class="muted" style="margin:0.5rem 0 0; font-size:0.85rem;">
+                        <span th:text="${data.aggregate.inputs.factCount}">0</span> facts ·
+                        <span th:text="${data.aggregate.inputs.claimCount}">0</span> claims ·
+                        <span th:text="${data.aggregate.inputs.independentAttestorCount}">0</span> independent attestor(s)
+                    </p>
+                </div>
+            </div>
+            <div style="margin-top:0.9rem;">
+                <div class="comp-row" th:each="c : ${charts.components}"
+                     th:classappend="${c.code == 'C'} ? 'comp-row--drag' : ''">
+                    <strong th:text="${c.code}">B</strong>
+                    <span th:title="${c.hint}" th:text="${c.name}">name</span>
+                    <div class="comp-track"><div class="comp-fill" th:style="'width:' + ${c.percent} + '%;'"></div></div>
+                    <span style="text-align:right; font-variant-numeric: tabular-nums;" th:text="${c.valueText}">0.00</span>
+                    <span class="muted" style="font-variant-numeric: tabular-nums;" th:text="${c.factorText}">×1.000</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Orientation tiles. -->
+        <section class="panel">
+            <h3>At a glance</h3>
+            <p class="chart-note">what the score is built from</p>
+            <div class="tiles dash-tiles">
+                <div class="tile"><span class="tile-value" th:text="${data.aggregate.inputs.claimCount}">0</span><span class="tile-label">scored claims</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.aggregate.inputs.factCount}">0</span><span class="tile-label">facts</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.entityCount}">0</span><span class="tile-label">entities</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.aggregate.inputs.independentAttestorCount}">0</span><span class="tile-label">independent attestors</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.edgeSummary.corroborations}">0</span><span class="tile-label">corroborations</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.aggregate.inputs.contradictionCount}">0</span><span class="tile-label">contradictions</span></div>
+                <div class="tile"><span class="tile-value" th:text="${data.aggregate.inputs.selfOnlyFactCount}">0</span><span class="tile-label">self-only facts</span></div>
+                <div class="tile"><span class="tile-value" th:text="${#numbers.formatDecimal(data.aggregate.inputs.meanEvidenceMass, 1, 1)}">0.0</span><span class="tile-label">mean evidence mass</span></div>
+            </div>
+        </section>
+
+        <!-- Fact confidence + evidence edges. -->
+        <section class="panel">
+            <h3>Facts by confidence tier</h3>
+            <p class="chart-note">distribution, not an average — each fact's belief against the tier bands</p>
+            <div class="chart-host" th:utext="${charts.tierSvg}"></div>
+        </section>
+        <section class="panel">
+            <h3>Evidence graph</h3>
+            <p class="chart-note">judged edges between facts, by review state</p>
+            <div class="chart-host" th:utext="${charts.edgesSvg}"></div>
+        </section>
+
+        <!-- Source mix. -->
+        <section class="panel dash-wide">
+            <h3>Source mix</h3>
+            <p class="chart-note">where the claims come from · whose word they rest on</p>
+            <div class="donut-pair">
+                <div class="donut-cell">
+                    <div class="chart-host" th:utext="${charts.sourceDonutSvg}"></div>
+                    <div class="viz-legend">
+                        <span th:each="s : ${charts.sourceLegend}">
+                            <span class="swatch" th:style="'background:' + ${s.paint} + ';'"></span>
+                            <span th:text="${s.label}">label</span>
+                            <strong th:text="${s.value}">0</strong>
+                        </span>
+                    </div>
+                </div>
+                <div class="donut-cell">
+                    <div class="chart-host" th:utext="${charts.attestorDonutSvg}"></div>
+                    <div class="viz-legend">
+                        <span th:each="s : ${charts.attestorLegend}">
+                            <span class="swatch" th:style="'background:' + ${s.paint} + ';'"></span>
+                            <span th:text="${s.label}">label</span>
+                            <strong th:text="${s.value}">0</strong>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Distributions. -->
+        <section class="panel">
+            <h3>Claim score distribution</h3>
+            <p class="chart-note">published per-claim scores in 0.05 buckets; rules mark the tier cutoffs</p>
+            <div class="chart-host" th:utext="${charts.histogramSvg}"></div>
+        </section>
+        <section class="panel">
+            <h3>Evidence vs belief</h3>
+            <p class="chart-note">each dot is a fact — left means thin evidence; click a dot for details</p>
+            <div class="chart-host" id="factScatter" th:utext="${charts.scatterSvg}"></div>
+            <div class="viz-legend" style="flex-direction:row; gap:1rem; margin-top:0.4rem;">
+                <span><span class="swatch" style="background:var(--viz-tier-high);"></span>high</span>
+                <span><span class="swatch" style="background:var(--viz-tier-medium);"></span>medium</span>
+                <span><span class="swatch" style="background:var(--viz-tier-low);"></span>low</span>
+            </div>
+        </section>
+
+        <!-- Timeline strip. -->
+        <section class="panel dash-wide">
+            <div class="row-between">
+                <h3>Timeline</h3>
+                <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/timeline(id=${data.subjectId})}">Full timeline &rarr;</a>
+            </div>
+            <p class="chart-note">STATE lanes + EVENT diamonds, tier-colored — the interactive view has popovers and anachronism markers</p>
+            <div class="chart-host" th:utext="${charts.stripSvg}"></div>
+        </section>
+
+        <!-- Contradictions. -->
+        <section class="panel dash-wide">
+            <div class="row-between">
+                <h3>Contradictions <span class="muted" th:text="'(' + ${data.aggregate.inputs.contradictionCount} + ')'">(0)</span></h3>
+                <a class="btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/contradictions(id=${data.subjectId})}">Review queue &rarr;</a>
+            </div>
+            <p class="muted" th:if="${data.topContradictions.isEmpty()}" style="margin:0.4rem 0 0;">
+                None survive — no judged contradiction touches this subject's facts.</p>
+            <div th:each="c : ${data.topContradictions}" class="contra-card"
+                 th:classappend="${c.explained} ? 'contra-card--explained' : (${c.reviewStatus == 'CONFIRMED'} ? 'contra-card--confirmed' : '')">
+                <strong th:text="${c.fromLabel}">A</strong>
+                <span class="muted">×</span>
+                <strong th:text="${c.toLabel}">B</strong>
+                <span class="badge badge--muted" th:text="'conf ' + ${#numbers.formatDecimal(c.confidence, 1, 2)}">conf</span>
+                <span class="badge badge--warning" th:if="${c.explained}">explained · residual drag</span>
+                <span class="badge badge--danger" th:if="${!c.explained and c.reviewStatus == 'PROPOSED'}">awaiting review</span>
+                <span class="badge badge--danger" th:if="${!c.explained and c.reviewStatus == 'CONFIRMED'}">confirmed</span>
+                <p class="muted" th:if="${c.rationale != null}" style="margin:0.3rem 0 0; font-size:0.84rem;"
+                   th:text="${c.rationale}">rationale</p>
+            </div>
+        </section>
+
+        <!-- Profile PDF (Stage 3.5 §7): one current report — regenerate replaces, delete removes. -->
+        <section class="panel dash-wide">
+            <h3>Profile PDF</h3>
+            <p class="chart-note">an A4 snapshot of this dashboard — stamped with the run id and score; provisional runs get a watermark</p>
+            <div class="row-actions" th:if="${report != null}" style="margin-bottom:0.6rem;">
+                <span class="badge badge--success" th:unless="${report.provisional}">from published scores</span>
+                <span class="badge badge--warning" th:if="${report.provisional}">PROVISIONAL watermark</span>
+                <span class="badge badge--warning" th:if="${staleReport}"
+                      title="the report was generated from an earlier run — regenerate to cite the latest published scores">
+                    predates the latest publish — regenerate</span>
+                <span class="muted">
+                    SAI <strong th:text="${report.display}">0</strong> (<span th:text="${report.band}">BAND</span>) ·
+                    <span th:text="${report.sizeBytes / 1024}">0</span> KB ·
+                    generated <time class="js-ts" th:datetime="${report.generatedAt}" th:text="${report.generatedAt}">when</time>
+                    <th:block th:if="${report.generatedBy != null}">by <span th:text="${report.generatedBy}">who</span></th:block>
+                </span>
+            </div>
+            <p class="muted" th:if="${report == null}" style="margin:0 0 0.6rem;">No report yet.</p>
+            <div class="row-actions">
+                <form method="post" class="inline-form" th:if="${report == null}"
+                      th:action="@{/intake/{id}/stage3/report/generate(id=${data.subjectId})}">
+                    <button type="submit" class="btn--sm">Generate PDF</button>
+                </form>
+                <form method="post" class="inline-form" th:if="${report != null}"
+                      th:action="@{/intake/{id}/stage3/report/generate(id=${data.subjectId})}"
+                      data-confirm="Replace the current profile PDF? The existing report is overwritten — there is only ever one per subject."
+                      data-confirm-title="Replace report?" data-confirm-ok="Replace">
+                    <button type="submit" class="btn--sm">Regenerate</button>
+                </form>
+                <a class="btn btn--ghost btn--sm" th:if="${report != null}"
+                   th:href="@{/intake/{id}/stage3/report(id=${data.subjectId})}">Download &darr;</a>
+                <form method="post" class="inline-form" th:if="${report != null}"
+                      th:action="@{/intake/{id}/stage3/report/delete(id=${data.subjectId})}"
+                      data-confirm="Delete the profile PDF? The stored file and its record are removed."
+                      data-confirm-title="Delete report?" data-confirm-ok="Delete" data-confirm-danger>
+                    <button type="submit" class="btn--danger btn--sm">Delete</button>
+                </form>
+            </div>
+        </section>
+    </div>
+    </th:block>
+</main>
+<script th:inline="javascript">
+    window.STAGE3_DASHBOARD = JSON.parse(/*[[${dashboardJson}]]*/ "{}");
+</script>
+<script th:src="@{/js/stage3-dashboard.js}" defer></script>
+</body>
+</html>
