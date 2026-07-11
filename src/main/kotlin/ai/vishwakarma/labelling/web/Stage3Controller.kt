@@ -88,6 +88,16 @@ class Stage3Controller(
             "queueSize",
             run?.counters?.get(Stage3Counters.CONTRADICTION_QUEUE) ?: 0L,
         )
+        // Live server posture (props, not the run's snapshot): a stubbed leg makes a run useless
+        // on a real subject, so surface it before Run — not after (2026-07-11 testing lesson).
+        model.addAttribute(
+            "dryLegs",
+            listOfNotNull(
+                "embeddings".takeIf { props.stage3.embeddingsDryRun },
+                "extraction".takeIf { props.stage3.extractionDryRun },
+                "judge".takeIf { props.stage3.judgeDryRun },
+            ),
+        )
         return "intake/stage3"
     }
 
@@ -360,7 +370,11 @@ class Stage3Controller(
                 )
         }
 
-    /** Re-run chooser on a PUBLISHED run: plain (cache-warm) vs `fresh` (replaces the graph). */
+    /**
+     * Re-run chooser on a PUBLISHED or parked AWAITING_REVIEW run: plain (cache-warm) vs `fresh`
+     * (replaces the graph). A parked run retires as SUPERSEDED — the discard path for a run whose
+     * provisional scores should never reach the ledger.
+     */
     @PostMapping("/stage3/runs/{runId}/rerun")
     fun rerun(
         @PathVariable runId: String,

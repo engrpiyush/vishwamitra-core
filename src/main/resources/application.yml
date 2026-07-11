@@ -50,6 +50,15 @@ app:
     # POC and wants the deepest judgment available (gemini-2.5-pro is not in asia-southeast1), so
     # global is the default. Set blank/region to pin processing in-region.
     gemini-location: ${GEMINI_LOCATION:global}
+    # Retry ladder (ms, comma-separated) for Vertex/Gemini 429+5xx — e.g.
+    # "1000,2000,4000,8000,16000,32000" spans a per-minute quota window. Unset = backoff DISABLED
+    # (first failure propagates; the run FAILs and Retry resumes).
+    vertex-backoff-ms: ${VERTEX_BACKOFF_MS:}
+    # generateContent door for judge/extraction/drafting: vertex (ADC, DSQ shared pool) or
+    # gemini-api (Developer API: fixed paid-tier quotas, needs GEMINI_API_KEY, global processing).
+    # Embeddings have their own switch (app.stage3.embedding-transport).
+    gemini-transport: ${GEMINI_TRANSPORT:vertex}
+    gemini-api-key: ${GEMINI_API_KEY:}
   intake:
     max-asset-size-bytes: ${INTAKE_MAX_ASSET_SIZE_BYTES:5368709120} # 5GB
     stale-upload-hours: ${INTAKE_STALE_UPLOAD_HOURS:24}
@@ -86,6 +95,11 @@ app:
     # (e.g. us-central1) if the home region lacks gemini-embedding-001.
     embedding-location: ${STAGE3_EMBEDDING_LOCATION:}
     embedding-dimensions: ${STAGE3_EMBEDDING_DIMENSIONS:3072}
+    # vertex (ADC, in-region — but gemini-embedding is quota'd 5 RPM everywhere in this project)
+    # or gemini-api (Developer API: same model/space, paid-tier 3000 RPM, needs GEMINI_API_KEY,
+    # processed globally). Same version stamp either way — switching never re-embeds.
+    embedding-transport: ${STAGE3_EMBEDDING_TRANSPORT:vertex}
+    gemini-api-key: ${GEMINI_API_KEY:}
     dry-run: ${STAGE3_DRY_RUN:false}
   # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
   coming-soon:

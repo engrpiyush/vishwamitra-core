@@ -71,8 +71,9 @@ class Stage3ApiController(
     fun retry(@PathVariable id: String): ResponseEntity<Any> = stage3.retry(id).toResponse()
 
     /**
-     * Re-run a PUBLISHED run as a fresh record; `fresh=true` also wipes the subject's evidence
-     * layer at SYNC (judge-cache dropping rides this once VA-15 lands).
+     * Re-run a PUBLISHED (or parked AWAITING_REVIEW — retired as SUPERSEDED) run as a fresh record;
+     * `fresh=true` also wipes the subject's evidence layer at SYNC (judge-cache dropping rides this
+     * once VA-15 lands).
      */
     @PostMapping("/runs/{id}/rerun")
     fun rerun(

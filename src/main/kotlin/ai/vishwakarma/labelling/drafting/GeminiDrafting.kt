@@ -7,14 +7,15 @@ import ai.vishwakarma.labelling.domain.Tool
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ProviderService
-import com.google.auth.oauth2.GoogleCredentials
+import ai.vishwakarma.labelling.vertex.VertexBackoff
 import java.util.Base64
 import org.springframework.stereotype.Component
-import org.springframework.web.client.RestClient
 
 /**
- * Vertex AI Gemini drafting (same region as the app, asia-southeast1). Uses the app SA's ADC token
- * — no API key. Enabled via the `gemini` provider catalog row (+ model id).
+ * Gemini drafting/generation for every consumer (tuning drafts, Stage 2 extraction, Stage 3 entity
+ * extraction + judge). The model comes from the `gemini` provider catalog row; the HTTP door comes
+ * from `app.gcp.gemini-transport` (2026-07-11): `vertex` (ADC, DSQ shared pool — the default) or
+ * `gemini-api` (Developer API, fixed paid-tier quotas, `GEMINI_API_KEY`) — see [GeminiTransport].
  */
 @Component
 class GeminiDrafting(
@@ -24,7 +25,10 @@ class GeminiDrafting(
 
     override val id = "gemini"
 
-    private val rest = RestClient.create()
+    private val transport: GeminiTransport =
+        if (props.gcp.geminiTransport.equals("gemini-api", ignoreCase = true))
+            GeminiApiTransport(props)
+        else VertexGeminiTransport(props)
 
     override fun available(): Boolean =
         providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false
@@ -85,20 +89,6 @@ class GeminiDrafting(
     ): String {
         val cfg = providers.get(id) ?: error("gemini not configured")
         val model = cfg.model.ifBlank { error("gemini model not set") }
-        // "global" reaches models not served regionally (e.g. gemini-2.5-pro); blank = in-region.
-        val location = props.gcp.geminiLocation.ifBlank { props.gcp.region }
-        val token =
-            GoogleCredentials.getApplicationDefault()
-                .createScoped("https://www.googleapis.com/auth/cloud-platform")
-                .also { it.refreshIfExpired() }
-                .accessToken
-                .tokenValue
-        val host =
-            if (location == "global") "aiplatform.googleapis.com"
-            else "$location-aiplatform.googleapis.com"
-        val url =
-            "https://$host/v1/projects/${props.gcp.projectId}" +
-                "/locations/$location/publishers/google/models/$model:generateContent"
         val body = buildMap {
             put("contents", listOf(mapOf("role" to "user", "parts" to parts)))
             val generationConfig = buildMap {
@@ -108,14 +98,16 @@ class GeminiDrafting(
             }
             if (generationConfig.isNotEmpty()) put("generationConfig", generationConfig)
         }
+        // 429/5xx back off into the next per-minute quota window (2026-07-11) — this client
+        // serves Stage 2 extraction, Stage 3 entity extraction AND the judge ensemble, all of
+        // which burst many calls per poll. Ladder from app.gcp.vertex-backoff-ms; empty = off.
         val response =
-            rest
-                .post()
-                .uri(url)
-                .header("Authorization", "Bearer $token")
-                .body(body)
-                .retrieve()
-                .body(String::class.java) ?: error("empty Gemini response")
+            VertexBackoff.retrying(
+                props.gcp.vertexBackoffMs,
+                "generateContent $model (${transport.label})",
+            ) {
+                transport.post(model, body)
+            }
         return extractText(response)
     }
 

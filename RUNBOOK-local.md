@@ -11,15 +11,21 @@ stub by default (no GCP credentials needed, no credits spent). Auth is bypassed 
 
 ---
 
-## 1. Prerequisites (once)
+## 1. Prerequisites & auth (once per machine / credential expiry)
 
 ```bash
 # JDK 17 + Docker Desktop assumed.
 gcloud components install cloud-firestore-emulator
+
+# Auth: take the role of the app's runtime service account — the local process then holds
+# exactly the permissions the deployed Cloud Run service has (Vertex, STT, buckets).
+gcloud auth application-default login \
+  --impersonate-service-account=vishwakarma-labelling-sa@vishwakarma-ai-poc.iam.gserviceaccount.com
 ```
 
-No `gcloud auth` is needed for the default dry-run posture. Only the live-LLM variants (§6)
-need Application Default Credentials.
+(Your Google account needs `roles/iam.serviceAccountTokenCreator` on that SA. The pure dry-run
+posture technically runs credential-free — emulator + local Neo4j + stubbed LLM legs — but do
+the auth up front so flipping any live leg in §6 just works.)
 
 ## 2. Start the stack (every session — three terminals)
 
@@ -28,10 +34,10 @@ need Application Default Credentials.
 docker compose up -d neo4j
 
 # T2 — Firestore emulator (bind 127.0.0.1 explicitly; data lives in memory)
-gcloud beta emulators firestore start --host-port=127.0.0.1:8081 --project=vishwakarma-ai-poc
+gcloud beta emulators firestore start --host-port=127.0.0.1:8082 --project=vishwakarma-ai-poc
 
 # T3 — the app (dev profile)
-export FIRESTORE_EMULATOR_HOST=127.0.0.1:8081
+export FIRESTORE_EMULATOR_HOST=127.0.0.1:8082
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev \
   -Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true"
 ```
@@ -43,11 +49,14 @@ h2c channel; macOS dual-stack loopback).
 **Verify:**
 
 ```bash
-curl -s http://localhost:8080/actuator/health          # {"status":"UP"}
-curl -s http://localhost:8080/api/stage3/graph/health  # {"ping":{"reachable":true,…}}
+curl -s http://localhost:8090/actuator/health          # {"status":"UP"}
+curl -s http://localhost:8090/api/stage3/graph/health  # {"ping":{"reachable":true,…}}
+# The posture check (ADMIN): effective dry-run flags per stage + emulator/bucket/graph wiring.
+# Read this BEFORE any live-leg run — it shows what the server will ACTUALLY do (§6 gotcha).
+curl -s http://localhost:8090/api/admin/status | python3 -m json.tool
 ```
 
-Open **http://localhost:8080** — you land signed in as ADMIN. Strawman catalogs seed on first
+Open **http://localhost:8090** — you land signed in as ADMIN. Strawman catalogs seed on first
 run.
 
 ## 3. What is real vs. stubbed in dev
@@ -68,12 +77,12 @@ The seeded corpus (`stage3-dryrun-asha`, 19 fixed claims) reproduces the §11.8 
 end-to-end and exercises every §11 branch. This is the demo/regression walk:
 
 ```bash
-curl -s -X POST http://localhost:8080/api/stage3/dev/seed-corpus   # idempotent wholesale replace
+curl -s -X POST http://localhost:8090/api/stage3/dev/seed-corpus   # idempotent wholesale replace
 ```
 
 Then in the browser:
 
-1. **Run page** — `http://localhost:8080/intake/stage3-dryrun-asha/stage3` → **Run Stage 3**.
+1. **Run page** — `http://localhost:8090/intake/stage3-dryrun-asha/stage3` → **Run Stage 3**.
    The phase rail advances on auto-poll (keep the tab open — the poll IS the worker; closing
    the tab pauses the run, reopening resumes it). Expect counters to settle around: claims
    synced **19**, facts **15**, contradiction queue **0** (fresh DB).
@@ -89,11 +98,11 @@ Then in the browser:
 5. **Contradiction queue** (`…/stage3/contradictions`) — empty state offering Publish (the
    corpus's contradiction is explained away pre-publish by design). To see live cards, use a
    reopen + dismissal exercise (§7) or a real-judge run (§6).
-6. **Entity browser** (`http://localhost:8080/admin/entities`) — search finds the corpus
+6. **Entity browser** (`http://localhost:8090/admin/entities`) — search finds the corpus
    skills; the **near-miss review list** contains the *AWS Associate* provisional link
    (similarity ≈ 0.80). Open an entity → try **Merge into…** then **Split** to round-trip a
    repair; each flashes the journal outcome + "re-run Stage 3 for: …" note.
-7. **Eval** (`http://localhost:8080/admin/stage3-eval`) — pick the corpus subject → **Label
+7. **Eval** (`http://localhost:8090/admin/stage3-eval`) — pick the corpus subject → **Label
    pairs (blind)** → label a handful → **Run metrics** (choose the corpus subject as reference
    to get the sanity chips). The confusion matrix / calibration curve render once labels +
    verdicts overlap.
@@ -113,17 +122,14 @@ reset the graph first (§7) and re-seed.
 
 ## 6. Live-LLM variants (optional — real Vertex calls, spends credits)
 
-```bash
-gcloud auth application-default login   # ADC for Vertex
-```
-
-The dev profile pins `app.stage3.dry-run: true` in YAML, so use the **`APP_STAGE3_*` env
-names** (OS env outranks profile YAML; the `STAGE3_DRY_RUN` name only works outside dev):
+Auth is already done (§1 — the impersonated ADC is what the app authenticates with; no API keys
+anywhere). The dev profile pins `app.stage3.dry-run: true` in YAML, so use the **`APP_STAGE3_*`
+env names** (OS env outranks profile YAML; the `STAGE3_DRY_RUN` name only works outside dev):
 
 ```bash
 # The gated live smoke (VA-19): pseudo embeddings + REAL Gemini judge
 APP_STAGE3_DRYRUN=true APP_STAGE3_DRYRUNJUDGE=false \
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8081 \
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8082 \
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev \
   -Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true"
 
@@ -133,7 +139,32 @@ APP_STAGE3_DRYRUN=false … (same command)
 
 Per-leg switches: `APP_STAGE3_DRYRUNEMBEDDINGS` / `APP_STAGE3_DRYRUNEXTRACTION` /
 `APP_STAGE3_DRYRUNJUDGE` (unset = follow the master). If `gemini-embedding-001` is missing in
-the home region, set `STAGE3_EMBEDDING_LOCATION=us-central1`. Note: flipping a dry-run leg
+the home region, set `STAGE3_EMBEDDING_LOCATION=us-central1`.
+
+**Embedding transport:** this project's Vertex `gemini-embedding` quota is 5 RPM in every region
+(verified 2026-07-11, not increasable), so live embedding runs use the Gemini Developer API
+instead — same model, same vectors, paid-tier 3000 RPM:
+
+```bash
+STAGE3_EMBEDDING_TRANSPORT=gemini-api GEMINI_API_KEY=$(cat ~/.gemini-api-key | sed 's/^[^=]*=//') \
+VERTEX_BACKOFF_MS=1000,2000,4000,8000,16000,32000 \
+APP_STAGE3_DRYRUN=false FIRESTORE_EMULATOR_HOST=127.0.0.1:8082 \
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev \
+  -Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true"
+```
+
+`VERTEX_BACKOFF_MS` is the 429/5xx retry ladder for all Vertex/Gemini calls — **unset = backoff
+disabled** (first failure fails the run; Retry resumes). Values are per-attempt *caps*: the wait
+is the server's `Retry-After` when the 429 carries one, else equal jitter — at least half the
+cap, decorrelated in the top half. The judge fans its ensemble calls across
+`APP_STAGE3_JUDGEPARALLELISM` lanes (default 8) — raise for speed, lower if DSQ 429s pile up.
+The key is an API key for the Generative Language API on this project (paid tier) — never
+commit it; the app reads it only from env.
+
+**Generative transport:** `GEMINI_TRANSPORT=gemini-api` routes ALL generateContent (judge, both
+extractors, drafting) through the Developer API's fixed paid-tier quotas instead of Vertex's
+shared DSQ pool — the A/B lever when 429 weather is chronic. Same `GEMINI_API_KEY`; verdict
+cache and stamps are door-agnostic, so flipping mid-subject is safe. Note: flipping a dry-run leg
 changes the version stamps — the next run re-embeds/re-resolves/re-judges accordingly (that's
 the §15 #6 staleness design, not a bug). Stage 2 live STT similarly: `APP_STAGE2_DRYRUN=false`
 (needs real buckets — usually not worth it locally).
@@ -145,8 +176,8 @@ the §15 #6 staleness design, not a bug). Stage 2 live STT similarly: `APP_STAGE
 | Wipe the graph (exact worked-example repro) | `docker compose down -v && docker compose up -d neo4j`, then re-seed |
 | Wipe Firestore (subjects, claims, runs, golden set) | Restart the emulator (in-memory), restart the app |
 | Re-seed the corpus | `POST /api/stage3/dev/seed-corpus` (refused while its run is active) |
-| Re-run a PUBLISHED subject | Run page → **Re-run** (cache-warm) or **Fresh re-run** (wipes the subject's evidence layer + cached judge verdicts) |
-| Get back to the queue after publish | `curl -X POST http://localhost:8080/api/stage3/runs/{runId}/reopen` (ADMIN; PUBLISHED → AWAITING_REVIEW — the ledger keeps the last-published values until the next publish) |
+| Re-run a subject (PUBLISHED or parked AWAITING_REVIEW) | Run page → **Re-run** (cache-warm) or **Fresh re-run** (wipes the subject's evidence layer + cached judge verdicts). From AWAITING_REVIEW the parked run retires as SUPERSEDED — its provisional scores are discarded without touching the ledger |
+| Get back to the queue after publish | `curl -X POST http://localhost:8090/api/stage3/runs/{runId}/reopen` (ADMIN; PUBLISHED → AWAITING_REVIEW — the ledger keeps the last-published values until the next publish) |
 | Un-stick a FAILED run | Run page → **Retry** (resumes the failed phase; phases are re-entrant) |
 
 ## 8. Troubleshooting
@@ -162,9 +193,16 @@ the §15 #6 staleness design, not a bug). Stage 2 live STT similarly: `APP_STAGE
 - **Run FAILED with "made no progress for Nm"** — the phase-timeout reclaim fired (e.g. the tab
   was closed mid-phase for a long time). **Retry** resumes exactly where it stopped.
 - **Phases never advance** — the page drives the run; keep a run-page tab open (or poll by
-  hand: `curl -X POST http://localhost:8080/api/stage3/runs/{runId}/poll`).
+  hand: `curl -X POST http://localhost:8090/api/stage3/runs/{runId}/poll`).
+- **Run FAILED with `429 … RESOURCE_EXHAUSTED` (quota exceeded for a base model)** — a Vertex
+  per-minute quota. First: is `VERTEX_BACKOFF_MS` set? Unset = no retries at all (by design).
+  For embeddings the answer is the `gemini-api` transport (§6 — the Vertex `gemini-embedding`
+  quota is 5 RPM everywhere and not increasable). Check any quota: IAM & Admin → Quotas, filter
+  Dimensions for the base model (e.g. `gemini-embedding`). Other knobs:
+  `APP_STAGE3_EMBEDBATCHPERPOLL=8` (smaller bursts). **Retry** resumes from the cursor; work
+  already done is never repeated.
 - **Scores look different on a second run** — attestor trust accrual (§4 caveat), not drift.
-- **Port clashes** — app `8080`, emulator `8081`, Neo4j `7687`/`7474`.
+- **Port clashes** — app `8090`, emulator `8082`, Neo4j `7687`/`7474`.
 
 ## 9. URL map (dev)
 
@@ -179,4 +217,5 @@ the §15 #6 staleness design, not a bug). Stage 2 live STT similarly: `APP_STAGE
 | Entity browser (ADMIN) | `/admin/entities` |
 | Eval dashboard (ADMIN) | `/admin/stage3-eval` |
 | Graph health | `GET /api/stage3/graph/health?guards=true` |
+| Server posture (ADMIN) | `GET /api/admin/status` — per-stage dry-run legs + env wiring; the run page shows the same as a DRY-RUN/LIVE badge |
 | Neo4j Browser (graph spelunking) | `http://localhost:7474` (`neo4j` / `vishwamitra-dev`) |

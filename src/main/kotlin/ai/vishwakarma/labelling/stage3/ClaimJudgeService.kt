@@ -7,6 +7,10 @@ import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.service.ExtractionPromptService
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -60,6 +64,12 @@ data class JudgeTickOutcome(
 )
 
 /**
+ * Queue-wide position for the per-call progress log: pairs judged before this tick and the total
+ * ever queued — the tick itself only knows its own chunk (2026-07-10 operator feedback).
+ */
+data class JudgeProgress(val judgedSoFar: Long, val totalQueued: Long)
+
+/**
  * The §11.6 ensemble judge over the persisted MATCH queue, cache-first: every (pair, variant)
  * verdict is looked up in Firestore `stage3_edges` before any sampling — a re-run over unchanged
  * pairs makes zero LLM calls, and a prompt-row edit changes the [JudgeSampler.versionStamp] so
@@ -69,7 +79,10 @@ data class JudgeTickOutcome(
  *
  * withContext pairs are judged twice — bare and with the explanation appended (§11.9) — as two
  * independently cached, independently sampled variants; each variant batches its own misses into
- * `judge-batch-size` chunks and runs `ensemble-k` samples per chunk.
+ * `judge-batch-size` chunks and runs `ensemble-k` samples per chunk. Within a variant, every (chunk
+ * × sample) call fans out concurrently (samples are independent by construction — own shuffle
+ * order + temperature draw), so a tick costs roughly one call latency; implementations of
+ * [JudgeSampler] must therefore be thread-safe.
  */
 @Service
 class ClaimJudgeService(
@@ -80,7 +93,11 @@ class ClaimJudgeService(
 
     private val log = LoggerFactory.getLogger(ClaimJudgeService::class.java)
 
-    fun judgePairs(subjectId: String, pairs: List<PairToJudge>): JudgeTickOutcome {
+    fun judgePairs(
+        subjectId: String,
+        pairs: List<PairToJudge>,
+        progress: JudgeProgress? = null,
+    ): JudgeTickOutcome {
         if (pairs.isEmpty()) return JudgeTickOutcome(emptyList(), 0, 0, 0)
         val s3 = props.stage3
         val stamp = sampler.versionStamp
@@ -110,22 +127,85 @@ class ClaimJudgeService(
                 .mapNotNull { p -> hit(p, true)?.let { p.pair to it } }
                 .toMap()
 
-        var samplerCalls = 0L
+        val samplerCalls = AtomicLong()
         val fresh = mutableListOf<Stage3EdgeVerdict>()
+        // Live pair progress for the per-call log: cache-hit pairs are done before any sampling;
+        // fresh pairs complete as their bare-pass chunk aggregates.
+        var doneThisTick = bareHits.size.toLong()
+
+        fun cumulative(): String =
+            progress?.let { " ${it.judgedSoFar + doneThisTick}/${it.totalQueued} pair(s) ·" } ?: ""
 
         fun judgeMisses(
             misses: List<PairToJudge>,
             withContext: Boolean,
         ): Map<ClaimPair, JudgeVerdict> {
+            if (misses.isEmpty()) return emptyMap()
             val verdicts = mutableMapOf<ClaimPair, JudgeVerdict>()
-            misses.chunked(s3.judgeBatchSize).forEach { chunk ->
-                val samples = mutableMapOf<ClaimPair, MutableList<JudgeSample>>()
-                repeat(s3.ensembleK) { idx ->
-                    sampler.sample(chunk, withContext, idx).forEach { (pair, sample) ->
-                        samples.getOrPut(pair) { mutableListOf() } += sample
+            val variant = if (withContext) "ctx" else "bare"
+            val chunks = misses.chunked(s3.judgeBatchSize)
+            // Every (chunk × sample) call fans out across ≤ judge-parallelism lanes (2026-07-11
+            // speedup, then capped the same day: the full ~25-way burst out-demanded the
+            // project's DSQ share and 429-starved the ladder — fewer lanes with natural queuing
+            // beat a burst the provider keeps refusing). Samples are independent by construction
+            // (own shuffle order + temperature draw); plain platform threads — they just block
+            // on HTTP (Java 17: no virtual threads). Residual 429s are the backoff's job; the
+            // first provider failure propagates verbatim and fails the run, as before.
+            val tasks =
+                chunks.flatMapIndexed { chunkIdx, chunk ->
+                    (0 until s3.ensembleK).map { idx ->
+                        Callable {
+                            val startedAt = System.currentTimeMillis()
+                            val sampled = sampler.sample(chunk, withContext, idx)
+                            samplerCalls.incrementAndGet()
+                            // One line per successful transformer call — the liveness signal a
+                            // minutes-long tick otherwise lacks (2026-07-10 operator feedback).
+                            log.info(
+                                "JUDGE{} {} chunk {}/{} sample {}/{} · {}ms",
+                                cumulative(),
+                                variant,
+                                chunkIdx + 1,
+                                chunks.size,
+                                idx + 1,
+                                s3.ensembleK,
+                                System.currentTimeMillis() - startedAt,
+                            )
+                            Triple(chunkIdx, idx, sampled)
+                        }
                     }
-                    samplerCalls++
                 }
+            val pool =
+                Executors.newFixedThreadPool(
+                    minOf(tasks.size, s3.judgeParallelism.coerceAtLeast(1))
+                )
+            val results =
+                try {
+                    pool.invokeAll(tasks).map { future ->
+                        try {
+                            future.get()
+                        } catch (e: ExecutionException) {
+                            throw e.cause ?: e
+                        }
+                    }
+                } finally {
+                    pool.shutdown()
+                }
+            val samplesByChunk =
+                results
+                    .groupBy { it.first }
+                    .mapValues { (_, rows) ->
+                        val samples = mutableMapOf<ClaimPair, MutableList<JudgeSample>>()
+                        rows
+                            .sortedBy { it.second }
+                            .forEach { (_, _, sampled) ->
+                                sampled.forEach { (pair, sample) ->
+                                    samples.getOrPut(pair) { mutableListOf() } += sample
+                                }
+                            }
+                        samples
+                    }
+            chunks.forEachIndexed { chunkIdx, chunk ->
+                val samples = samplesByChunk[chunkIdx].orEmpty()
                 chunk.forEach { pair ->
                     val verdict =
                         JudgeAggregator.aggregate(
@@ -146,6 +226,7 @@ class ClaimJudgeService(
                             judgedAt = Instant.now(),
                         )
                 }
+                if (!withContext) doneThisTick += chunk.size
             }
             return verdicts
         }
@@ -171,13 +252,14 @@ class ClaimJudgeService(
         val cacheHits = (bareHits.size + ctxHits.size).toLong()
         val ties = judged.sumOf { p -> listOfNotNull(p.bare, p.ctx).count { it.tie }.toLong() }
         log.info(
-            "Judged {} pair(s): {} cached verdict(s), {} sampler call(s), {} tie(s)",
+            "Judged {} pair(s){}: {} cached verdict(s), {} sampler call(s), {} tie(s)",
             pairs.size,
+            progress?.let { " (${it.judgedSoFar + pairs.size}/${it.totalQueued} total)" } ?: "",
             cacheHits,
-            samplerCalls,
+            samplerCalls.get(),
             ties,
         )
-        return JudgeTickOutcome(judged, cacheHits, samplerCalls, ties)
+        return JudgeTickOutcome(judged, cacheHits, samplerCalls.get(), ties)
     }
 
     /**
@@ -207,6 +289,8 @@ class GeminiJudgeSampler(
     private val props: AppProperties,
 ) : JudgeSampler {
 
+    private val log = LoggerFactory.getLogger(GeminiJudgeSampler::class.java)
+
     override val versionStamp: String
         get() = prompts.resolveKey(PROMPT_KEY).let { "gemini:${it.version}:${it.hash}" }
 
@@ -234,7 +318,22 @@ class GeminiJudgeSampler(
                 thinkingBudget = THINKING_BUDGET,
                 temperature = props.stage3.ensembleTemperature,
             )
-        val byIndex = parseJudgeResponse(raw)
+        // The stated posture ("a dropped pair casts no vote"), applied to the whole sample: a
+        // response that defeats the fence/truncation tolerances (e.g. a temperature-0.7
+        // derailment, 2026-07-10) casts no votes and the other ensemble samples decide — a pair
+        // with zero votes anywhere aggregates NEUTRAL/0.0 (floored, no edge). Provider errors
+        // (429 etc.) still throw above and fail the run.
+        val byIndex =
+            runCatching { parseJudgeResponse(raw) }
+                .getOrElse { e ->
+                    log.warn(
+                        "Judge sample {} ({}) unparseable — casts no votes: {}",
+                        sampleIndex + 1,
+                        if (withContext) "ctx" else "bare",
+                        e.message,
+                    )
+                    emptyMap()
+                }
         return shuffled
             .mapIndexedNotNull { idx, pair -> byIndex[idx + 1]?.let { pair.pair to it } }
             .toMap()

@@ -14,6 +14,19 @@
     <p class="muted">Reviewed claims &rarr; entity canon &rarr; semantic matching &rarr; LLM judge
         &rarr; facts &amp; timeline &rarr; authenticity scores &rarr; gated publish to the Claim Ledger.</p>
 
+    <!-- Live server posture (current props, NOT a run's frozen snapshot): a stubbed leg makes a
+         run useless on a real subject — say so before Run, not an hour into JUDGE. -->
+    <p th:if="${!dryLegs.isEmpty()}" style="margin-top:0.2rem;">
+        <span class="badge badge--warning">DRY-RUN SERVER</span>
+        <span class="muted">Stubbed LLM leg(s): <strong th:text="${#strings.listJoin(dryLegs, ' · ')}">legs</strong>
+            — a real subject gets no judge edges or entity mentions. Boot with
+            <code>APP_STAGE3_DRYRUN=false</code> for live legs.</span>
+    </p>
+    <p th:if="${dryLegs.isEmpty()}" style="margin-top:0.2rem;">
+        <span class="badge badge--success">LIVE LLM</span>
+        <span class="muted">Embeddings &middot; extraction &middot; judge call Vertex — runs spend credits.</span>
+    </p>
+
     <!-- Gate 1: the claim review isn't submitted — Stage 3 has nothing to consume. -->
     <div class="panel" th:if="${(manifest == null or manifest.reviewSubmittedAt == null) and run == null}">
         <p style="margin:0;">Stage 3 consumes only the <strong>reviewed, approved</strong> claim set —
@@ -26,8 +39,10 @@
         </div>
     </div>
 
-    <!-- Gate 2: review submitted, no run yet — the run button. -->
-    <div class="panel" th:if="${manifest != null and manifest.reviewSubmittedAt != null and run == null}">
+    <!-- Gate 2: review submitted, no startable run — the run button. A SUPERSEDED latest run
+         only happens when a re-run crashed between retiring the parked run and creating its
+         replacement; offering Run again is the recovery. -->
+    <div class="panel" th:if="${manifest != null and manifest.reviewSubmittedAt != null and (run == null or run.status.name() == 'SUPERSEDED')}">
         <h3>Ready to score</h3>
         <p class="muted">Builds the subject's authenticity graph from the approved claims — entity
             resolution, semantic matching, LLM judging, fact assembly — then computes provisional
@@ -91,6 +106,27 @@
                     <input type="hidden" name="skipReview" value="true"/>
                     <button type="submit" class="btn--danger btn--sm">Skip review &amp; publish (admin)</button>
                 </form>
+                <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>
+                <dialog class="panel" style="max-width:30rem; border:none;">
+                    <h3 style="margin-top:0;">Re-run without publishing?</h3>
+                    <p class="muted">This parked run is retired (SUPERSEDED) and a new run starts
+                        over — its provisional scores and queue decisions are discarded; the
+                        ledger stays untouched.</p>
+                    <form method="post" class="form" style="max-width:none;"
+                          th:action="@{/intake/stage3/runs/{rid}/rerun(rid=${run.id})}">
+                        <button type="submit">Re-run
+                            <span class="muted">(reuses cached judge verdicts — unchanged pairs are LLM-free)</span></button>
+                    </form>
+                    <form method="post" class="form" style="max-width:none; margin-top:0.5rem;"
+                          th:action="@{/intake/stage3/runs/{rid}/rerun(rid=${run.id})}">
+                        <input type="hidden" name="fresh" value="true"/>
+                        <button type="submit" class="secondary">Fresh re-run
+                            <span class="muted">(replaces this subject's graph — wipes its evidence
+                                layer and cached judge verdicts, then re-judges everything)</span></button>
+                    </form>
+                    <button type="button" class="btn--ghost btn--sm" style="margin-top:0.8rem;"
+                            data-dialog-close>Cancel</button>
+                </dialog>
             </div>
         </div>
 

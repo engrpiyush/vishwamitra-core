@@ -1928,13 +1928,13 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                         """
                         MATCH (c:Claim {subjectId: ${'$'}subjectId})-[:ASSERTS]->(f:Fact)
                         WHERE c.score IS NOT NULL
-                        OPTIONAL MATCH (a:Attestor {attestorKey: c.attestorKey})
+                        WITH c, f, head([ (c)-[:ATTESTED_BY]->(x:Attestor) | x ]) AS a
                         RETURN c.claimId AS claimId, c.text AS text, c.type AS type,
                                c.tierSeed AS tierSeed, c.prior AS prior, c.score AS score,
                                c.scoreBare AS scoreBare, c.signals AS signals,
                                c.basis AS basis, c.sourceClass AS sourceClass,
                                c.sensitive AS sensitive, c.claimedDate AS claimedDate,
-                               c.attestorKey AS attestorKey, a.name AS attestorName,
+                               a.attestorKey AS attestorKey, a.name AS attestorName,
                                a.kind AS attestorKind, a.trust AS attestorTrust,
                                f.factId AS factId, f.label AS factLabel,
                                f.factKind AS factKind, f.slot AS slot,

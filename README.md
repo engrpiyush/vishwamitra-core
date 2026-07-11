@@ -13,6 +13,10 @@ Target GCP project `vishwakarma-ai-poc`, region `asia-southeast1`. See `labellin
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
+> **Operator runbook:** step-by-step local serving + the full Stage 1→3 walkthrough (incl. the
+> Stage 3 dry-run corpus demo, live-LLM variants, resets, troubleshooting) lives in
+> [RUNBOOK-local.md](RUNBOOK-local.md). The sections below cover the one-time setup rationale.
+
 ## Local development (Firestore emulator)
 
 The app talks to a named Firestore DB. Locally, run the emulator and point the app at it; the `dev`

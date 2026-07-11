@@ -105,6 +105,9 @@ class SecurityConfig {
                 authorize("/coming-soon.html", permitAll)
                 authorize("/coming-soon/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
+                // Operator diagnostics JSON (server posture / dry-run flags) — ADMIN like the
+                // pages above; also enforced at the method level by @PreAuthorize.
+                authorize("/api/admin/**", hasRole("ADMIN"))
                 // Stage 1 intake: the server-rendered UI and its JSON API are both REVIEWER+ (also
                 // enforced at the method level by @PreAuthorize). CSRF stays on — forms carry the
                 // hidden token, and the uploader JS sends it from the <meta> as X-CSRF-TOKEN.

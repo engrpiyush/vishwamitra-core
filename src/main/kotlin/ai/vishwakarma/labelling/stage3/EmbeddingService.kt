@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.vertex.VertexBackoff
 import com.google.auth.oauth2.GoogleCredentials
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -9,7 +10,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.client.RestClient
-import org.springframework.web.client.RestClientResponseException
 
 /**
  * Embedding task type (Vertex `task_type`). Claims embed as [SEMANTIC_SIMILARITY] (kNN blocking,
@@ -56,14 +56,12 @@ class VertexEmbeddingService(private val props: AppProperties) : EmbeddingServic
         get() = "${props.stage3.embeddingModel}:$dimensions"
 
     override fun embed(text: String, taskType: EmbeddingTaskType): List<Double> =
-        try {
+        // LLD §15 #1, hardened 2026-07-11: gemini-embedding takes ONE text per request, so a
+        // phase burst hits the per-minute RPM quota fast — 429/5xx back off into the next quota
+        // window (ladder from app.gcp.vertex-backoff-ms; empty = fail fast). A still-failing
+        // call propagates verbatim and fails the run (Retry resumes from the cursor).
+        VertexBackoff.retrying(props.gcp.vertexBackoffMs, "embed ${props.stage3.embeddingModel}") {
             predict(text, taskType)
-        } catch (e: RestClientResponseException) {
-            // LLD §15 #1: transient provider errors get one same-poll retry; anything that fails
-            // again propagates verbatim and fails the run (Retry resumes from the cursor).
-            if (e.statusCode.is5xxServerError || e.statusCode.value() == 429)
-                predict(text, taskType)
-            else throw e
         }
 
     private fun predict(text: String, taskType: EmbeddingTaskType): List<Double> {
@@ -119,6 +117,68 @@ class VertexEmbeddingService(private val props: AppProperties) : EmbeddingServic
     companion object {
         /** gemini-embedding-001's full output; only truncated (MRL) outputs need re-normalizing. */
         const val NATIVE_DIMENSIONS = 3072
+    }
+}
+
+/**
+ * The same `gemini-embedding-001` through the Gemini Developer API
+ * (`generativelanguage.googleapis.com`, API-key auth) — the 2026-07-11 quota workaround: this
+ * project's Vertex `gemini-embedding` quota is 5 RPM in every region (not increasable), while the
+ * Developer API's paid tier serves 3000+ RPM. Same model + same dimensions ⇒ the SAME
+ * [versionStamp] as [VertexEmbeddingService], deliberately: vectors are interchangeable and
+ * flipping transports never marks anything stale. Trade-offs: key-based auth (env `GEMINI_API_KEY`;
+ * never logged/serialized) and global processing (no in-region residency).
+ */
+class GeminiApiEmbeddingService(private val props: AppProperties) : EmbeddingService {
+
+    private val rest = RestClient.create()
+
+    override val dimensions: Int
+        get() = props.stage3.embeddingDimensions
+
+    override val versionStamp: String
+        get() = "${props.stage3.embeddingModel}:$dimensions"
+
+    override fun embed(text: String, taskType: EmbeddingTaskType): List<Double> =
+        VertexBackoff.retrying(
+            props.gcp.vertexBackoffMs,
+            "embedContent ${props.stage3.embeddingModel}",
+        ) {
+            embedContent(text, taskType)
+        }
+
+    private fun embedContent(text: String, taskType: EmbeddingTaskType): List<Double> {
+        val model = props.stage3.embeddingModel
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:embedContent"
+        val body =
+            mapOf(
+                "model" to "models/$model",
+                "content" to mapOf("parts" to listOf(mapOf("text" to text))),
+                "taskType" to taskType.name,
+                "outputDimensionality" to dimensions,
+            )
+        val response =
+            rest
+                .post()
+                .uri(url)
+                .header("x-goog-api-key", props.stage3.geminiApiKey)
+                .body(body)
+                .retrieve()
+                .body(String::class.java) ?: error("empty embedContent response")
+        val values = extractValues(response)
+        check(values.size == dimensions) {
+            "embedding has ${values.size} dims, expected $dimensions"
+        }
+        return if (dimensions < VertexEmbeddingService.NATIVE_DIMENSIONS) renormalize(values)
+        else values
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun extractValues(response: String): List<Double> {
+        val map = Json.parse(response) as? Map<String, Any?> ?: error("bad embedContent response")
+        val embedding = map["embedding"] as? Map<String, Any?> ?: error("no embedding in response")
+        val values = embedding["values"] as? List<Number> ?: error("no embedding values")
+        return values.map { it.toDouble() }
     }
 }
 
@@ -185,13 +245,25 @@ class EmbeddingConfig {
 
     @Bean
     fun embeddingService(props: AppProperties): EmbeddingService =
-        if (props.stage3.embeddingsDryRun) {
-            log.info(
-                "Stage 3 dry-run: pseudo embeddings ({} dims)",
-                props.stage3.embeddingDimensions
-            )
-            PseudoEmbeddingService(props.stage3.embeddingDimensions)
-        } else {
-            VertexEmbeddingService(props)
+        when {
+            props.stage3.embeddingsDryRun -> {
+                log.info(
+                    "Stage 3 dry-run: pseudo embeddings ({} dims)",
+                    props.stage3.embeddingDimensions
+                )
+                PseudoEmbeddingService(props.stage3.embeddingDimensions)
+            }
+            props.stage3.embeddingTransport.equals("gemini-api", ignoreCase = true) -> {
+                // Fail at boot, not three phases into a run: the transport is useless keyless.
+                check(props.stage3.geminiApiKey.isNotBlank()) {
+                    "embedding-transport=gemini-api needs GEMINI_API_KEY set"
+                }
+                log.info(
+                    "Stage 3 embeddings: {} via the Gemini Developer API (quota workaround)",
+                    props.stage3.embeddingModel,
+                )
+                GeminiApiEmbeddingService(props)
+            }
+            else -> VertexEmbeddingService(props)
         }
 }

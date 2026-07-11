@@ -84,6 +84,36 @@ class Stage3ProjectionTest {
     }
 
     @Test
+    fun `a self-submitted documentary claim keeps the issuer attestor, not the subject`() {
+        val projection =
+            buildEvidenceProjection(
+                subjectId = subjectId,
+                subjectName = "Asha",
+                approved =
+                    listOf(
+                        ApprovedClaim(
+                            claim(
+                                "c1",
+                                "a1",
+                                sourceClass = SourceClass.DOCUMENTARY,
+                                relationship = Relationship.SELF,
+                                tier = AuthenticityTier.HIGH,
+                            ),
+                            null,
+                            emptyList(),
+                        )
+                    ),
+                assets = listOf(asset("a1", ContentType.CERTIFICATE, Relationship.SELF)),
+                speakerBindings = emptyMap(),
+            )
+        assertEquals("issuer:asset:a1", projection.claims.single().attestorKey)
+        with(projection.attestors.single()) {
+            assertEquals("ISSUER", kind)
+            assertEquals(TRUST_PRIOR_ISSUER, trustPrior)
+        }
+    }
+
+    @Test
     fun `a named endorser collapses to one global attestor across assets`() {
         val binding =
             mapOf(

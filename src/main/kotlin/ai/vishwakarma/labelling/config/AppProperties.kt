@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.config
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
 
@@ -38,6 +39,27 @@ data class AppProperties(
          * prompts are then processed outside the region.
          */
         val geminiLocation: String = "",
+        /**
+         * Retry ladder (ms, comma-separated) for Vertex/Gemini REST 429 + 5xx responses — quota
+         * windows are per-minute, so delays should sum past ~60s to reach the next window.
+         * Empty/undefined = backoff DISABLED: the first failure propagates immediately (2026-07-11
+         * operator decision).
+         */
+        val vertexBackoffMs: List<Long> = emptyList(),
+        /**
+         * Which door generateContent goes through (judge, both extractors, drafting — all of
+         * [ai.vishwakarma.labelling.drafting.GeminiDrafting]'s consumers follow it): `vertex` (ADC,
+         * DSQ shared pool — no hard cap, occasional 429 weather) or `gemini-api` (the Developer API
+         * — fixed paid-tier quotas, needs [geminiApiKey], processed globally). 2026-07-11: the
+         * secondary door exists to A/B those limits.
+         */
+        val geminiTransport: String = "vertex",
+        /**
+         * API key for the `gemini-api` transport (env `GEMINI_API_KEY` — the same env the Stage 3
+         * embedding transport reads; blank when unused). JsonIgnore keeps it out of every
+         * serialization.
+         */
+        @get:JsonIgnore val geminiApiKey: String = "",
     )
 
     data class Tuning(
@@ -160,8 +182,12 @@ data class AppProperties(
          */
         val neo4jUri: String = "bolt://localhost:7687",
         val neo4jUser: String = "neo4j",
-        /** Via env/Secret Manager in prod; the dev default matches compose.yaml's NEO4J_AUTH. */
-        val neo4jPassword: String = "vishwamitra-dev",
+        /**
+         * Via env/Secret Manager in prod; the dev default matches compose.yaml's NEO4J_AUTH.
+         * JsonIgnore keeps it out of every Jackson serialization of this class — most importantly
+         * the run `paramsSnapshot`, which REVIEWER-visible run reads return verbatim.
+         */
+        @get:JsonIgnore val neo4jPassword: String = "vishwamitra-dev",
         /** Target database (Enterprise multi-DB; Aura Free + Community have exactly one). */
         val neo4jDatabase: String = "neo4j",
         /**
@@ -230,6 +256,12 @@ data class AppProperties(
         val judgePairsPerPoll: Int = 40,
         /** Pairs per Gemini call (the ensemble runs k calls per batch). */
         val judgeBatchSize: Int = 8,
+        /**
+         * Cap on concurrent sampler calls within a tick (2026-07-11): the full chunk×k fan-out
+         * (~25) demanded more than the project's DSQ share of the judge model and 429-starved the
+         * ladder. Fewer lanes with natural queuing beat a burst the provider keeps refusing.
+         */
+        val judgeParallelism: Int = 8,
         /** Claim-type × entity patterns treated as exclusive STATE slots that sequence (§11.7). */
         val stateSlotTypes: List<String> =
             listOf("EMPLOYER", "ROLE", "RESIDENCE", "EDUCATION_ENROLLMENT"),
@@ -275,6 +307,19 @@ data class AppProperties(
         val dryRunEmbeddings: Boolean? = null,
         val dryRunExtraction: Boolean? = null,
         val dryRunJudge: Boolean? = null,
+        /**
+         * Which door the live embeddings go through: `vertex` (ADC, in-region, but this project's
+         * gemini-embedding quota is 5 RPM everywhere) or `gemini-api` (the Developer API at
+         * generativelanguage.googleapis.com — same model, same 3072-dim space, paid-tier 3000 RPM,
+         * API-key auth, processed globally). Same [versionStamp] either way: vectors are
+         * interchangeable and flipping transports never re-embeds (2026-07-11, quota workaround).
+         */
+        val embeddingTransport: String = "vertex",
+        /**
+         * API key for the `gemini-api` transport (env `GEMINI_API_KEY`; blank when unused).
+         * JsonIgnore keeps it out of paramsSnapshot and every other serialization.
+         */
+        @get:JsonIgnore val geminiApiKey: String = "",
     ) {
         val exhaustiveMatching: Boolean
             get() = matchingMode.equals("EXHAUSTIVE", ignoreCase = true)

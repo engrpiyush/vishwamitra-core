@@ -717,6 +717,8 @@ private class ScriptedJudgeSampler(
 
     override val modelId = "test-judge"
 
+    // Synchronized: the ensemble fans samples out across threads (2026-07-11).
+    @Synchronized
     override fun sample(
         pairs: List<PairToJudge>,
         withContext: Boolean,
@@ -1351,6 +1353,32 @@ class Stage3ServiceTest {
         val rerun = pollTo(svc, next.id, Stage3RunStatus.AWAITING_REVIEW)
         assertTrue(judgeSampler.calls > callsBefore) // cache was dropped at SYNC → re-judged
         assertEquals(0L, rerun.counters[Stage3Counters.JUDGE_CACHE_HITS] ?: 0L)
+    }
+
+    @Test
+    fun `a rerun from AWAITING_REVIEW retires the parked run as SUPERSEDED`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        var run = queueTwoPairs(svc)
+        run = pollTo(svc, run.id, Stage3RunStatus.AWAITING_REVIEW)
+
+        val next = svc.rerun(run.id, fresh = false, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.PENDING, next.status)
+        val parked = runs.store[run.id]!!
+        assertEquals(Stage3RunStatus.SUPERSEDED, parked.status)
+        assertNotNull(parked.finishedAt)
+        // The retired run left the active set — the replacement walks back to the park.
+        pollTo(svc, next.id, Stage3RunStatus.AWAITING_REVIEW)
+    }
+
+    @Test
+    fun `rerun refuses a mid-phase run`() {
+        seedSubject(claimCount = 3)
+        val svc = service()
+        val run = queueTwoPairs(svc) // parked mid-pipeline at JUDGING
+        val error = svc.rerun(run.id, fresh = false, actor = "op").errorOrNull()
+        assertTrue(error is DomainError.Conflict)
+        assertTrue(error!!.message.contains("Only PUBLISHED or AWAITING_REVIEW"))
     }
 
     @Test

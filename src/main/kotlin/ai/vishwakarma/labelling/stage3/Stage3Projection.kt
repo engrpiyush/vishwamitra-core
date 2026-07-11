@@ -228,6 +228,20 @@ private fun deriveAttestor(
 ): DerivedAttestor {
     val relationship = binding?.relationship ?: claim.relationship
     return when {
+        // Checked before the SELF arm: a self-submitted certificate still speaks with the
+        // issuer's voice — relationship=SELF records who uploaded it, not who attests it.
+        claim.sourceClass == SourceClass.DOCUMENTARY ->
+            DerivedAttestor(
+                key = "issuer:asset:${claim.assetId}",
+                row =
+                    AttestorRow(
+                        attestorKey = "issuer:asset:${claim.assetId}",
+                        kind = "ISSUER",
+                        relationship = claim.relationship?.name,
+                        name = null,
+                        trustPrior = TRUST_PRIOR_ISSUER,
+                    ),
+            )
         claim.speakerRole == SpeakerRole.SUBJECT ||
             claim.sourceClass == SourceClass.SELF ||
             claim.relationship == Relationship.SELF ->
@@ -240,18 +254,6 @@ private fun deriveAttestor(
                         relationship = Relationship.SELF.name,
                         name = subjectName,
                         trustPrior = TRUST_PRIOR_SUBJECT,
-                    ),
-            )
-        claim.sourceClass == SourceClass.DOCUMENTARY ->
-            DerivedAttestor(
-                key = "issuer:asset:${claim.assetId}",
-                row =
-                    AttestorRow(
-                        attestorKey = "issuer:asset:${claim.assetId}",
-                        kind = "ISSUER",
-                        relationship = claim.relationship?.name,
-                        name = null,
-                        trustPrior = TRUST_PRIOR_ISSUER,
                     ),
             )
         else -> {

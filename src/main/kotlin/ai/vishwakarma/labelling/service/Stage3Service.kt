@@ -27,6 +27,7 @@ import ai.vishwakarma.labelling.stage3.EntityMentionExtractor
 import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.ExplanationRow
 import ai.vishwakarma.labelling.stage3.FactAssembler
+import ai.vishwakarma.labelling.stage3.JudgeProgress
 import ai.vishwakarma.labelling.stage3.ScoreOutcome
 import ai.vishwakarma.labelling.stage3.Scorer
 import ai.vishwakarma.labelling.stage3.ScorerParams
@@ -167,24 +168,47 @@ class Stage3Service(
     }
 
     /**
-     * Re-run a PUBLISHED subject: a **new** PENDING run (fresh params snapshot) rather than
-     * mutating the published record — ledger claims stamp `scoreRunId`, and that id must keep
-     * resolving to the exact params that produced the published scores (§9.6 reproducibility).
+     * Re-run a PUBLISHED or AWAITING_REVIEW subject: a **new** PENDING run (fresh params snapshot)
+     * rather than mutating the old record — ledger claims stamp `scoreRunId`, and that id must keep
+     * resolving to the exact params that produced the published scores (§9.6 reproducibility). A
+     * parked AWAITING_REVIEW run retires as SUPERSEDED first (it never published, so nothing
+     * references it; its provisional graph-side scores are overwritten by the new run's SCORE).
      * [fresh] additionally wipes the subject's evidence layer AND drops its cached judge verdicts
      * at SYNC — the full re-judge posture; a plain re-run keeps the cache and is LLM-free.
      */
     fun rerun(runId: String, fresh: Boolean, actor: String?): Either<DomainError, Stage3Run> {
         val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
-        if (run.status != Stage3RunStatus.PUBLISHED)
+        if (
+            run.status != Stage3RunStatus.PUBLISHED && run.status != Stage3RunStatus.AWAITING_REVIEW
+        )
             return DomainError.Conflict(
-                    "Only PUBLISHED runs can be re-run (run is ${run.status}; use Retry for FAILED)"
+                    "Only PUBLISHED or AWAITING_REVIEW runs can be re-run " +
+                        "(run is ${run.status}; use Retry for FAILED)"
                 )
                 .left()
-        runs.findActiveBySubject(run.subjectId)?.let {
-            return DomainError.Conflict("A Stage 3 run is already active (${it.id}: ${it.status})")
-                .left()
-        }
+        runs
+            .findActiveBySubject(run.subjectId)
+            ?.takeIf { it.id != run.id }
+            ?.let {
+                return DomainError.Conflict(
+                        "A Stage 3 run is already active (${it.id}: ${it.status})"
+                    )
+                    .left()
+            }
+        // Same graph guards as submit: the documented wipe-then-rerun recovery (RUNBOOK §7)
+        // otherwise reaches SYNC against a bare database and fails mid-phase instead of here.
+        val ping = graph.ping()
+        if (!ping.reachable) return DomainError.Conflict("Neo4j unreachable: ${ping.error}").left()
+        runCatching { graph.ensureSchema() }
+            .onFailure {
+                return DomainError.Conflict("Neo4j schema could not be ensured: ${it.message}")
+                    .left()
+            }
         val now = Instant.now()
+        // Retire the parked run before creating its replacement: a crash between the two saves
+        // leaves the subject unblocked (no active run) rather than with two active runs.
+        if (run.status == Stage3RunStatus.AWAITING_REVIEW)
+            runs.save(run.copy(status = Stage3RunStatus.SUPERSEDED, finishedAt = now))
         val next =
             Stage3Run(
                 id = runs.newId(),
@@ -197,10 +221,11 @@ class Stage3Service(
             )
         runs.save(next)
         log.info(
-            "Stage 3 re-run {} (fresh={}) created for subject {} replacing published {}",
+            "Stage 3 re-run {} (fresh={}) created for subject {} replacing {} {}",
             next.id,
             fresh,
             run.subjectId,
+            run.status.name.lowercase(),
             run.id,
         )
         return next.right()
@@ -518,7 +543,15 @@ class Stage3Service(
                     ),
                 )
             } else {
-                val outcome = judge.judgePairs(run.subjectId, batch)
+                val outcome =
+                    judge.judgePairs(
+                        run.subjectId,
+                        batch,
+                        JudgeProgress(
+                            judgedSoFar = run.counters[Stage3Counters.PAIRS_JUDGED] ?: 0L,
+                            totalQueued = run.counters[Stage3Counters.PAIRS_QUEUED] ?: 0L,
+                        ),
+                    )
                 graph.applyJudgeOutcome(run.subjectId, outcome.judged)
                 val counters = run.counters
                 val progressed =

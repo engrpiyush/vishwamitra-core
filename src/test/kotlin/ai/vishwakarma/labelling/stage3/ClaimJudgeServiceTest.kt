@@ -56,6 +56,9 @@ private class ScriptedSampler(
 
     override val modelId = "test-judge"
 
+    // Synchronized: the ensemble fans samples out across threads (2026-07-11) — the counter and
+    // the seen-lists must not race.
+    @Synchronized
     override fun sample(
         pairs: List<PairToJudge>,
         withContext: Boolean,

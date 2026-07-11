@@ -4,9 +4,11 @@ import java.time.Instant
 
 /**
  * Where a Stage 3 scoring run is in the LLD §9.7 state machine. Non-terminal phases advance one
- * bounded step per poll (no scheduler — the Stage 2 idiom); [FAILED] and [PUBLISHED] are terminal;
- * [AWAITING_REVIEW] parks the run at the Q6 gate (provisional scores graph-side, ledger untouched)
- * until the operator publishes or explicitly skips the contradiction queue.
+ * bounded step per poll (no scheduler — the Stage 2 idiom); [FAILED], [PUBLISHED] and [SUPERSEDED]
+ * are terminal; [AWAITING_REVIEW] parks the run at the Q6 gate (provisional scores graph-side,
+ * ledger untouched) until the operator publishes, explicitly skips the contradiction queue, or
+ * re-runs (which retires the parked run as [SUPERSEDED] — it never published, so no ledger claim
+ * references it).
  */
 enum class Stage3RunStatus {
     PENDING,
@@ -20,10 +22,11 @@ enum class Stage3RunStatus {
     AWAITING_REVIEW,
     PUBLISHING,
     PUBLISHED,
-    FAILED;
+    FAILED,
+    SUPERSEDED;
 
     val terminal: Boolean
-        get() = this == PUBLISHED || this == FAILED
+        get() = this == PUBLISHED || this == FAILED || this == SUPERSEDED
 
     companion object {
         fun fromOrNull(raw: String?): Stage3RunStatus? =
