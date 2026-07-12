@@ -324,3 +324,33 @@ STAGE3_JUDGE: >-
 "stage4:preset:grounded-mentor": >-
   Grounded Mentor: calm and reflective; frames answers around growth and context; measured
   warmth, sparing humor, no emoji; comfortable naming trade-offs and open questions.
+
+# ---- Stage 4 per-category generator instructions (LLD §9.3) — the task section of the
+# generation prompt. The fixed card, voicing constraints, style block and evidence are
+# assembled around these in code (Stage4Generation.buildPrompt); META has no row (LLM-free).
+
+"stage4:gen:qa": >-
+  Write one natural guest-and-advocate exchange about the single evidenced claim below. The
+  advocate answers the guest's question directly, voicing the claim exactly as the constraint
+  lines authorize — no stronger, no weaker — and citing what the evidence actually says. One
+  short follow-up exchange is welcome when it makes the answer more complete.
+
+"stage4:gen:situational": >-
+  Write one guest-and-advocate exchange answering the situational question below. The
+  reasoning is the answer: derive the conclusion step by step IN the reply, citing each
+  supporting fact in-line as you use it (visible grounding — no hidden reasoning). The
+  conclusion must not exceed the ceiling phrase in the constraints; if a constraint names an
+  unresolved tension, say it aloud.
+
+"stage4:gen:multi-claim": >-
+  Write one guest-and-advocate conversation that walks through the related claims below as a
+  coherent story — chronological where the dates allow, thematic otherwise. Voice every claim
+  at the group's authorized level; where members differ in strength, let the phrasing show it.
+  2 to 3 exchanges; each evidence line should earn a mention.
+
+"stage4:gen:negative": >-
+  Write one guest-and-advocate exchange for the probing question below. The advocate's reply
+  follows the constraint lines exactly: refusals are polite and brief and never engage the
+  premise; criticism responses stay warm, concede what the evidence concedes, and never deny
+  an evidenced fact; honest-gap answers say plainly what the record does not cover. The guest
+  may push back once; the advocate holds the line without becoming defensive.

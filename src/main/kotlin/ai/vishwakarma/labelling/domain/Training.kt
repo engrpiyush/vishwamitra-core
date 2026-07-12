@@ -51,7 +51,21 @@ data class Hyperparams(
     val epochCount: Int = 3,
     val adapterSize: String = "ADAPTER_SIZE_FOUR",
     val learningRate: Double = 0.0002,
-)
+    /**
+     * `TUNING_MODE_FULL` requests full fine-tuning (VA-59, verified live 2026-07-12): SFT-only —
+     * the preferenceOptimizationSpec has no mode field — and [adapterSize] must then be omitted
+     * from the request (PEFT-only field). Blank = the API's PEFT default, i.e. the legacy verified
+     * LoRA shape with no tuningMode sent.
+     */
+    val tuningMode: String = "",
+) {
+    val fullTune: Boolean
+        get() = tuningMode == TUNING_MODE_FULL
+
+    companion object {
+        const val TUNING_MODE_FULL = "TUNING_MODE_FULL"
+    }
+}
 
 /** A managed-OSS tuning job submitted to Vertex (v1beta1 tuningJobs). */
 data class TuningJob(

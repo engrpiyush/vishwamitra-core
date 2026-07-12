@@ -46,7 +46,8 @@ class TuningJobRepository(private val db: Firestore) {
                 mapOf(
                     "epochCount" to hyperparams.epochCount,
                     "adapterSize" to hyperparams.adapterSize,
-                    "learningRate" to hyperparams.learningRate
+                    "learningRate" to hyperparams.learningRate,
+                    "tuningMode" to hyperparams.tuningMode,
                 ),
             "status" to status.name,
             "outputUri" to outputUri,
@@ -78,6 +79,7 @@ class TuningJobRepository(private val db: Firestore) {
                     epochCount = (hp["epochCount"] as? Number)?.toInt() ?: 3,
                     adapterSize = hp["adapterSize"] as? String ?: "ADAPTER_SIZE_FOUR",
                     learningRate = (hp["learningRate"] as? Number)?.toDouble() ?: 0.0002,
+                    tuningMode = hp["tuningMode"] as? String ?: "",
                 ),
             status =
                 runCatching { JobStatus.valueOf(getString("status") ?: "PENDING") }

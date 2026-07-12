@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.service
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.SourceClass
+import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import java.security.MessageDigest
 import java.time.Instant
@@ -110,6 +111,25 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** The style block behind one preset id — the generation prompt's B3 ingredient. */
     fun resolveStage4Preset(presetId: String): ResolvedExtractionPrompt =
         resolveKey(STAGE4_PRESET_PREFIX + presetId)
+
+    /**
+     * The per-category generator instruction row (LLD §9.3) — versioned + hashed like every prompt
+     * row, so a rubric edit invalidates exactly the affected generation-cache keys. META renders
+     * LLM-free and deliberately has no row (its stamp is a code constant).
+     */
+    fun resolveStage4Generator(category: Stage4Category): ResolvedExtractionPrompt =
+        resolveKey(stage4GeneratorKey(category))
+
+    /** The reserved `stage4:gen:*` key for one LLM-backed category. */
+    fun stage4GeneratorKey(category: Stage4Category): String =
+        when (category) {
+            Stage4Category.QA -> "stage4:gen:qa"
+            Stage4Category.SITUATIONAL -> "stage4:gen:situational"
+            Stage4Category.MULTI_CLAIM -> "stage4:gen:multi-claim"
+            Stage4Category.NEGATIVE -> "stage4:gen:negative"
+            Stage4Category.META ->
+                error("META renders from code templates — no generator prompt row (§9.3)")
+        }
 
     /** The block extraction uses for [contentType]: the stored row when present, else built-in. */
     fun resolve(contentType: ContentType): ResolvedExtractionPrompt = resolveKey(contentType.name)

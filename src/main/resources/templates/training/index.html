@@ -48,7 +48,13 @@
             </select>
         </label>
         <label>Epochs <input type="number" name="epochCount" value="3" min="1"/></label>
-        <label>Adapter size
+        <label>Mode
+            <select name="tuningMode">
+                <option value="" selected>LoRA (adapter)</option>
+                <option value="TUNING_MODE_FULL">Full fine-tune (SFT only)</option>
+            </select>
+        </label>
+        <label>Adapter size (LoRA only)
             <select name="adapterSize"><option th:each="a : ${adapterSizes}" th:value="${a}" th:text="${a}"
                     th:selected="${a == 'ADAPTER_SIZE_FOUR'}">a</option></select>
         </label>

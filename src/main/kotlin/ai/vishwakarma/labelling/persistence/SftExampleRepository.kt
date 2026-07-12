@@ -37,6 +37,18 @@ class SftExampleRepository(private val db: Firestore) {
             .map { it.toExample() }
             .sortedByDescending { it.updatedAt }
 
+    /**
+     * Stage 4-stamped examples for one subject — the QA-6 drift sweep's read (legacy rows lack a
+     * stamp and are never swept).
+     */
+    fun findByStampSubject(subjectId: String): List<SftExample> =
+        col.whereEqualTo("stamp.subjectId", subjectId)
+            .get()
+            .await()
+            .documents
+            .map { it.toExample() }
+            .sortedBy { it.id }
+
     fun save(example: SftExample) {
         col.document(example.id).set(example.toMap()).await()
     }

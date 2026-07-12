@@ -38,6 +38,18 @@ class DpoPairRepository(private val db: Firestore) {
             .map { it.toPair() }
             .sortedByDescending { it.updatedAt }
 
+    /**
+     * Stage 4-stamped pairs for one subject — the QA-6 drift sweep's read (legacy rows lack a stamp
+     * and are never swept).
+     */
+    fun findByStampSubject(subjectId: String): List<DpoPair> =
+        col.whereEqualTo("stamp.subjectId", subjectId)
+            .get()
+            .await()
+            .documents
+            .map { it.toPair() }
+            .sortedBy { it.id }
+
     fun save(pair: DpoPair) {
         col.document(pair.id).set(pair.toMap()).await()
     }

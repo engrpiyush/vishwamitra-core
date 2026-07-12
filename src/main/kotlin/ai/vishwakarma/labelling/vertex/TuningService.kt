@@ -62,20 +62,28 @@ class TuningService(private val props: AppProperties) {
             put("outputUri", outputUri)
             put(
                 specKey,
-                mapOf(
-                    "trainingDatasetUri" to trainingDatasetUri,
-                    "hyperParameters" to
-                        mapOf(
-                            "epochCount" to hp.epochCount.toString(),
-                            "adapterSize" to hp.adapterSize,
+                buildMap {
+                    put("trainingDatasetUri", trainingDatasetUri)
+                    // tuningMode is a supervisedTuningSpec-only field (the PO spec has none), and
+                    // it is only sent when explicitly requested — a blank mode keeps the legacy
+                    // verified LoRA shape byte-for-byte.
+                    if (method == TuningMethod.SFT && hp.tuningMode.isNotBlank()) {
+                        put("tuningMode", hp.tuningMode)
+                    }
+                    put(
+                        "hyperParameters",
+                        buildMap {
+                            put("epochCount", hp.epochCount.toString())
+                            // adapterSize is PEFT-only: a TUNING_MODE_FULL submit omits it.
+                            if (!hp.fullTune) put("adapterSize", hp.adapterSize)
                             // Jackson renders a raw Double like 0.0002 in scientific notation
                             // ("2.0E-4"), which Vertex's tuningJobs parser rejects with an opaque
                             // 500 INTERNAL. A BigDecimal from the plain-decimal string serializes
-                            // as
-                            // a plain JSON number (e.g. 0.00020) that the API accepts.
-                            "learningRate" to BigDecimal(hp.learningRate.toString()),
-                        ),
-                ),
+                            // as a plain JSON number (e.g. 0.00020) that the API accepts.
+                            put("learningRate", BigDecimal(hp.learningRate.toString()))
+                        },
+                    )
+                },
             )
         }
         val url =

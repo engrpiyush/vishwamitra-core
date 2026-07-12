@@ -61,6 +61,8 @@ object Stage4Counters {
     const val PLANS = "plans"
     /** PLAN: planned questions dropped by MinHash/Jaccard dedupe (§9.2). */
     const val PLANS_DEDUPED = "plansDeduped"
+    /** PLAN: units dropped by the per-claim fan-out cap (§9.2). */
+    const val PLANS_CAPPED = "plansCapped"
     /** GENERATE: DRAFT examples written (LLM or template-rendered). */
     const val GENERATED = "generated"
     /** GENERATE: plans served from the generation cache without an LLM call (§9.3). */

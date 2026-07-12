@@ -62,12 +62,24 @@ class TrainingController(
         @RequestParam(defaultValue = "3") epochCount: Int,
         @RequestParam(defaultValue = "ADAPTER_SIZE_FOUR") adapterSize: String,
         @RequestParam(defaultValue = "0.0002") learningRate: Double,
+        @RequestParam(defaultValue = "") tuningMode: String,
         ra: RedirectAttributes,
     ): String {
         val kind = runCatching { BaseKind.valueOf(baseKind.uppercase()) }.getOrNull()
         val tuningMethod = runCatching { TuningMethod.valueOf(method.uppercase()) }.getOrNull()
         if (kind == null || tuningMethod == null) {
             ra.addFlashAttribute("error", "Invalid base kind or method")
+            return "redirect:/training"
+        }
+        // Only the two live-verified request shapes are offered: blank (LoRA, no mode sent) or
+        // full fine-tuning (SFT-only — the preference spec has no mode field).
+        val mode = tuningMode.trim().uppercase()
+        if (mode.isNotBlank() && mode != Hyperparams.TUNING_MODE_FULL) {
+            ra.addFlashAttribute("error", "Invalid tuning mode '$tuningMode'")
+            return "redirect:/training"
+        }
+        if (mode == Hyperparams.TUNING_MODE_FULL && tuningMethod != TuningMethod.SFT) {
+            ra.addFlashAttribute("error", "Full fine-tuning is only available for SFT")
             return "redirect:/training"
         }
         // Dataset dropdown posts a composite "EXPORT:<id>" / "IMPORT:<id>" value.
@@ -87,7 +99,7 @@ class TrainingController(
                 datasetSource = datasetSource,
                 datasetId = datasetId,
                 method = tuningMethod,
-                hp = Hyperparams(epochCount, adapterSize, learningRate),
+                hp = Hyperparams(epochCount, adapterSize, learningRate, tuningMode = mode),
                 actor = CurrentUser.email(),
             )
             .fold(

@@ -57,29 +57,23 @@ class DataSeeder {
     }
 
     private fun seedBaseModels(baseModels: BaseModelService) {
-        if (baseModels.list().isNotEmpty()) return
-        baseModels.create(
-            "qwen/qwen3@qwen3-32b",
-            "Qwen 3 32B",
-            "qwen3-32b",
-            active = true,
-            actor = "seed"
-        )
-        baseModels.create(
-            "google/gemma3@gemma-3-27b-it",
-            "Gemma 3 27B IT",
-            "gemma3-27b",
-            active = true,
-            actor = "seed"
-        )
-        baseModels.create(
-            "google/medgemma@medgemma-27b-it",
-            "MedGemma 27B IT",
-            "medgemma-27b",
-            active = false,
-            actor = "seed"
-        )
-        log.info("Seeded base models")
+        // Idempotent per family (not seed-once): later releases add rows — the Stage 4 Qwen
+        // targets landed after the first three — and must appear on environments seeded before
+        // them. Trade-off: a deleted family reappears on restart; deactivate instead of deleting.
+        val existing = baseModels.list().map { it.family.lowercase() }.toSet()
+        var seeded = 0
+        fun ensure(publisherModel: String, displayName: String, family: String, active: Boolean) {
+            if (family.lowercase() in existing) return
+            baseModels.create(publisherModel, displayName, family, active, actor = "seed")
+            seeded++
+        }
+        ensure("qwen/qwen3@qwen3-32b", "Qwen 3 32B", "qwen3-32b", active = true)
+        ensure("google/gemma3@gemma-3-27b-it", "Gemma 3 27B IT", "gemma3-27b", active = true)
+        ensure("google/medgemma@medgemma-27b-it", "MedGemma 27B IT", "medgemma-27b", active = false)
+        // Stage 4 advocate targets (S4-D6; catalog ids live-verified 2026-07-12, VA-59).
+        ensure("qwen/qwen3@qwen3-4b", "Qwen3 4B", "qwen3-4b", active = true)
+        ensure("qwen/qwen3-5@qwen3.5-9b", "Qwen 3.5 9B", "qwen35-9b", active = true)
+        if (seeded > 0) log.info("Seeded {} base model(s)", seeded)
     }
 
     private fun seedTaxonomy(taxonomyRepo: TaxonomyRepository) {
