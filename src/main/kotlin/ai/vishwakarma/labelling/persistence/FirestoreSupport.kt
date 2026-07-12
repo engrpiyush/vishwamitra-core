@@ -3,6 +3,8 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleTags
+import ai.vishwakarma.labelling.domain.Stage4Category
+import ai.vishwakarma.labelling.domain.Stage4Stamp
 import com.google.api.core.ApiFuture
 import com.google.cloud.Timestamp
 import com.google.cloud.firestore.DocumentSnapshot
@@ -54,3 +56,30 @@ fun Map<String, Any?>.toExampleTags(): ExampleTags =
         labels = (this["labels"] as? List<String>) ?: emptyList(),
         hasToolCall = this["hasToolCall"] as? Boolean ?: false,
     )
+
+/** Serialize the Stage 4 traceability stamp (§6) to a Firestore map. */
+fun Stage4Stamp.toStampMap(): Map<String, Any?> =
+    mapOf(
+        "subjectId" to subjectId,
+        "sourceClaimIds" to sourceClaimIds,
+        "scoreRunId" to scoreRunId,
+        "category" to category?.name,
+        "planId" to planId,
+        "personaHash" to personaHash,
+        "generatorPromptHash" to generatorPromptHash,
+    )
+
+/** Read a [Stage4Stamp] from a Firestore map; null when there is no subjectId (legacy example). */
+@Suppress("UNCHECKED_CAST")
+fun Map<String, Any?>.toStage4Stamp(): Stage4Stamp? {
+    val subjectId = (this["subjectId"] as? String)?.takeIf { it.isNotBlank() } ?: return null
+    return Stage4Stamp(
+        subjectId = subjectId,
+        sourceClaimIds = (this["sourceClaimIds"] as? List<String>) ?: emptyList(),
+        scoreRunId = this["scoreRunId"] as? String,
+        category = Stage4Category.fromOrNull(this["category"] as? String),
+        planId = this["planId"] as? String,
+        personaHash = this["personaHash"] as? String,
+        generatorPromptHash = this["generatorPromptHash"] as? String,
+    )
+}

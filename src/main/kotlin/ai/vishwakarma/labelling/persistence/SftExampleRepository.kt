@@ -63,6 +63,8 @@ class SftExampleRepository(private val db: Firestore) {
             "source" to source.name,
             "llmModel" to llmModel,
             "scenarioId" to scenarioId,
+            "stamp" to stamp?.toStampMap(),
+            "archivedReason" to archivedReason,
             "reviewComments" to
                 reviewComments.map {
                     mapOf("by" to it.by, "text" to it.text, "at" to it.at.toTimestamp())
@@ -104,6 +106,8 @@ class SftExampleRepository(private val db: Firestore) {
                     .getOrDefault(ExampleSource.MANUAL),
             llmModel = getString("llmModel"),
             scenarioId = getString("scenarioId"),
+            stamp = (get("stamp") as? Map<String, Any?>)?.toStage4Stamp(),
+            archivedReason = getString("archivedReason"),
             reviewComments =
                 commentsList.map {
                     ReviewComment(

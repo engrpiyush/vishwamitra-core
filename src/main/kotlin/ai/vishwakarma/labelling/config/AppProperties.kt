@@ -18,6 +18,7 @@ data class AppProperties(
     val intake: Intake = Intake(),
     val stage2: Stage2 = Stage2(),
     val stage3: Stage3 = Stage3(),
+    val stage4: Stage4 = Stage4(),
 ) {
     data class ComingSoon(
         /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
@@ -361,5 +362,70 @@ data class AppProperties(
 
         val judgeDryRun: Boolean
             get() = dryRunJudge ?: dryRun
+    }
+
+    /**
+     * Stage 4 (Conversation Synthesis & Tuning) — the LLD §16 config table. As with Stage 3, every
+     * value is frozen into a run's `paramsSnapshot` at submit, so a generated dataset is always
+     * attributable to the exact knobs that produced it.
+     */
+    data class Stage4(
+        /** Kill-switch for the Stage 4 surface (persona writes + run submits). */
+        val enabled: Boolean = true,
+        /** Dev/test: offline generator + judge doubles over the Stage 3 dry-run corpus (VA-62). */
+        val dryRun: Boolean = false,
+        /** Dataset-category mix weights (S4-D7 / QA-3) — fluid dials, normalized before use. */
+        val mix: Mix = Mix(),
+        /** PLAN fan-out cap: conversations planned per claim across all categories (§9.2). */
+        val maxConversationsPerClaim: Int = 6,
+        /** MinHash/Jaccard similarity above which two planned questions are duplicates (§9.2). */
+        val dedupeJaccardThreshold: Double = 0.85,
+        /** GENERATE work budget per poll tick (bounded work per request, the Stage 3 idiom). */
+        val generateBatchPerPoll: Int = 8,
+        /** JUDGE work budget per poll tick. */
+        val judgeBatchPerPoll: Int = 8,
+        /** Judge samples per axis (self-consistency ensemble, §11 — Stage 3's §11.6 idiom). */
+        val ensembleK: Int = 3,
+        /**
+         * Fraction of PASS-judged conversations routed to the human queue. v1 IGNORES this and
+         * enforces 1.0 — 100% human review (QA-4); the dial exists for the designed v1.1
+         * relaxation, gated on measured judge–human agreement.
+         */
+        val reviewSampleRate: Double = 1.0,
+        /** DPO pair generation (§12) — specced, ships dark until the first DPO tune (S4-D4). */
+        val dpoEnabled: Boolean = false,
+        /** Per-category slice held out of export for the post-tune behavioral eval (§14). */
+        val evalHoldoutFraction: Double = 0.10,
+        /** Advisory post-tune bar: overall expected-behavior match rate (warn, never block). */
+        val evalBehaviorBar: Double = 0.90,
+        /** Stuck-phase reclaim horizon (phaseSince clock — the Stage 2 §12.7 idiom). */
+        val phaseTimeout: Duration = Duration.ofMinutes(15),
+    ) {
+        /**
+         * The five S4-D7 category weights (defaults 40/25/15/15/5, QA-3). Any non-negative dial
+         * values are accepted; consumers read [normalized].
+         */
+        data class Mix(
+            val qa: Double = 0.40,
+            val situational: Double = 0.25,
+            val multiClaim: Double = 0.15,
+            val negative: Double = 0.15,
+            val meta: Double = 0.05,
+        ) {
+            /**
+             * Weights rescaled to sum 1; an all-zero (or negative-sum) mix falls back to defaults.
+             */
+            fun normalized(): Mix {
+                val sum = qa + situational + multiClaim + negative + meta
+                if (sum <= 0.0) return Mix()
+                return Mix(
+                    qa / sum,
+                    situational / sum,
+                    multiClaim / sum,
+                    negative / sum,
+                    meta / sum
+                )
+            }
+        }
     }
 }

@@ -89,6 +89,28 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** True when [id] is a reserved Stage 3 row the admin page may edit alongside content types. */
     fun isStage3Key(id: String): Boolean = id in STAGE3_KEYS
 
+    /**
+     * Persona-preset ids the wizard offers (B3): the built-in trio plus any admin-added
+     * `stage4:preset:<id>` rows (the LLD §6 reserved-key idiom).
+     */
+    fun stage4PresetIds(): List<String> {
+        val stored = prompts.findAll().map { it.id }.filter { it.startsWith(STAGE4_PRESET_PREFIX) }
+        return (STAGE4_PRESET_KEYS + stored)
+            .map { it.removePrefix(STAGE4_PRESET_PREFIX) }
+            .distinct()
+    }
+
+    /** The admin-designated default preset — the `stage4:preset-default` pointer row. */
+    fun defaultStage4PresetId(): String {
+        val pointed = resolveKey(STAGE4_PRESET_DEFAULT_KEY).instructions.trim()
+        val ids = stage4PresetIds()
+        return if (pointed in ids) pointed else ids.first()
+    }
+
+    /** The style block behind one preset id — the generation prompt's B3 ingredient. */
+    fun resolveStage4Preset(presetId: String): ResolvedExtractionPrompt =
+        resolveKey(STAGE4_PRESET_PREFIX + presetId)
+
     /** The block extraction uses for [contentType]: the stored row when present, else built-in. */
     fun resolve(contentType: ContentType): ResolvedExtractionPrompt = resolveKey(contentType.name)
 
@@ -113,5 +135,15 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     companion object {
         /** The reserved non-ContentType rows, in admin-page order. */
         val STAGE3_KEYS = listOf("STAGE3_ENTITY", "STAGE3_JUDGE")
+
+        /** Reserved Stage 4 persona-preset rows (LLD §6) + the default-preset pointer row. */
+        const val STAGE4_PRESET_PREFIX = "stage4:preset:"
+        const val STAGE4_PRESET_DEFAULT_KEY = "stage4:preset-default"
+        val STAGE4_PRESET_KEYS =
+            listOf(
+                "stage4:preset:warm-storyteller",
+                "stage4:preset:crisp-professional",
+                "stage4:preset:grounded-mentor",
+            )
     }
 }

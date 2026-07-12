@@ -1,8 +1,11 @@
 package ai.vishwakarma.labelling.config
 
+import ai.vishwakarma.labelling.domain.AdvocateName
+import ai.vishwakarma.labelling.domain.AdvocateRegion
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.Taxonomy
+import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.ScenarioService
@@ -29,12 +32,14 @@ class DataSeeder {
         scenarios: ScenarioService,
         taxonomyRepo: TaxonomyRepository,
         users: UserService,
+        advocateNames: AdvocateNameRepository,
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
                 seedBaseModels(baseModels)
                 seedTaxonomy(taxonomyRepo)
                 seedScenarios(scenarios)
+                seedAdvocateNames(advocateNames)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
     }
@@ -98,6 +103,49 @@ class DataSeeder {
             ),
         )
         log.info("Seeded label vocabulary")
+    }
+
+    /**
+     * The Stage 4 advocate-name pool (QA on A2): 18 names, 6 per region, half F / half M. A skipped
+     * A2 wizard answer resolves deterministically from this pool — deleting or adding rows shifts
+     * those picks, which auto-archives affected examples via the persona hash.
+     */
+    private fun seedAdvocateNames(advocateNames: AdvocateNameRepository) {
+        if (advocateNames.findAll().isNotEmpty()) return
+        val pool =
+            listOf(
+                Triple("Emily Carter", AdvocateRegion.US, "F"),
+                Triple("James Walker", AdvocateRegion.US, "M"),
+                Triple("Sofia Reyes", AdvocateRegion.US, "F"),
+                Triple("Michael Brooks", AdvocateRegion.US, "M"),
+                Triple("Grace Bennett", AdvocateRegion.US, "F"),
+                Triple("Daniel Hayes", AdvocateRegion.US, "M"),
+                Triple("Clara Novak", AdvocateRegion.EU, "F"),
+                Triple("Lukas Weber", AdvocateRegion.EU, "M"),
+                Triple("Elena Rossi", AdvocateRegion.EU, "F"),
+                Triple("Tomas Berg", AdvocateRegion.EU, "M"),
+                Triple("Amelie Laurent", AdvocateRegion.EU, "F"),
+                Triple("Jonas Keller", AdvocateRegion.EU, "M"),
+                Triple("Ananya Iyer", AdvocateRegion.IN, "F"),
+                Triple("Arjun Mehta", AdvocateRegion.IN, "M"),
+                Triple("Priya Nair", AdvocateRegion.IN, "F"),
+                Triple("Rohan Kulkarni", AdvocateRegion.IN, "M"),
+                Triple("Kavya Menon", AdvocateRegion.IN, "F"),
+                Triple("Vikram Rao", AdvocateRegion.IN, "M"),
+            )
+        pool.forEach { (name, region, gender) ->
+            val slug = name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+            advocateNames.save(
+                AdvocateName(
+                    id = "${region.name.lowercase()}-$slug",
+                    name = name,
+                    region = region,
+                    gender = gender,
+                    createdBy = "seed",
+                )
+            )
+        }
+        log.info("Seeded advocate-name pool ({} names)", pool.size)
     }
 
     private fun seedScenarios(scenarios: ScenarioService) {

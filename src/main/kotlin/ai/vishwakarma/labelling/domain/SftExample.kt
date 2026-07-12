@@ -72,6 +72,10 @@ data class SftExample(
     val source: ExampleSource = ExampleSource.MANUAL,
     val llmModel: String? = null,
     val scenarioId: String? = null,
+    /** Stage 4 traceability stamp (§6); null on legacy labelling-era examples. */
+    val stamp: Stage4Stamp? = null,
+    /** Why the example was ARCHIVED, e.g. "superseded by <scoreRunId|personaHash>" (QA-6). */
+    val archivedReason: String? = null,
     val reviewComments: List<ReviewComment> = emptyList(),
     val createdBy: String? = null,
     val createdAt: Instant? = null,

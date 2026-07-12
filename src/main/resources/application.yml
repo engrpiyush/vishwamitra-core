@@ -133,6 +133,8 @@ app:
     # dry-run stubs only the LLM legs (pseudo embeddings now; canned judge/extraction with VA-19).
     neo4j-password: ${NEO4J_PASSWORD:vishwamitra-dev}
     dry-run: true
+  stage4:
+    dry-run: true   # offline generator/judge doubles — never calls Gemini in dev
 
 ---
 # Cloud Run production.
@@ -161,3 +163,5 @@ app:
     dry-run: false  # real Speech-to-Text batchRecognize in prod
   stage3:
     dry-run: false  # real Vertex embeddings/judge in prod; graph = AuraDB via NEO4J_* env
+  stage4:
+    dry-run: false  # real Gemini generation/judge in prod

@@ -22,6 +22,10 @@ data class DpoPair(
     val status: ExampleStatus = ExampleStatus.DRAFT,
     val source: DpoSource = DpoSource.MANUAL,
     val fromSftId: String? = null,
+    /** Stage 4 traceability stamp (§6); null on legacy labelling-era pairs. */
+    val stamp: Stage4Stamp? = null,
+    /** Why the pair was ARCHIVED, e.g. "superseded by <scoreRunId|personaHash>" (QA-6). */
+    val archivedReason: String? = null,
     val reviewComments: List<ReviewComment> = emptyList(),
     val createdBy: String? = null,
     val createdAt: Instant? = null,
