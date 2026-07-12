@@ -95,6 +95,8 @@ object Stage3Counters {
     const val SCORE_I2_CLAMPED = "scoreI2Clamped"
     /** PUBLISHING (§11.11): claim vectors written to the Firestore ledger. */
     const val CLAIMS_PUBLISHED = "claimsPublished"
+    /** PUBLISHING (contract v2): fact docs frozen into `subject_facts`. */
+    const val FACTS_PUBLISHED = "factsPublished"
     /** The Stage 3.5 §5 subject aggregate frozen at publish, as its 0–100 display value. */
     const val SUBJECT_SCORE = "subjectScore"
 }

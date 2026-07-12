@@ -4,6 +4,9 @@ import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.PublishedAttestor
+import ai.vishwakarma.labelling.domain.PublishedEntityMention
+import ai.vishwakarma.labelling.domain.PublishedFactStamp
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.domain.SpeakerRole
@@ -67,6 +70,13 @@ class ClaimRepository(private val db: Firestore) {
                         "authenticityTier" to row.tier,
                         "scoreRunId" to row.scoreRunId,
                         "scoredAt" to row.scoredAt.toTimestamp(),
+                        // Contract v2 (§11.11): the claim's fact/entity context rides along.
+                        "publishContractVersion" to row.contractVersion,
+                        "authenticityScoreBare" to row.scoreBare,
+                        "factStamp" to row.factStamp?.toMap(),
+                        "entityMentions" to row.entityMentions.map { it.toMap() },
+                        "edgeCounts" to row.edgeCounts,
+                        "attestor" to row.attestor?.toMap(),
                     ),
                 )
             }
@@ -100,6 +110,12 @@ class ClaimRepository(private val db: Firestore) {
             "extractionPromptId" to extractionPromptId,
             "extractionPromptVersion" to extractionPromptVersion,
             "extractionPromptHash" to extractionPromptHash,
+            "publishContractVersion" to publishContractVersion,
+            "authenticityScoreBare" to authenticityScoreBare,
+            "factStamp" to factStamp?.toMap(),
+            "entityMentions" to entityMentions?.map { it.toMap() },
+            "edgeCounts" to edgeCounts,
+            "attestor" to attestor?.toMap(),
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
             "stage2ProcessedAt" to stage2ProcessedAt.toTimestamp(),
         )
@@ -131,6 +147,16 @@ class ClaimRepository(private val db: Firestore) {
             extractionPromptId = getString("extractionPromptId"),
             extractionPromptVersion = getLong("extractionPromptVersion")?.toInt(),
             extractionPromptHash = getString("extractionPromptHash"),
+            publishContractVersion = getLong("publishContractVersion")?.toInt(),
+            authenticityScoreBare = getDouble("authenticityScoreBare"),
+            factStamp = rawMap(get("factStamp"))?.toFactStamp(),
+            entityMentions =
+                (get("entityMentions") as? List<*>)?.mapNotNull { rawMap(it)?.toEntityMention() },
+            edgeCounts =
+                rawMap(get("edgeCounts"))
+                    ?.mapNotNull { (k, v) -> (v as? Number)?.let { n -> k to n.toInt() } }
+                    ?.toMap(),
+            attestor = rawMap(get("attestor"))?.toAttestor(),
             createdAt = instant("createdAt"),
             stage2ProcessedAt = instant("stage2ProcessedAt"),
         )
@@ -140,6 +166,74 @@ class ClaimRepository(private val db: Firestore) {
         val raw = get(field) as? Map<String, Any?> ?: return null
         return raw.mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap()
     }
+
+    // ---- contract-v2 block mappers (tolerant: missing/misshapen fields → null) ------------
+
+    @Suppress("UNCHECKED_CAST")
+    private fun rawMap(value: Any?): Map<String, Any?>? = value as? Map<String, Any?>
+
+    private fun PublishedFactStamp.toMap(): Map<String, Any?> =
+        mapOf(
+            "factId" to factId,
+            "label" to label,
+            "exemplarClaimId" to exemplarClaimId,
+            "kind" to kind,
+            "slot" to slot,
+            "validFrom" to validFrom,
+            "validTo" to validTo,
+            "datePrecision" to datePrecision,
+            "anchored" to anchored,
+            "belief" to belief,
+            "beliefBare" to beliefBare,
+            "memberCount" to memberCount,
+        )
+
+    private fun Map<String, Any?>.toFactStamp(): PublishedFactStamp? =
+        (this["factId"] as? String)?.let { factId ->
+            PublishedFactStamp(
+                factId = factId,
+                label = this["label"] as? String ?: "",
+                exemplarClaimId = this["exemplarClaimId"] as? String,
+                kind = this["kind"] as? String,
+                slot = this["slot"] as? String,
+                validFrom = this["validFrom"] as? String,
+                validTo = this["validTo"] as? String,
+                datePrecision = this["datePrecision"] as? String,
+                anchored = this["anchored"] as? Boolean ?: false,
+                belief = (this["belief"] as? Number)?.toDouble(),
+                beliefBare = (this["beliefBare"] as? Number)?.toDouble(),
+                memberCount = (this["memberCount"] as? Number)?.toInt() ?: 1,
+            )
+        }
+
+    private fun PublishedEntityMention.toMap(): Map<String, Any?> =
+        mapOf(
+            "surface" to surface,
+            "canonicalName" to canonicalName,
+            "entityType" to entityType,
+            "provisional" to provisional,
+        )
+
+    private fun Map<String, Any?>.toEntityMention(): PublishedEntityMention? =
+        (this["canonicalName"] as? String)?.let { name ->
+            PublishedEntityMention(
+                surface = this["surface"] as? String,
+                canonicalName = name,
+                entityType = this["entityType"] as? String,
+                provisional = this["provisional"] as? Boolean ?: false,
+            )
+        }
+
+    private fun PublishedAttestor.toMap(): Map<String, Any?> =
+        mapOf("key" to key, "name" to name, "kind" to kind, "trust" to trust)
+
+    private fun Map<String, Any?>.toAttestor(): PublishedAttestor =
+        PublishedAttestor(
+            key = this["key"] as? String,
+            name = this["name"] as? String,
+            kind = this["kind"] as? String,
+            trust = (this["trust"] as? Number)?.toDouble(),
+        )
 
     companion object {
         const val COLLECTION = "claims"
@@ -156,4 +250,11 @@ data class ClaimAuthenticityRow(
     val tier: String,
     val scoreRunId: String,
     val scoredAt: java.time.Instant,
+    /** Contract-v2 block ([PublishContract.VERSION]) — the claim's fact/entity context. */
+    val contractVersion: Int = PublishContract.VERSION,
+    val scoreBare: Double? = null,
+    val factStamp: PublishedFactStamp? = null,
+    val entityMentions: List<PublishedEntityMention> = emptyList(),
+    val edgeCounts: Map<String, Int> = emptyMap(),
+    val attestor: PublishedAttestor? = null,
 )

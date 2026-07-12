@@ -1937,21 +1937,25 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                                a.attestorKey AS attestorKey, a.name AS attestorName,
                                a.kind AS attestorKind, a.trust AS attestorTrust,
                                f.factId AS factId, f.label AS factLabel,
+                               f.exemplarClaimId AS factExemplarClaimId,
                                f.factKind AS factKind, f.slot AS slot,
                                f.validFrom AS validFrom, f.validTo AS validTo,
                                f.datePrecision AS datePrecision, f.anchored AS anchored,
                                f.belief AS belief, f.beliefBare AS beliefBare,
                                [ (c)-[m:MENTIONS]->(e:Entity) |
                                  {name: e.canonicalName, type: e.entityType,
-                                  provisional: m.provisional} ] AS entities,
+                                  provisional: m.provisional, surface: m.surface} ] AS entities,
                                [ (f)-[r:CORROBORATES|CONTRADICTS]-(g:Fact) |
                                  {relation: type(r), otherFactId: g.factId,
                                   otherLabel: g.label, otherExemplar: g.exemplarClaimId,
                                   confidence: r.confidence,
                                   votes: r.votes, rationale: r.rationale,
+                                  temporalNote: r.temporalNote,
+                                  ctxRelation: r.ctxRelation, ctxConfidence: r.ctxConfidence,
                                   explained: r.explained, temporalOverlap: r.temporalOverlap,
                                   reviewStatus: r.reviewStatus,
-                                  viaEntities: r.viaEntities} ] AS edges,
+                                  viaEntities: r.viaEntities,
+                                  contributingPairs: r.contributingPairs} ] AS edges,
                                [ (x:Explanation)-[:EXPLAINS]->(c) | x.text ][0] AS explanation
                         ORDER BY c.score DESC, claimId
                         """
@@ -1978,6 +1982,8 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                             attestorTrust = r["attestorTrust"].takeUnless { it.isNull }?.asDouble(),
                             factId = r["factId"].asString(),
                             factLabel = r["factLabel"].asString(""),
+                            factExemplarClaimId =
+                                r["factExemplarClaimId"].takeUnless { it.isNull }?.asString(),
                             factKind = r["factKind"].takeUnless { it.isNull }?.asString(),
                             slot = r["slot"].takeUnless { it.isNull }?.asString(),
                             validFrom = r["validFrom"].takeUnless { it.isNull }?.asString(),
@@ -2652,6 +2658,8 @@ data class ScoredClaimView(
     val attestorTrust: Double? = null,
     val factId: String,
     val factLabel: String,
+    /** The member claim whose text is the fact's label — links the label to its stated source. */
+    val factExemplarClaimId: String? = null,
     val factKind: String?,
     val slot: String?,
     val validFrom: String?,

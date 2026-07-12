@@ -130,8 +130,75 @@ data class Claim(
     val extractionPromptVersion: Int? = null,
     /** Short hash of the exact instruction block used. */
     val extractionPromptHash: String? = null,
+    /**
+     * Which publish contract last wrote this claim's score block: null/1 = the legacy 5-field
+     * vector; 2 = the Stage 4 contract (fact stamp + entity mentions + edge counts + attestor,
+     * §11.11 v2). A reopen → re-publish upgrades every scored claim in one tick.
+     */
+    val publishContractVersion: Int? = null,
+    /**
+     * DERIVED — the §11.9 bare score (no explanation effects) surfaced beside [authenticityScore]
+     * for direct ledger consumption; also inside [authenticitySignals].
+     */
+    val authenticityScoreBare: Double? = null,
+    /** The claim's fact context, frozen at publish. Null until a v2 publish. */
+    val factStamp: PublishedFactStamp? = null,
+    /** Resolved entity mentions (stated surface + derived canon), frozen at publish. */
+    val entityMentions: List<PublishedEntityMention>? = null,
+    /**
+     * DERIVED counts over the fact's evidence edges — keys `corroborates`, `contradicts`,
+     * `contradictsExplained`, `contradictsConfirmed`. Full edge detail (rationale, votes, review
+     * status) lives on the fact's `subject_facts` doc, never here (doc-size guard).
+     */
+    val edgeCounts: Map<String, Int>? = null,
+    /** Whose word the claim rests on (§11.2), frozen at publish. */
+    val attestor: PublishedAttestor? = null,
     val createdAt: Instant? = null,
     val stage2ProcessedAt: Instant? = null,
+)
+
+/**
+ * A claim's fact context as the Stage 3 publish freezes it onto the ledger (contract v2). All
+ * fields are DERIVED by assembly/scoring except [label] — the exemplar member claim's STATED text;
+ * [exemplarClaimId] says which claim that is. Interval strings are partial ISO (`yyyy[-MM[-dd]]`)
+ * at [datePrecision]; the STATED member dates behind the derived interval sit on the fact's
+ * `subject_facts` doc (`statedDates`). Authoritative field-by-field legend:
+ * [ai.vishwakarma.labelling.persistence.PublishContract.FIELD_PROVENANCE].
+ */
+data class PublishedFactStamp(
+    val factId: String,
+    val label: String,
+    val exemplarClaimId: String? = null,
+    /** STATE / EVENT / TIMELESS (§11.7). */
+    val kind: String? = null,
+    /** STATE facts: the exclusive timeline lane (EMPLOYER, …). */
+    val slot: String? = null,
+    val validFrom: String? = null,
+    val validTo: String? = null,
+    /** YEAR / MONTH / DAY / NONE — coarsest precision among the member dates used. */
+    val datePrecision: String? = null,
+    /** Any member is DOCUMENTARY-sourced (§11.7). */
+    val anchored: Boolean = false,
+    val belief: Double? = null,
+    val beliefBare: Double? = null,
+    val memberCount: Int = 1,
+)
+
+/** One resolved mention: the STATED [surface] beside the DERIVED canonical identity (§11.3). */
+data class PublishedEntityMention(
+    val surface: String? = null,
+    val canonicalName: String,
+    val entityType: String? = null,
+    /** DERIVED — a §11.3 near-miss adoption still awaiting human review. */
+    val provisional: Boolean = false,
+)
+
+/** The attestor behind the claim (§11.2): [name] STATED; [kind]/[trust] DERIVED. */
+data class PublishedAttestor(
+    val key: String? = null,
+    val name: String? = null,
+    val kind: String? = null,
+    val trust: Double? = null,
 )
 
 /**

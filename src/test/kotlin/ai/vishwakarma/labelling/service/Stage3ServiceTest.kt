@@ -22,14 +22,19 @@ import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
+import ai.vishwakarma.labelling.persistence.PublishContract
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
+import ai.vishwakarma.labelling.persistence.StatedDate
+import ai.vishwakarma.labelling.persistence.SubjectFactRecord
+import ai.vishwakarma.labelling.persistence.SubjectFactRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.stage3.AssembleOutcome
+import ai.vishwakarma.labelling.stage3.AssembledFact
 import ai.vishwakarma.labelling.stage3.AttestorSnapshot
 import ai.vishwakarma.labelling.stage3.ClaimCard
 import ai.vishwakarma.labelling.stage3.ClaimJudgeService
@@ -78,6 +83,9 @@ import ai.vishwakarma.labelling.stage3.ScoredClaimForPublish
 import ai.vishwakarma.labelling.stage3.ScoredClaimView
 import ai.vishwakarma.labelling.stage3.ScoredPair
 import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
+import ai.vishwakarma.labelling.stage3.TimelineFact
+import ai.vishwakarma.labelling.stage3.TimelineSucceeds
+import ai.vishwakarma.labelling.stage3.TimelineView
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
@@ -169,6 +177,12 @@ private class FakeS3ClaimRepo : ClaimRepository(mock(Firestore::class.java)) {
                     authenticityTier = AuthenticityTier.fromOrNull(row.tier),
                     scoreRunId = row.scoreRunId,
                     scoredAt = row.scoredAt,
+                    publishContractVersion = row.contractVersion,
+                    authenticityScoreBare = row.scoreBare,
+                    factStamp = row.factStamp,
+                    entityMentions = row.entityMentions,
+                    edgeCounts = row.edgeCounts,
+                    attestor = row.attestor,
                 )
         }
     }
@@ -577,56 +591,167 @@ private class FakeGraphRepo(props: AppProperties) :
             )
         }
 
+    /** Contract-v2 test hook: claim ids silently dropped from the readback (I-P1 guard tests). */
+    var readbackDrops = emptySet<String>()
+
     /** The §21 A.3 readback the Stage 3.5 aggregate folds — derived from the last score pass. */
     override fun scoresReadback(subjectId: String): List<ScoredClaimView> {
         val outcome = scoreOutcomes.lastOrNull() ?: return emptyList()
         val factById = outcome.facts.associateBy { it.factId }
-        return outcome.claims.map { c ->
-            val row = claimRows[c.claimId]
-            val fact = factById[c.factId]
-            ScoredClaimView(
-                claimId = c.claimId,
-                text = row?.text ?: "",
-                type = row?.type,
-                tierSeed = row?.tierSeed,
-                prior = c.prior,
-                score = c.score,
-                scoreBare = c.scoreBare,
-                signalsJson =
-                    fact?.let {
-                        """{"independence":${it.signals.independence},""" +
-                            """"evidenceMass":${it.signals.evidenceMass}}"""
-                    },
-                basis = row?.basis,
-                sourceClass = row?.sourceClass,
-                sensitive = row?.sensitive ?: false,
-                claimedDate = row?.claimedDate,
-                attestorKey = row?.attestorKey,
-                attestorName = null,
-                attestorKind =
-                    row?.attestorKey?.let { key ->
-                        when {
-                            key.startsWith("subject:") -> "SUBJECT"
-                            key.startsWith("issuer:") -> "ISSUER"
-                            else -> "ENDORSER"
-                        }
-                    },
-                attestorTrust = null,
-                factId = c.factId,
-                factLabel = c.factId,
-                factKind = "EVENT",
-                slot = null,
-                validFrom = null,
-                validTo = null,
-                datePrecision = null,
-                anchored = false,
-                belief = fact?.belief,
-                beliefBare = fact?.beliefBare,
-                entities = emptyList(),
-                edges = emptyList(),
-                explanation = null,
-            )
-        }
+        val assembledById = assembleOutcomes.lastOrNull()?.facts.orEmpty().associateBy { it.factId }
+        return outcome.claims
+            .filter { it.claimId !in readbackDrops }
+            .map { c ->
+                val row = claimRows[c.claimId]
+                val fact = factById[c.factId]
+                val assembled = assembledById[c.factId]
+                ScoredClaimView(
+                    claimId = c.claimId,
+                    text = row?.text ?: "",
+                    type = row?.type,
+                    tierSeed = row?.tierSeed,
+                    prior = c.prior,
+                    score = c.score,
+                    scoreBare = c.scoreBare,
+                    signalsJson =
+                        fact?.let {
+                            """{"prior":${c.prior},"independence":${it.signals.independence},""" +
+                                """"evidenceMass":${it.signals.evidenceMass},""" +
+                                """"scoreBare":${c.scoreBare}}"""
+                        },
+                    basis = row?.basis,
+                    sourceClass = row?.sourceClass,
+                    sensitive = row?.sensitive ?: false,
+                    claimedDate = row?.claimedDate,
+                    attestorKey = row?.attestorKey,
+                    attestorName = null,
+                    attestorKind =
+                        row?.attestorKey?.let { key ->
+                            when {
+                                key.startsWith("subject:") -> "SUBJECT"
+                                key.startsWith("issuer:") -> "ISSUER"
+                                else -> "ENDORSER"
+                            }
+                        },
+                    attestorTrust = null,
+                    factId = c.factId,
+                    factLabel = assembled?.label ?: c.factId,
+                    factExemplarClaimId = assembled?.exemplarClaimId,
+                    factKind = assembled?.factKind ?: "EVENT",
+                    slot = assembled?.slot,
+                    validFrom = assembled?.validFrom,
+                    validTo = assembled?.validTo,
+                    datePrecision = assembled?.datePrecision,
+                    anchored = assembled?.anchored ?: false,
+                    belief = fact?.belief,
+                    beliefBare = fact?.beliefBare,
+                    entities =
+                        mentionLinks
+                            .filter { it.claimId == c.claimId }
+                            .map { link ->
+                                mapOf(
+                                    "name" to
+                                        (entities["${link.entityType}|${link.canonicalKey}"]
+                                            ?.canonicalName ?: link.surface),
+                                    "type" to link.entityType,
+                                    "provisional" to link.provisional,
+                                    "surface" to link.surface,
+                                )
+                            },
+                    edges = factEdgeMaps(c.factId, assembledById),
+                    explanation = null,
+                )
+            }
+    }
+
+    /** The readback's per-fact edge maps, mirroring the production Cypher comprehension. */
+    private fun factEdgeMaps(
+        factId: String,
+        assembledById: Map<String, AssembledFact>,
+    ): List<Map<String, Any?>> {
+        fun other(from: String, to: String) = if (from == factId) to else from
+        val corroborates =
+            corroboratesEdges
+                .filter { it.fromFactId == factId || it.toFactId == factId }
+                .map { e ->
+                    val other = other(e.fromFactId, e.toFactId)
+                    mapOf(
+                        "relation" to "CORROBORATES",
+                        "otherFactId" to other,
+                        "otherLabel" to (assembledById[other]?.label ?: other),
+                        "otherExemplar" to assembledById[other]?.exemplarClaimId,
+                        "confidence" to e.confidence,
+                        "votes" to null,
+                        "rationale" to "scripted",
+                        "temporalNote" to null,
+                        "ctxRelation" to e.ctxRelation,
+                        "ctxConfidence" to e.ctxConfidence,
+                        "explained" to e.explained,
+                        "temporalOverlap" to null,
+                        "reviewStatus" to null,
+                        "viaEntities" to emptyList<String>(),
+                        "contributingPairs" to emptyList<String>(),
+                    )
+                }
+        val contradicts =
+            contradictionEdges.values
+                .filter { it.fromFactId == factId || it.toFactId == factId }
+                .map { e ->
+                    val other = other(e.fromFactId, e.toFactId)
+                    mapOf(
+                        "relation" to "CONTRADICTS",
+                        "otherFactId" to other,
+                        "otherLabel" to (assembledById[other]?.label ?: other),
+                        "otherExemplar" to assembledById[other]?.exemplarClaimId,
+                        "confidence" to e.confidence,
+                        "votes" to null,
+                        "rationale" to "scripted",
+                        "temporalNote" to null,
+                        "ctxRelation" to e.ctxRelation,
+                        "ctxConfidence" to e.ctxConfidence,
+                        "explained" to e.explained,
+                        "temporalOverlap" to true,
+                        "reviewStatus" to e.reviewStatus,
+                        "viaEntities" to emptyList<String>(),
+                        "contributingPairs" to e.contributingPairs,
+                    )
+                }
+        return corroborates + contradicts
+    }
+
+    /** The contract-v2 publish reads SUCCEEDS off the timeline — same source as VA-24. */
+    override fun timeline(subjectId: String): TimelineView {
+        val assembly =
+            assembleOutcomes.lastOrNull()
+                ?: return TimelineView(emptyList(), emptyList(), emptyList(), emptyList())
+        val facts =
+            assembly.facts.map { f ->
+                TimelineFact(
+                    factId = f.factId,
+                    label = f.label,
+                    factKind = f.factKind,
+                    slot = f.slot,
+                    validFrom = f.validFrom,
+                    validTo = f.validTo,
+                    datePrecision = f.datePrecision,
+                    belief = null,
+                    beliefBare = null,
+                    anchored = f.anchored,
+                    memberClaimIds = f.memberClaimIds.sorted(),
+                    conflictEdgeIds = emptyList(),
+                )
+            }
+        val succeeds =
+            assembly.succeeds.map {
+                TimelineSucceeds(it.fromFactId, it.toFactId, it.slot, it.gapDays)
+            }
+        val (dated, offAxis) = facts.partition { it.validFrom != null && it.factKind != "TIMELESS" }
+        return TimelineView(
+            state = dated.filter { it.factKind == "STATE" },
+            events = dated.filter { it.factKind == "EVENT" },
+            succeeds = succeeds,
+            undated = offAxis,
+        )
     }
 
     // ---- SCORE (VA-17): snapshot derived from the last assembly ----
@@ -844,6 +969,22 @@ private class FakeSubjectScoreRepo : SubjectScoreRepository(mock(Firestore::clas
     override fun find(subjectId: String): SubjectScoreRecord? = store[subjectId]
 }
 
+/** In-memory `subject_facts`, including the write-fresh-then-delete-stale replace semantics. */
+private class FakeSubjectFactRepo : SubjectFactRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, SubjectFactRecord>()
+
+    override fun findBySubject(subjectId: String): List<SubjectFactRecord> =
+        store.values.filter { it.subjectId == subjectId }.sortedBy { it.factId }
+
+    override fun replaceForSubject(subjectId: String, records: List<SubjectFactRecord>) {
+        records.forEach { store[it.factId] = it }
+        val fresh = records.map { it.factId }.toSet()
+        store.values
+            .filter { it.subjectId == subjectId && it.factId !in fresh }
+            .forEach { store.remove(it.factId) }
+    }
+}
+
 private class FailingEmbeddings : EmbeddingService {
     override val versionStamp = "gemini-embedding-001:3072"
     override val dimensions = 3072
@@ -880,6 +1021,7 @@ class Stage3ServiceTest {
     private val judgeSampler = ScriptedJudgeSampler()
     private val judgeEdges = FakeJudgeEdgeRepo()
     private val subjectScores = FakeSubjectScoreRepo()
+    private val subjectFacts = FakeSubjectFactRepo()
 
     private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
         Stage3Service(
@@ -898,6 +1040,7 @@ class Stage3ServiceTest {
             judgeEdges,
             claims,
             subjectScores,
+            subjectFacts,
             props,
         )
 
@@ -1692,8 +1835,9 @@ class Stage3ServiceTest {
         assertEquals(Stage3RunStatus.PUBLISHING, failed.failedPhase)
         assertTrue(failed.error!!.contains("ledger batch write failed"))
         assertTrue(claims.published.isEmpty())
-        // A failed publish leaves no frozen subject aggregate either.
+        // A failed publish leaves no frozen subject aggregate and no fact docs either.
         assertNull(subjectScores.find(subjectId))
+        assertTrue(subjectFacts.findBySubject(subjectId).isEmpty())
 
         claims.failPublish = false
         var resumed = svc.retry(failed.id).valueOrNull()!!
@@ -1702,6 +1846,10 @@ class Stage3ServiceTest {
         assertEquals(Stage3RunStatus.PUBLISHED, resumed.status)
         assertEquals(2, claims.published.size) // both claims written exactly once
         assertEquals(setOf("c1", "c2"), claims.published.map { it.claimId }.toSet())
+        // The fact docs landed exactly once too, stamped by the resumed run.
+        val factDocs = subjectFacts.findBySubject(subjectId)
+        assertEquals(listOf("fact:c1", "fact:c2"), factDocs.map { it.factId })
+        assertTrue(factDocs.all { it.scoreRunId == resumed.id })
     }
 
     @Test
@@ -1748,6 +1896,106 @@ class Stage3ServiceTest {
         val replaced = subjectScores.find(subjectId)!!
         assertEquals(second.id, replaced.scoreRunId)
         assertEquals("op2", replaced.publishedBy)
+    }
+
+    // ---- publish contract v2 (fact/entity propagation) ----------------------------
+
+    @Test
+    fun `publish writes the contract v2 blocks on every claim`() {
+        seedSubject(claimCount = 2)
+        claims.store["c1"] = claims.store["c1"]!!.copy(claimedDate = LocalDate.of(2019, 6, 1))
+        extractor.mentionsByClaim =
+            mapOf("c1" to ExtractedMentions(listOf(ExtractedMention("Kotlin", EntityType.SKILL))))
+        val svc = service()
+        val run = walkTo(svc, Stage3RunStatus.AWAITING_REVIEW)
+        val published = svc.publish(run.id, skipReview = false, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.PUBLISHED, published.status)
+
+        val ledger = claims.store["c1"]!!
+        assertEquals(PublishContract.VERSION, ledger.publishContractVersion)
+        assertNotNull(ledger.authenticityScoreBare)
+        val stamp = ledger.factStamp!!
+        assertEquals("fact:c1", stamp.factId)
+        assertEquals("claim 1", stamp.label) // STATED — the exemplar's verbatim text
+        assertEquals("c1", stamp.exemplarClaimId)
+        assertEquals("2019-06-01", stamp.validFrom) // DERIVED from the stated date
+        assertEquals(1, stamp.memberCount)
+        val mention = ledger.entityMentions!!.single()
+        assertEquals("Kotlin", mention.surface) // STATED surface beside the derived canon
+        assertEquals("SKILL", mention.entityType)
+        assertTrue(mention.canonicalName.isNotBlank())
+        assertEquals(0, ledger.edgeCounts!!["contradicts"])
+        assertNotNull(ledger.attestor) // the self-report attestor behind the claim
+    }
+
+    @Test
+    fun `publish freezes one subject_facts doc per fact with stated dates and edge detail`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        val published = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        assertEquals(2L, published.counters[Stage3Counters.FACTS_PUBLISHED])
+
+        val docs = subjectFacts.findBySubject(subjectId)
+        assertEquals(listOf("fact:c1", "fact:c2"), docs.map { it.factId })
+        val f1 = docs.first()
+        assertEquals(published.id, f1.scoreRunId)
+        assertEquals(PublishContract.VERSION, f1.publishContractVersion)
+        assertEquals(listOf("c1"), f1.memberClaimIds)
+        // The DERIVED interval ships beside its STATED input date.
+        assertEquals(listOf(StatedDate("c1", "2019-06-01")), f1.statedDates)
+        assertEquals("2019-06-01", f1.validFrom)
+        val edge = f1.edges.single()
+        assertEquals("CONTRADICTS", edge.relation)
+        assertEquals("fact:c2", edge.otherFactId)
+        assertEquals("PROPOSED", edge.reviewStatus) // skipReview left it un-actioned
+        assertNotNull(edge.rationale)
+        // The claim doc carries the counts; the detail stays fact-side.
+        assertEquals(1, claims.store["c1"]!!.edgeCounts!!["contradicts"])
+    }
+
+    @Test
+    fun `re-publish after reopen replaces subject_facts and deletes stale docs`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        val first = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        // A leftover doc from an older publish whose fact no longer exists.
+        subjectFacts.store["fact:old"] =
+            subjectFacts.store["fact:c1"]!!.copy(factId = "fact:old", scoreRunId = "run-old")
+
+        val reopened = svc.reopen(first.id).valueOrNull()!!
+        val second = svc.publish(reopened.id, skipReview = true, actor = "op").valueOrNull()!!
+        val docs = subjectFacts.findBySubject(subjectId)
+        assertEquals(listOf("fact:c1", "fact:c2"), docs.map { it.factId }) // stale doc swept
+        assertTrue(docs.all { it.scoreRunId == second.id })
+    }
+
+    @Test
+    fun `publish stamps the contract version and provenance legend on subject_scores`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+
+        val record = subjectScores.find(subjectId)!!
+        assertEquals(PublishContract.VERSION, record.publishContractVersion)
+        assertEquals(PublishContract.VERSION, record.publishContract["version"])
+        @Suppress("UNCHECKED_CAST")
+        val legend = record.publishContract["fieldProvenance"] as Map<String, String>
+        assertEquals("STATED", legend["claims.claimedDate"])
+        assertEquals("DERIVED", legend["subject_facts.validFrom"])
+        assertEquals("STATED", legend["subject_facts.statedDates[].date"])
+        assertEquals("HUMAN", legend["claim_reviews.justification"])
+    }
+
+    @Test
+    fun `publish fails loudly when a scored claim is missing from the readback`() {
+        val svc = service()
+        val run = contestedCorpus(svc)
+        graph.readbackDrops = setOf("c2")
+
+        val failed = svc.publish(run.id, skipReview = true, actor = "op").valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, failed.status)
+        assertTrue(failed.error!!.contains("publish contract violated"))
+        assertTrue(claims.published.isEmpty()) // the guard fires before any ledger write
     }
 
     // ---- rerun -------------------------------------------------------------------

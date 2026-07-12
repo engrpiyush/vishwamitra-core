@@ -10,9 +10,11 @@ import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
+import ai.vishwakarma.labelling.persistence.PublishContract
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
+import ai.vishwakarma.labelling.persistence.SubjectFactRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
@@ -30,6 +32,7 @@ import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.ExplanationRow
 import ai.vishwakarma.labelling.stage3.FactAssembler
 import ai.vishwakarma.labelling.stage3.JudgeProgress
+import ai.vishwakarma.labelling.stage3.PublishProjection
 import ai.vishwakarma.labelling.stage3.ScoreOutcome
 import ai.vishwakarma.labelling.stage3.Scorer
 import ai.vishwakarma.labelling.stage3.ScorerParams
@@ -75,6 +78,7 @@ class Stage3Service(
     private val judgeCache: Stage3EdgeRepository,
     private val claimLedger: ClaimRepository,
     private val subjectScores: SubjectScoreRepository,
+    private val subjectFacts: SubjectFactRepository,
     private val props: AppProperties,
 ) {
 
@@ -821,18 +825,30 @@ class Stage3Service(
     }
 
     /**
-     * PUBLISHING (§11.11): read every provisionally scored claim off the graph and batch-write the
-     * §3.2 vector to the Firestore ledger — idempotent and resumable (per-claim updates are atomic;
-     * a resumed tick re-writes identical values). The Stage 3.5 §5 subject aggregate freezes in the
-     * same envelope: SAI over the §21 A.3 readback, replace-on-set into `subject_scores` (a
-     * resumed/re-published tick overwrites with identical/refreshed values). Then PUBLISHED.
+     * PUBLISHING (§11.11, contract v2): project the §21 A.3 readback (+ timeline) into the ledger —
+     * per-claim vectors WITH their fact/entity context, the `subject_facts` detail docs, and the
+     * subject aggregate + frozen provenance legend — all idempotent and resumable (per-claim
+     * updates are atomic; `subject_facts` replaces write-first-then-delete-stale; a resumed tick
+     * re-writes identical values). Then PUBLISHED.
      */
     private fun runPublishTick(run: Stage3Run): Stage3Run =
         inPhase(run, "PUBLISH") {
-            val rows = graph.scoredClaimsForPublish(run.subjectId)
+            val readback = graph.scoresReadback(run.subjectId)
+            // Invariant guard (I-P1): every scored claim ASSERTS a fact, so the fact-joined
+            // readback must cover exactly the scored set — anything else would silently
+            // under-publish the ledger. Fail the run loudly instead.
+            val expected = graph.scoredClaimsForPublish(run.subjectId).map { it.claimId }.toSet()
+            val got = readback.map { it.claimId }.toSet()
+            check(expected == got) {
+                "scored claims without a fact — publish contract violated " +
+                    "(scored=${expected.size}, readback=${got.size}, " +
+                    "missing=${(expected - got).sorted().take(5)})"
+            }
             val now = Instant.now()
+            val blocks = PublishProjection.claimBlocks(readback)
             claimLedger.publishAuthenticity(
-                rows.map { row ->
+                readback.map { row ->
+                    val block = blocks.getValue(row.claimId)
                     ClaimAuthenticityRow(
                         claimId = row.claimId,
                         score = row.score,
@@ -840,11 +856,26 @@ class Stage3Service(
                         tier = tierOf(row.score),
                         scoreRunId = run.id,
                         scoredAt = now,
+                        scoreBare = row.scoreBare,
+                        factStamp = block.factStamp,
+                        entityMentions = block.entityMentions,
+                        edgeCounts = block.edgeCounts,
+                        attestor = block.attestor,
                     )
                 }
             )
-            log.info("Run {}: published {} claim vector(s) to the ledger", run.id, rows.size)
-            val aggregate = SubjectScorer.score(graph.scoresReadback(run.subjectId), props.stage3)
+            log.info("Run {}: published {} claim vector(s) to the ledger", run.id, readback.size)
+            val factDocs =
+                PublishProjection.factRecords(
+                    run.subjectId,
+                    readback,
+                    graph.timeline(run.subjectId),
+                    run.id,
+                    now,
+                )
+            subjectFacts.replaceForSubject(run.subjectId, factDocs)
+            log.info("Run {}: froze {} fact doc(s) into subject_facts", run.id, factDocs.size)
+            val aggregate = SubjectScorer.score(readback, props.stage3)
             subjectScores.save(aggregate.toRecord(run, now))
             log.info(
                 "Run {}: subject aggregate frozen — SAI {} ({})",
@@ -859,7 +890,8 @@ class Stage3Service(
                     finishedAt = now,
                     counters =
                         run.counters +
-                            (Stage3Counters.CLAIMS_PUBLISHED to rows.size.toLong()) +
+                            (Stage3Counters.CLAIMS_PUBLISHED to readback.size.toLong()) +
+                            (Stage3Counters.FACTS_PUBLISHED to factDocs.size.toLong()) +
                             (Stage3Counters.SUBJECT_SCORE to aggregate.display.toLong()),
                     phaseSince = now,
                 )
@@ -907,6 +939,8 @@ class Stage3Service(
             scoreRunId = run.id,
             publishedAt = at,
             publishedBy = run.publishedBy,
+            publishContractVersion = PublishContract.VERSION,
+            publishContract = PublishContract.asMap(),
         )
 
     /**

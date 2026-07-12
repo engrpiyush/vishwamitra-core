@@ -104,6 +104,8 @@ class SecurityConfig {
                 // Public coming-soon page + its subscribe API.
                 authorize("/coming-soon.html", permitAll)
                 authorize("/coming-soon/**", permitAll)
+                // Public data-collection guide (static pages, read before gathering data).
+                authorize("/user-guide/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
                 // Operator diagnostics JSON (server posture / dry-run flags) — ADMIN like the
                 // pages above; also enforced at the method level by @PreAuthorize.

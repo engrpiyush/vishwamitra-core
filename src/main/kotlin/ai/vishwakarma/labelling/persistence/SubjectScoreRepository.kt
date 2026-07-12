@@ -28,6 +28,10 @@ data class SubjectScoreRecord(
     val scoreRunId: String,
     val publishedAt: Instant?,
     val publishedBy: String?,
+    /** [PublishContract.VERSION] at publish time; 1 = a pre-contract (legacy) publish. */
+    val publishContractVersion: Int = 1,
+    /** [PublishContract.asMap] frozen verbatim — the consumer's STATED/DERIVED/HUMAN legend. */
+    val publishContract: Map<String, Any?> = emptyMap(),
 )
 
 @Repository
@@ -57,6 +61,8 @@ class SubjectScoreRepository(private val db: Firestore) {
             "scoreRunId" to scoreRunId,
             "publishedAt" to publishedAt.toTimestamp(),
             "publishedBy" to publishedBy,
+            "publishContractVersion" to publishContractVersion,
+            "publishContract" to publishContract,
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -77,6 +83,8 @@ class SubjectScoreRepository(private val db: Firestore) {
             scoreRunId = getString("scoreRunId") ?: "",
             publishedAt = instant("publishedAt"),
             publishedBy = getString("publishedBy"),
+            publishContractVersion = (get("publishContractVersion") as? Number)?.toInt() ?: 1,
+            publishContract = (get("publishContract") as? Map<String, Any?>).orEmpty(),
         )
 
     companion object {

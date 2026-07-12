@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interview Scripts &amp; Questionnaires — Vishwakarma.ai</title>
+<meta name="description" content="Ready-to-use scripts and question banks for your self-interview, manager, mentor, peer, client, and expert conversations.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="guide.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap site-in">
+    <a href="index.html" class="brand">
+      <svg class="mk" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Vishwakarma.ai">
+        <rect x="1" y="1" width="30" height="30" stroke="#00FF85" stroke-width="1.4"/>
+        <path d="M8 9 L16 24 L24 9" stroke="#00FF85" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="14.2" y="8" width="3.6" height="3.6" fill="#00FF85"/>
+      </svg>
+      Vishwakarma<b>.ai</b>
+    </a>
+    <nav class="pages" aria-label="Guide pages">
+      <a href="index.html">Overview</a>
+      <a href="interviews.html" aria-current="page">Interviews &amp; Scripts</a>
+      <a href="documents.html">Documents &amp; Records</a>
+      <a href="authenticity-score.html">Authenticity Score</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <div class="hero">
+      <div class="kicker">Data Collection Guide · 02 — Interviews &amp; Scripts</div>
+      <h1>Put real voices <em>on the record.</em></h1>
+      <p class="lede">
+        Recorded conversations are where your advocate gets its depth: your own story in your own
+        voice, and independent people confirming it in theirs. Everything on this page is
+        ready to use — scripts to read, question banks to hand over, and the rules that make a
+        recording count.
+      </p>
+    </div>
+
+    <section id="recording-basics">
+      <h2><span class="num">§1</span>Recording basics</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h4>Gear &amp; setting</h4>
+          <p>A modern phone’s voice recorder is genuinely enough. Quiet room, windows closed, no
+          background music, phone on the table between speakers. For video calls, use the
+          call platform’s own recording. Audio quality matters far more than video quality.</p>
+        </div>
+        <div class="card">
+          <h4>Length — 20 minutes, hard rule</h4>
+          <p>Keep every recording to <strong>20 minutes or less</strong> — short files process
+          best. A conversation that needs more becomes a second session; a long moment gets
+          split into parts (see <a href="#flac">the how-to below</a>). Several focused
+          recordings always beat one marathon.</p>
+        </div>
+        <div class="card">
+          <h4>Formats</h4>
+          <p>Record in whatever your device produces, then <strong>convert audio to FLAC</strong>
+          before uploading — <a href="#flac">how-to below</a>. Video: mp4, mov, webm, mkv. Name
+          files meaningfully — <span class="mono">2026-03-manager-anita-rao.flac</span> beats
+          <span class="mono">Recording_47.m4a</span>.</p>
+        </div>
+        <div class="card">
+          <h4>One voice at a time</h4>
+          <p>Voices are identified and separated automatically, and crosstalk is what breaks that.
+          Let each person finish. A beat of silence between speakers is a feature, not awkwardness.</p>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <span class="tag">Don’t edit</span>
+        <p>
+          Upload recordings <strong>raw and unedited</strong>. Trimming silence at the ends is fine;
+          cutting, splicing, or “cleaning up” the middle is not. An untouched recording is credible
+          evidence — an edited one invites doubt about what was removed. (Splitting a long
+          recording into parts at a natural pause is packaging, not editing — that’s fine.)
+        </p>
+      </div>
+
+      <h3 id="flac">Before you upload: convert audio to FLAC</h3>
+      <p>
+        FLAC keeps full voice quality at a manageable size, and it’s the format we understand
+        best. Record however you like — then convert each finished file. Three ways, easiest first:
+      </p>
+      <ul>
+        <li><strong>Free desktop app (recommended):</strong>
+          <a href="https://www.audacityteam.org/" rel="noopener" target="_blank">Audacity</a> —
+          open your recording, then <em>File → Export Audio → FLAC</em>. For converting many files
+          at once, <a href="https://www.freac.org/" rel="noopener" target="_blank">fre:ac</a> does
+          whole folders.</li>
+        <li><strong>Online converter:</strong>
+          <a href="https://cloudconvert.com/audio-converter" rel="noopener" target="_blank">CloudConvert</a> —
+          pick FLAC as the output. <em>Heads-up:</em> online tools upload your recording to their
+          servers; for private conversations prefer the app or the commands below.</li>
+        <li><strong>One command, any system:</strong> install
+          <a href="https://ffmpeg.org/download.html" rel="noopener" target="_blank">ffmpeg</a>
+          (macOS: <span class="mono">brew install ffmpeg</span> · Windows:
+          <span class="mono">winget install ffmpeg</span> · Ubuntu:
+          <span class="mono">sudo apt install ffmpeg</span>), then:</li>
+      </ul>
+      <pre class="cmd"># one file → mono 48 kHz FLAC (ideal for speech)
+ffmpeg -i recording.m4a -ac 1 -ar 48000 -c:a flac recording.flac
+
+# every .m4a in a folder — macOS / Linux
+for f in *.m4a; do ffmpeg -i "$f" -ac 1 -ar 48000 -c:a flac "${f%.*}.flac"; done
+
+# every .m4a in a folder — Windows PowerShell
+Get-ChildItem *.m4a | ForEach-Object { ffmpeg -i $_.FullName -ac 1 -ar 48000 -c:a flac "$($_.BaseName).flac" }
+
+# pull just the audio out of a video call recording
+ffmpeg -i call.mp4 -vn -ac 1 -ar 48000 -c:a flac call.flac
+
+# split a long recording into 20-minute parts (no quality loss)
+ffmpeg -i long-talk.flac -f segment -segment_time 1200 -c copy part_%02d.flac</pre>
+      <p>
+        Video files can go up as-is <em>when the picture is part of the evidence</em> — a product
+        demo, a ceremony, a performance. When it’s only a talking head, extract the audio with the
+        command above instead: smaller, faster, nothing lost.
+      </p>
+    </section>
+
+    <section id="opening-slate">
+      <h2><span class="num">§2</span>The opening slate — start every recording with this</h2>
+      <p>
+        The first thirty seconds of every recording establish <strong>who is speaking, how they
+        know you, and that they consent</strong>. Without it, a recording is a voice from nowhere;
+        with it, every word gains a named, consenting source. Have each participant say, in
+        their own words:
+      </p>
+      <div class="script" role="note" aria-label="Opening slate script">Today is <span class="cue">[date]</span>. My name is <span class="cue">[full name]</span>, and I’m <span class="cue">[current role]</span> at <span class="cue">[organization]</span>.
+I <span class="cue">[managed / taught / worked alongside / hired]</span> <span class="cue">[your name]</span> from <span class="cue">[year]</span> to <span class="cue">[year]</span> at <span class="cue">[organization]</span>.
+I understand this recording will be used to build and verify <span class="cue">[your name]</span>’s professional profile, and I agree to be recorded for that purpose.</div>
+      <p>
+        Then you (or whoever hosts the call) state your own name and the date, and begin. That’s
+        the whole ritual — but it is <strong>mandatory</strong>: recordings of unidentified or
+        non-consenting speakers can’t be used at all.
+      </p>
+    </section>
+
+    <section id="briefing">
+      <h2><span class="num">§3</span>Briefing an endorser — topics, never lines</h2>
+      <p>
+        Before each call, send your endorser a <strong>topic list</strong>: the two or three
+        projects or periods you shared, with rough dates. That’s it. The value of their testimony
+        is that it’s <em>theirs</em> — same events, their memory, their words.
+      </p>
+      <figure class="viz">
+        <svg viewBox="0 0 800 240" role="img" aria-label="Diagram: your story, a manager's account, and a document all describing the same project combine into one strongly verified fact.">
+          <g font-family="'Space Grotesk',sans-serif" font-size="13.5" fill="#C8F6DD">
+            <rect x="10" y="14" width="240" height="56" fill="rgba(181,139,40,.10)" stroke="#B58B28"/>
+            <text x="26" y="38">You, self-interview:</text>
+            <text x="26" y="57" font-size="12" fill="#8FCBAB">“I led the checkout rebuild in 2022.”</text>
+            <rect x="10" y="92" width="240" height="56" fill="rgba(31,155,209,.10)" stroke="#1F9BD1"/>
+            <text x="26" y="116">Your manager, her words:</text>
+            <text x="26" y="135" font-size="12" fill="#8FCBAB">“She owned the checkout rewrite end-to-end.”</text>
+            <rect x="10" y="170" width="240" height="56" fill="rgba(0,168,85,.10)" stroke="#00A855"/>
+            <text x="26" y="194">Document:</text>
+            <text x="26" y="213" font-size="12" fill="#8FCBAB">Promotion letter, Oct 2022, names the project.</text>
+            <path d="M256 42 C 340 42, 360 108, 430 116" stroke="#3A6B53" stroke-width="1.6" fill="none"/>
+            <path d="M256 120 h174" stroke="#3A6B53" stroke-width="1.6" fill="none"/>
+            <path d="M256 198 C 340 198, 360 132, 430 124" stroke="#3A6B53" stroke-width="1.6" fill="none"/>
+            <path d="M436 120 l-8 -5 v10 z" fill="#3A6B53"/>
+            <rect x="444" y="80" width="346" height="80" fill="rgba(0,255,120,.08)" stroke="#19C46A"/>
+            <text x="464" y="112" fill="#7FFFC0" font-weight="600">One strongly verified fact</text>
+            <text x="464" y="134" font-size="12" fill="#8FCBAB">three independent tellings, one story —</text>
+            <text x="464" y="150" font-size="12" fill="#8FCBAB">this is what your pack should be full of</text>
+          </g>
+        </svg>
+        <figcaption>fig 2 — corroboration: same event, independent tellings</figcaption>
+      </figure>
+      <ul>
+        <li><strong>Do</strong> tell them the projects and years you want covered.</li>
+        <li><strong>Do</strong> tell them honesty helps you — including criticism. A voice that only
+          praises is weaker evidence than one that praises <em>and</em> critiques.</li>
+        <li><strong>Don’t</strong> share your resume bullet points, your self-interview answers, or
+          any “suggested phrasing”. Rehearsed, matching accounts are detected as one source, not two —
+          you gain nothing and lose their independent weight.</li>
+        <li><strong>Don’t</strong> sit visibly “supervising”. Best: a friend hosts and you leave the
+          room (or the call). Acceptable: you ask the questions, then stay silent through the answers.</li>
+      </ul>
+    </section>
+
+    <hr class="sep">
+
+    <section id="self-interview">
+      <h2><span class="num">§4</span>The self-interview — 2–3 hours, in sittings</h2>
+      <p>
+        This is the longest single item in your pack and the spine of your advocate’s voice.
+        Record it alone or with a friend asking the questions, across the <strong>five themed
+        sittings below, in takes of up to 20 minutes each</strong> — when a sitting runs long,
+        stop the recording and start a new take. Speak from memory, not from your resume — say
+        every name, date, and number out loud, and tell one story at a time, beginning to end.
+      </p>
+
+      <details class="bank" open>
+        <summary><span class="t">Sitting 1 — Identity &amp; journey</span><span class="m">1–2 takes · 7 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>Introduce yourself as if to someone who will represent you for years: who are you professionally, in your own words?</li>
+            <li>Walk through your career from the beginning — every role, organization, and the years for each.
+              <span class="why">Say dates out loud; this timeline is the skeleton everything else attaches to.</span></li>
+            <li>What were the two or three turning points that made you who you are professionally?</li>
+            <li>Why this field? What keeps you in it?</li>
+            <li>What are you known for among people who’ve worked with you?</li>
+            <li>What would your last three managers each say about you, honestly — good and bad?</li>
+            <li>Where are you heading — what does the next five years look like if it goes well?</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Sitting 2 — Skills &amp; craft</span><span class="m">1–2 takes · 6 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>Name your three strongest skills — and for each, tell one specific story that proves it.
+              <span class="why">A skill without a story is an adjective. A skill with a dated, named story is a fact.</span></li>
+            <li>How did you build each of those skills? Who or what taught you?</li>
+            <li>Walk through the hardest problem you’ve solved end-to-end: the situation, what you specifically did, and the measurable result.</li>
+            <li>What tools, methods, or approaches define how you work day-to-day?</li>
+            <li>Which skills are you actively building right now, and how far along are you?</li>
+            <li>What are you honestly mediocre at, in your own craft?
+              <span class="why">Your advocate must know your limits to be credible about your strengths.</span></li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Sitting 3 — Achievements, one story at a time</span><span class="m">2–3 takes · 6–10 stories</span></summary>
+        <div class="body">
+          <p>Pick your <strong>six to ten most significant accomplishments</strong> — professional,
+          academic, or personal. For each one, answer all five prompts before moving on:</p>
+          <ol class="qs">
+            <li>The setting: organization, team, timeframe (month and year), and what was at stake.</li>
+            <li>Your exact role — what <em>you</em> did, as distinct from what the team did.</li>
+            <li>The numbers: team size, budget, users, percentages, rankings — whatever can be counted.</li>
+            <li>What nearly went wrong, and how it actually played out.</li>
+            <li>Who else witnessed this, and what document or link could confirm it?
+              <span class="why">If the answer is “nobody and nothing”, flag it for yourself: that story needs an endorser or a document from elsewhere in your pack.</span></li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Sitting 4 — Values &amp; working style</span><span class="m">1–2 takes · 6 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>What principles have you actually paid a price to keep? Tell the story of one such time.</li>
+            <li>Describe a real conflict with a colleague or superior — what happened, what you did, how it ended.</li>
+            <li>Tell about the toughest piece of feedback you’ve received. What changed after?</li>
+            <li>How do you lead, when you lead? How do you follow, when you follow?</li>
+            <li>In what environments do you do your best work — and in which do you struggle?</li>
+            <li>What would make you walk away from a job, no matter the offer?</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Sitting 5 — Failures, weaknesses &amp; growth</span><span class="m">1 take · 5 questions</span></summary>
+        <div class="body">
+          <p>Do not skip this sitting. A profile with no weaknesses reads as evasive, and
+          verification rewards well-evidenced honesty — including about what went wrong.</p>
+          <ol class="qs">
+            <li>Describe a genuine professional failure: what you were responsible for, what happened, what it cost.</li>
+            <li>What did you change — concretely — because of it?</li>
+            <li>What criticism have you heard more than once, from different people?</li>
+            <li>Which weakness still costs you today? How do you manage around it?</li>
+            <li>What’s something you believed strongly five years ago that you’ve since reversed on?</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <hr class="sep">
+
+    <section id="endorser-banks">
+      <h2><span class="num">§5</span>Endorser conversations — the question banks</h2>
+      <p>
+        Aim for <strong>four to six endorsers</strong> across different relationships:
+        two managers, one or two mentors or professors, two peers, and a client if you’ve had them.
+        Keep each call to <strong>20 minutes</strong> — if a bank isn’t finished, book a second
+        call rather than running over. Hand the relevant bank to whoever hosts. Every bank opens
+        with the <a href="#opening-slate">slate</a>, and the host’s only other job is to ask for
+        <strong>specifics</strong> — “when was that?”, “how many?”, “what was the result?” —
+        whenever an answer stays general.
+      </p>
+
+      <details class="bank" open>
+        <summary><span class="t">Managers — direct reporting relationship</span><span class="m">2–3 people · 1–2 calls × 20 min · 12 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>How long did you manage them, in what team and company, and what was the context of the business at the time?</li>
+            <li>What was their role and scope when they joined you — and how had it changed by the end?
+              <span class="why">Scope growth under the same manager is progression evidence no resume line can match.</span></li>
+            <li>Walk through one specific project they delivered under you: what was their part, when did it happen, what was the result?</li>
+            <li>What numbers can you attach to their work — team size, budget, metrics moved, deadlines met?</li>
+            <li>What did you rely on them for that you couldn’t easily get from anyone else?</li>
+            <li>Tell me about a time they clearly exceeded what you expected.</li>
+            <li>Tell me about a time they fell short or struggled. What happened?
+              <span class="why">An honest shortfall makes every compliment in the call more believable.</span></li>
+            <li>How did they handle pressure or conflict? One example, please.</li>
+            <li>Compared to others you’ve managed at that level, where did they genuinely stand?</li>
+            <li>Would you hire them again? For what kind of role — and for what kind of role <em>not</em>?</li>
+            <li>What should a future employer know about them that isn’t on any resume?</li>
+            <li>Is there anything they tend to claim about themselves that you’d push back on?</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Mentors &amp; professors — teaching or guidance relationship</span><span class="m">1–2 people · 1–2 calls × 20 min · 10 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>In what capacity and over what period did you teach or mentor them?</li>
+            <li>How do they learn? What did you observe about how they take on something new?</li>
+            <li>Describe one specific piece of work you supervised — a thesis, project, or course — and what their contribution actually was.</li>
+            <li>How rigorous are they? Where did you see them cut corners, if ever?</li>
+            <li>How do they respond to being wrong, or to hard feedback from you?</li>
+            <li>Among all the students or mentees you’ve had, where do they honestly rank — and in what dimension?</li>
+            <li>What growth did you witness first-hand, from when they arrived to when they left?</li>
+            <li>What weakness did you observe that they may still carry?</li>
+            <li>What kind of work do you believe they’d be exceptional at?</li>
+            <li>What made them memorable to you, years later?</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Peers — worked beside you, no reporting line</span><span class="m">2–3 people · 1–2 calls × 20 min · 10 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>How and when did you work together, and in what setting?</li>
+            <li>What is it like to work next to them, day to day — not on their best day, on a normal one?</li>
+            <li>Tell one shared project story from your side: what did <em>they</em> actually do, as you saw it?
+              <span class="why">Peers see the real division of labor that titles hide. This question carries the call.</span></li>
+            <li>When teammates need something, what do people go to <em>them</em> for specifically?</li>
+            <li>Describe a disagreement you two had. How did they handle it?</li>
+            <li>What did you learn from them? What might they have learned from you?</li>
+            <li>Where do they overestimate themselves, if anywhere?</li>
+            <li>Where do they <em>under</em>-sell themselves?</li>
+            <li>If you were building a team tomorrow, would you want them on it — in what seat?</li>
+            <li>What’s a small, telling moment involving them that stuck with you?</li>
+          </ol>
+        </div>
+      </details>
+
+      <details class="bank">
+        <summary><span class="t">Clients — paid for or received your work</span><span class="m">optional · one 20-min call · 8 questions</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>What did you engage them for, when, and for how long?</li>
+            <li>What was the problem before they arrived — and what was the state after?</li>
+            <li>What did they actually deliver? Be concrete: systems, documents, outcomes.</li>
+            <li>What measurable difference did the work make, if you can share numbers?</li>
+            <li>How was working with them — communication, deadlines, surprises?</li>
+            <li>What would you warn a future client about?</li>
+            <li>Would you engage them again? Have you referred them to anyone?</li>
+            <li>How did their work hold up after they left?</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <hr class="sep">
+
+    <section id="expert-interviews">
+      <h2><span class="num">§6</span>Expert interviews — one per major theme</h2>
+      <p>
+        An expert interview is different in kind from an endorsement: a recognized authority
+        <strong>examines you</strong> on a theme and puts their professional judgment on record.
+        Expert testimony carries the highest weight any voice can — precisely because the expert
+        stakes their own reputation on the assessment.
+      </p>
+      <p>
+        Pick <strong>one theme per pillar of your career</strong>. A software engineer might choose
+        software design, architecture, and code quality; a marketer might choose brand strategy,
+        performance marketing, and analytics. Two to four themes is typical.
+      </p>
+      <h3>Choosing the expert</h3>
+      <ul>
+        <li><strong>Recognized standing</strong>: senior title, publications, patents, conference
+          talks, or years of acknowledged practice in the theme. Their credentials go on tape in
+          the slate — an expert whose expertise can’t be verified isn’t one.</li>
+        <li><strong>Distance from you</strong>: the less they owe you, the more their judgment is
+          worth. A former professor now senior in industry, a senior engineer from a different
+          company, a consultant you’ve never worked with — all better than your best friend
+          who happens to be senior.</li>
+      </ul>
+      <h3>Structure — two or three 20-minute sessions, three movements</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Part</th><th>Time</th><th>What happens</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>1 · Credentials &amp; slate</td>
+              <td>5 min</td>
+              <td>The expert introduces themselves fully: role, experience, why they’re qualified to
+                  judge this theme, how (and how little) they know you. Then the consent slate.</td>
+            </tr>
+            <tr>
+              <td>2 · The examination</td>
+              <td>30–40 min, across sessions</td>
+              <td>A real technical conversation, not a quiz. You walk through work you’ve actually
+                  done in the theme; the expert probes: <em>why this design and not that one? what
+                  breaks at ten times the load? defend this decision. what would you do differently
+                  now?</em> Reason out loud. Getting pushed and recovering is high-value evidence —
+                  a too-smooth session is a wasted one.</td>
+            </tr>
+            <tr>
+              <td>3 · The verdict</td>
+              <td>final 5–10 min</td>
+              <td>The expert states their assessment on record: your level in this theme against the
+                  industry bar, specific strengths, specific gaps, and what roles they’d trust you
+                  with. Ask them to be exact — “strong mid-level, not yet senior, because…” is worth
+                  more than “very impressive”.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="demos">
+      <h2><span class="num">§7</span>Demos, pitches &amp; other captured moments</h2>
+      <p>
+        A recording of you <strong>doing the work in front of real stakes</strong> — demoing a
+        product, pitching a project to stakeholders, giving a talk, teaching a class, performing,
+        competing — proves things no interview can: how you present, how you handle live
+        questions, that the work existed and an audience witnessed it.
+      </p>
+      <ul>
+        <li><strong>Best:</strong> the actual recording of a real session — a stakeholder demo, a
+          sprint review, a conference talk, an award ceremony. Keep the Q&amp;A in; handling
+          unrehearsed questions is the most valuable part.</li>
+        <li><strong>Good:</strong> re-deliver a real pitch or demo live on a recorded call, with a
+          colleague who was originally there asking the questions they actually asked.</li>
+        <li><strong>Weakest:</strong> a transcript you typed up yourself. Words on a page written by
+          you are just more of your own words — always prefer the recording.</li>
+      </ul>
+      <div class="callout">
+        <span class="tag">Consent still applies</span>
+        <p>
+          If other people are audible or visible in a captured moment, they need to have agreed —
+          or the moment must be from a public setting (a published talk, a public ceremony).
+          When in doubt, choose the public one or ask.
+        </p>
+      </div>
+    </section>
+
+    <div class="next">
+      <a href="index.html">← Overview</a>
+      <a href="documents.html">Next: Documents &amp; Records →</a>
+    </div>
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap foot-in">
+    <span>© 2026 VISHX INNOVATIONS · VISHWAKARMA.AI</span>
+    <span>DATA COLLECTION GUIDE · 02/04</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -503,6 +503,7 @@ textarea { resize: vertical; min-height: 64px; }
 }
 .landing-cta:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: var(--shadow-lg); color: var(--text); }
 .landing-cta:active { transform: translateY(0) scale(0.99); }
+.landing-guide { margin-top: 1.1rem; font-size: 0.9rem; color: var(--muted); }
 .landing-features { display: flex; gap: 1.75rem; justify-content: center; flex-wrap: wrap; margin-top: 2.75rem; }
 .landing-feature { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.9rem; }
 .landing-feature svg { width: 18px; height: 18px; color: var(--accent); flex: none; }
