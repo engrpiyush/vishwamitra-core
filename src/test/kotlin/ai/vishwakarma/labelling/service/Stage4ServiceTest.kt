@@ -59,6 +59,7 @@ import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
+import ai.vishwakarma.labelling.stage4.Stage4Judging
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
@@ -368,6 +369,7 @@ class Stage4ServiceTest {
             judge = judge,
             judgments = judgments,
             exportService = exportService,
+            sft = sftService,
             plans = plans,
             sftExamples = sfts,
             dpoPairs = dpos,
@@ -1268,5 +1270,101 @@ class Stage4ServiceTest {
         assertEquals(Stage4RunStatus.REVIEW_WAIT, runs.store[run.id]!!.status)
 
         assertIs<DomainError.NotFound>(svc.export("nope", "op").err())
+    }
+
+    // ---- bulk approve: the judge-trusting shortcut through the QA-4 queue -------------------
+
+    /** A current-stamp SUBMITTED conversation outside the run's own queue, for verdict crafting. */
+    private fun syntheticExample(id: String, run: Stage4Run): SftExample =
+        SftExample(
+            id = id,
+            status = ExampleStatus.SUBMITTED,
+            turns =
+                listOf(
+                    Turn(role = TurnRole.USER, text = "q"),
+                    Turn(role = TurnRole.MODEL, text = "a")
+                ),
+            stamp =
+                Stage4Stamp(
+                    subjectId = run.subjectId,
+                    scoreRunId = run.scoreRunId,
+                    personaHash = run.personaHash,
+                    planId = "p-$id",
+                ),
+        )
+
+    private fun judgment(
+        id: String,
+        example: SftExample,
+        overall: JudgeVerdict,
+        turnsHash: String = Stage4Judging.turnsHash(example.turns),
+        at: Instant = Instant.parse("2026-07-13T10:00:00Z"),
+    ): Stage4Judgment =
+        Stage4Judgment(
+            id = id,
+            exampleId = example.id,
+            subjectId = example.stamp?.subjectId,
+            overall = overall,
+            turnsHash = turnsHash,
+            createdAt = at,
+        )
+
+    @Test
+    fun `bulk approve flips exactly the un-stale PASS rows and reports the rest by reason`() {
+        seedPublished()
+        val svc = service()
+        val run0 = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run0.id, Stage4RunStatus.REVIEW_WAIT)
+        val run = runs.store[run0.id]!!
+
+        // Wipe the run-produced verdicts: the natural queue becomes the unjudged baseline, and
+        // the crafted rows below are the only judged ones — deterministic regardless of the fake
+        // judge's distribution.
+        judgments.store.clear()
+        val naturalQueue = sfts.store.values.count { it.status == ExampleStatus.SUBMITTED }
+
+        val pass = syntheticExample("e-pass", run)
+        val passEdited = syntheticExample("e-pass-edited", run)
+        val borderline = syntheticExample("e-borderline", run)
+        val flipped = syntheticExample("e-flipped", run)
+        val sentBack =
+            syntheticExample("e-sentback", run).copy(status = ExampleStatus.NEEDS_CHANGES)
+        listOf(pass, passEdited, borderline, flipped, sentBack).forEach { sfts.store[it.id] = it }
+        judgments.store["j1"] = judgment("j1", pass, JudgeVerdict.PASS)
+        // PASS on record, but the turns moved since — no verdict to trust.
+        judgments.store["j2"] =
+            judgment("j2", passEdited, JudgeVerdict.PASS, turnsHash = "old-hash")
+        judgments.store["j3"] = judgment("j3", borderline, JudgeVerdict.BORDERLINE)
+        // Two passes on the same turns: the newer FAIL outranks the older PASS.
+        judgments.store["j4"] =
+            judgment("j4", flipped, JudgeVerdict.PASS, at = Instant.parse("2026-07-13T09:00:00Z"))
+        judgments.store["j5"] = judgment("j5", flipped, JudgeVerdict.FAIL)
+        // A human sent it back — a PASS verdict never bulk-approves over that.
+        judgments.store["j6"] = judgment("j6", sentBack, JudgeVerdict.PASS)
+
+        val outcome = svc.bulkApprove(run.id, "op").expectRight()
+
+        assertEquals(1, outcome.approved)
+        assertEquals(2, outcome.notPass)
+        assertEquals(naturalQueue + 1, outcome.unjudged)
+        assertEquals(1, outcome.sentBack)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-pass"]!!.status)
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-pass-edited"]!!.status)
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-borderline"]!!.status)
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-flipped"]!!.status)
+        assertEquals(ExampleStatus.NEEDS_CHANGES, sfts.store["e-sentback"]!!.status)
+        // The run stays parked: bulk approve feeds the export gate, never replaces it.
+        assertEquals(Stage4RunStatus.REVIEW_WAIT, runs.store[run.id]!!.status)
+    }
+
+    @Test
+    fun `bulk approve requires the QA-4 park`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
+
+        assertIs<DomainError.Conflict>(svc.bulkApprove(run.id, "op").err())
+        assertIs<DomainError.NotFound>(svc.bulkApprove("nope", "op").err())
     }
 }

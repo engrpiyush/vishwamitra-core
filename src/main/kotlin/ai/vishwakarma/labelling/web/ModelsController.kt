@@ -1,6 +1,8 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Promotion
+import ai.vishwakarma.labelling.service.AdvocateServingService
 import ai.vishwakarma.labelling.service.TrainingService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -14,12 +16,17 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes
 
 @Controller
 @RequestMapping("/models")
-class ModelsController(private val training: TrainingService) {
+class ModelsController(
+    private val training: TrainingService,
+    private val serving: AdvocateServingService,
+    private val props: AppProperties,
+) {
 
     @GetMapping
     fun index(model: Model): String {
         model.addAttribute("pageTitle", "Models")
         model.addAttribute("families", training.versionsByFamily())
+        model.addAttribute("servingEnabled", props.serving.enabled)
         return "models/index"
     }
 
@@ -34,7 +41,55 @@ class ModelsController(private val training: TrainingService) {
         model.addAttribute("pageTitle", "Serve ${version.displayName}")
         model.addAttribute("v", version)
         model.addAttribute("serveCommand", training.serveCommand(version))
+        model.addAttribute("servingEnabled", props.serving.enabled)
+        model.addAttribute("servingTarget", serving.backend()?.target() ?: "")
         return "models/serve"
+    }
+
+    /** Initiate serving of a READY version onto the shared endpoint (submit-then-poll). */
+    @PostMapping("/{id}/serving/start")
+    @PreAuthorize("hasRole('REVIEWER')")
+    fun startServing(@PathVariable id: String, ra: RedirectAttributes): String {
+        serving
+            .serve(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        "Serving ${it.displayName}: ${it.servingState} — poll for status " +
+                            "(cold deploy is ~25–35 min; tear down when done).",
+                    )
+                },
+            )
+        return "redirect:/models/$id/serve"
+    }
+
+    /** Tear down a LIVE (or FAILED) serve — the cost guard; a deployed replica bills until gone. */
+    @PostMapping("/{id}/serving/teardown")
+    @PreAuthorize("hasRole('REVIEWER')")
+    fun teardownServing(@PathVariable id: String, ra: RedirectAttributes): String {
+        serving
+            .teardown(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                {
+                    ra.addFlashAttribute("ok", "Tearing down ${it.displayName}: ${it.servingState}")
+                },
+            )
+        return "redirect:/models/$id/serve"
+    }
+
+    /** Advance an in-flight DEPLOYING/TEARING_DOWN serve (manual poll; the page auto-polls too). */
+    @PostMapping("/{id}/serving/poll")
+    fun pollServing(@PathVariable id: String, ra: RedirectAttributes): String {
+        serving
+            .poll(id)
+            .fold(
+                { ra.addFlashAttribute("error", it.message) },
+                { ra.addFlashAttribute("ok", "Serving status: ${it.servingState}") },
+            )
+        return "redirect:/models/$id/serve"
     }
 
     @PostMapping("/{id}/promote")

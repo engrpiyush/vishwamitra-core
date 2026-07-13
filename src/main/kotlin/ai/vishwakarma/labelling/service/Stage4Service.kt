@@ -66,6 +66,20 @@ data class Stage4SubmitRequest(val fresh: Boolean = false, val mix: MixOverrides
 data class Stage4ExportOutcome(val run: Stage4Run, val record: ExportRecord)
 
 /**
+ * What [Stage4Service.bulkApprove] did: [approved] flips, plus everything left untouched by reason
+ * — the flash message spells it out so the operator knows exactly what the shortcut took.
+ */
+data class Stage4BulkApproveOutcome(
+    val approved: Int,
+    /** SUBMITTED whose latest same-turns verdict is BORDERLINE or FAIL. */
+    val notPass: Int,
+    /** SUBMITTED with no judgment on the current turns (never judged, or edited since). */
+    val unjudged: Int,
+    /** NEEDS_CHANGES rows — sent back by a human, never bulk-approved over. */
+    val sentBack: Int,
+)
+
+/**
  * Stage 4 (published ledger → conversation notebooks) — the run lifecycle chassis (LLD §9): the
  * Stage 2/3 submit-then-poll idiom exactly. No scheduler — the run advances only inside poll
  * requests, one bounded step each; failures are terminal FAILED states carrying the verbatim error
@@ -93,6 +107,7 @@ class Stage4Service(
     private val judge: Stage4JudgeSampler,
     private val judgments: Stage4JudgmentRepository,
     private val exportService: ExportService,
+    private val sft: SftService,
     private val plans: Stage4PlanRepository,
     private val sftExamples: SftExampleRepository,
     private val dpoPairs: DpoPairRepository,
@@ -862,6 +877,63 @@ class Stage4Service(
                 verdicts.count { it == JudgeVerdict.BORDERLINE }.toLong(),
             Stage4Counters.JUDGED_FAIL to verdicts.count { it == JudgeVerdict.FAIL }.toLong(),
         )
+    }
+
+    // ---- bulk approve — the judge-trusting shortcut through the QA-4 queue -------------------
+
+    /**
+     * Approve every SUBMITTED current-stamp example whose **latest judgment on the current turns**
+     * is PASS — the same latest-pass-plus-turnsHash contract the review panel renders, so the
+     * button approves exactly the rows the operator would see as un-stale PASS. Everything else is
+     * left untouched: BORDERLINE/FAIL (a human call by design), unjudged or edited-since-judged
+     * turns (no verdict to trust), and NEEDS_CHANGES (already in a human loop). Run must be parked
+     * at REVIEW_WAIT — the export gate is unchanged and still takes only APPROVED examples.
+     */
+    fun bulkApprove(runId: String, actor: String?): Either<DomainError, Stage4BulkApproveOutcome> {
+        val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
+        if (run.status != Stage4RunStatus.REVIEW_WAIT)
+            return DomainError.Conflict(
+                    "Only a REVIEW_WAIT run can be bulk-approved (run is ${run.status})"
+                )
+                .left()
+        val byExample = judgments.findBySubject(run.subjectId).groupBy { it.exampleId }
+        val live = liveStampedExamples(run)
+        var approved = 0
+        var notPass = 0
+        var unjudged = 0
+        live
+            .filter { it.status == ExampleStatus.SUBMITTED }
+            .forEach { example ->
+                val latest =
+                    byExample[example.id]
+                        ?.filter { it.turnsHash == Stage4Judging.turnsHash(example.turns) }
+                        ?.maxByOrNull { it.createdAt ?: Instant.EPOCH }
+                when {
+                    latest == null -> unjudged++
+                    latest.overall != JudgeVerdict.PASS -> notPass++
+                    // A Left here means the row changed under us mid-loop; count it as unjudged
+                    // rather than aborting a half-done bulk.
+                    else -> sft.approve(example.id, actor).fold({ unjudged++ }, { approved++ })
+                }
+            }
+        val outcome =
+            Stage4BulkApproveOutcome(
+                approved = approved,
+                notPass = notPass,
+                unjudged = unjudged,
+                sentBack = live.count { it.status == ExampleStatus.NEEDS_CHANGES },
+            )
+        log.info(
+            "Run {}: bulk-approved {} judge-PASS example(s) ({} not-PASS, {} unjudged, {} " +
+                "sent-back untouched) by {}",
+            run.id,
+            outcome.approved,
+            outcome.notPass,
+            outcome.unjudged,
+            outcome.sentBack,
+            actor,
+        )
+        return outcome.right()
     }
 
     // ---- export (LLD §9.4/§13, VA-58) — the operator action that completes a parked run ----

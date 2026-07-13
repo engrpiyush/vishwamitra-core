@@ -21,8 +21,10 @@
         <label id="foundation-field">Foundation base model
             <select name="baseModelId" id="baseModelId">
                 <option value="">—</option>
-                <option th:each="b : ${baseModels}" th:value="${b.id}" th:text="${b.displayName + ' (' + b.family + ')'}">base</option>
+                <option th:each="b : ${baseModels}" th:value="${b.id}" th:disabled="${!b.tunable}"
+                        th:text="${b.displayName + ' (' + b.family + ')' + (b.tunable ? '' : ' — support coming')}">base</option>
             </select>
+            <small class="muted">Only verified models are selectable; more enable as support lands.</small>
         </label>
         <label id="continuation-field">Continue from version
             <select name="parentVersionId" id="parentVersionId">

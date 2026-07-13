@@ -47,6 +47,21 @@ enum class Promotion {
     NONE
 }
 
+/**
+ * Lifecycle of a version's serving deployment (VA-67 / advocate serving). NONE = not deployed;
+ * DEPLOYING/TEARING_DOWN = an in-flight Vertex LRO the poll advances; LIVE = serving traffic (the
+ * only state that bills a replica); FAILED = a leg errored (retry from NONE via a fresh serve).
+ * Deploy is multi-step (upload model → deploy to endpoint) but collapses to one DEPLOYING state —
+ * the backend owns the sub-steps.
+ */
+enum class ServingState {
+    NONE,
+    DEPLOYING,
+    LIVE,
+    TEARING_DOWN,
+    FAILED
+}
+
 data class Hyperparams(
     val epochCount: Int = 3,
     val adapterSize: String = "ADAPTER_SIZE_FOUR",
@@ -108,6 +123,16 @@ data class ModelVersion(
     val displayName: String = "",
     val createdBy: String? = null,
     val createdAt: Instant? = null,
+    // ---- serving deployment (VA-67) — distinct from the tuning-side vertexModelResource ----
+    val servingState: ServingState = ServingState.NONE,
+    /** The serving-container Vertex Model uploaded for deployment (≠ the tuning-registered one). */
+    val servingModelResource: String? = null,
+    val servingEndpointId: String? = null,
+    val servingDeployedModelId: String? = null,
+    /** The in-flight Vertex LRO name while DEPLOYING/TEARING_DOWN; null when settled. */
+    val servingOperation: String? = null,
+    val servedAt: Instant? = null,
+    val servingError: String? = null,
 ) {
     /** Numeric (major, minor) parsed from `version` like "v1.2". */
     val majorMinor: Pair<Int, Int>

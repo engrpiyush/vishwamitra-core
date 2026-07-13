@@ -37,7 +37,10 @@ class TuningService(private val props: AppProperties) {
             .accessToken
             .tokenValue
 
-    private fun base() = "https://${props.gcp.region}-aiplatform.googleapis.com/v1beta1"
+    /** tuningJobs location: `app.tuning.region` when set (regional catalogs), else home region. */
+    private fun region() = props.tuning.region.ifBlank { props.gcp.region }
+
+    private fun base() = "https://${region()}-aiplatform.googleapis.com/v1beta1"
 
     /**
      * Submit a tuning job. Returns the Vertex job resource name (projects/.../tuningJobs/123).
@@ -86,8 +89,7 @@ class TuningService(private val props: AppProperties) {
                 },
             )
         }
-        val url =
-            "${base()}/projects/${props.gcp.projectId}/locations/${props.gcp.region}/tuningJobs"
+        val url = "${base()}/projects/${props.gcp.projectId}/locations/${region()}/tuningJobs"
         log.info(
             "Submitting {} tuning job '{}' (continuation={}) dataset={} body={}",
             method,
@@ -108,12 +110,23 @@ class TuningService(private val props: AppProperties) {
         return map["name"] as? String ?: error("tuningJobs response missing name: $response")
     }
 
+    /**
+     * The regional API host serving [jobName] (`projects/…/locations/<loc>/tuningJobs/…`), so a job
+     * stays pollable even when `app.tuning.region` differs from the region it was submitted in
+     * (e.g. a later boot without TUNING_REGION set).
+     */
+    private fun hostFor(jobName: String): String {
+        val loc =
+            jobName.substringAfter("/locations/", "").substringBefore('/').ifBlank { region() }
+        return "https://$loc-aiplatform.googleapis.com/v1beta1"
+    }
+
     @Suppress("UNCHECKED_CAST")
     fun status(jobName: String): VertexJobInfo {
         val response =
             rest
                 .get()
-                .uri("${base()}/$jobName")
+                .uri("${hostFor(jobName)}/$jobName")
                 .header("Authorization", "Bearer ${token()}")
                 .retrieve()
                 .body(String::class.java) ?: error("empty status response")

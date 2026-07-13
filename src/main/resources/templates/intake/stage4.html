@@ -137,6 +137,16 @@
             <div class="row-actions" style="margin-top:0.8rem;">
                 <a class="btn btn--sm" th:href="@{/sft(subject=${subject.id})}">Review SFT queue &rarr;</a>
                 <a class="btn btn--ghost btn--sm" th:href="@{/dpo(subject=${subject.id})}">DPO pairs &rarr;</a>
+                <!-- The judge-trusting shortcut: approve the un-stale PASS rows in one click.
+                     Deliberately loud — it bypasses the per-example read the QA-4 gate assumes. -->
+                <form method="post" class="inline-form"
+                      th:if="${queueCounts != null && queueCounts['submitted'] > 0}"
+                      th:action="@{/intake/stage4/runs/{rid}/bulk-approve(rid=${run.id})}"
+                      th:with="passCount=${run.counters['judgedPass'] != null ? run.counters['judgedPass'] : 0}"
+                      th:attr="data-confirm=${'Approve every awaiting example whose latest judge verdict is PASS on unedited turns (about ' + passCount + ' of ' + queueCounts['submitted'] + ' awaiting)? WARNING: this bypasses the per-example human read the QA-4 gate assumes — you are trusting the judge for these conversations. BORDERLINE, FAIL, unjudged/edited and sent-back examples stay untouched for review.'}"
+                      data-confirm-title="Bulk approve judge-PASS?" data-confirm-ok="Bulk approve">
+                    <button type="submit" class="secondary">Bulk approve PASS</button>
+                </form>
                 <form method="post" class="inline-form"
                       th:action="@{/intake/stage4/runs/{rid}/export(rid=${run.id})}"
                       th:with="left=${queueCounts != null ? queueCounts['submitted'] + queueCounts['needsChanges'] : 0}"

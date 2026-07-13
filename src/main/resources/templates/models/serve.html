@@ -1,9 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
 <main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
     <div class="row-between">
         <h1>Serve <span th:text="${v.displayName}">model</span></h1>
         <a th:href="@{/models}" class="muted">&larr; back to models</a>
@@ -14,8 +16,61 @@
     <p>Checkpoint: <code class="copyable" title="Click to copy" th:text="${v.gcsCheckpointUri}">gs://…</code></p>
     <p th:if="${v.vertexModelResource}">Vertex model: <code class="copyable" title="Click to copy" th:text="${v.vertexModelResource}">…</code></p>
 
+    <!-- Managed serving control plane (VA-67). Deploy the tuned advocate onto the shared endpoint,
+         poll the cold deploy, then tear it down — a deployed replica bills until torn down. -->
+    <section class="panel" th:if="${servingEnabled}">
+        <div class="row-actions">
+            <h2 style="margin:0;">Managed serving</h2>
+            <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.servingState),'_','-')}"
+                  th:text="${v.servingState}">NONE</span>
+        </div>
+        <p class="muted" th:if="${!servingTarget.isEmpty()}">Endpoint <code th:text="${servingTarget}">id</code></p>
+        <p class="muted" th:if="${v.servingDeployedModelId != null}">Deployed model
+            <code class="copyable" th:text="${v.servingDeployedModelId}">id</code>
+            <span th:if="${v.servedAt != null}">· live since
+                <time class="js-ts" th:datetime="${v.servedAt}" th:text="${v.servedAt}">when</time></span></p>
+        <p class="error" th:if="${v.servingError != null}" th:text="${v.servingError}">err</p>
+
+        <div class="row-actions" sec:authorize="hasRole('REVIEWER')">
+            <!-- NONE/FAILED: offer Initiate serving. -->
+            <form method="post" th:if="${v.servingState.name() == 'NONE'}"
+                  th:action="@{'/models/' + ${v.id} + '/serving/start'}"
+                  data-confirm="Deploy this advocate to the V100 endpoint? Cold start is ~25–35 min and a live replica bills until you tear it down."
+                  data-confirm-title="Initiate serving?" data-confirm-ok="Initiate serving">
+                <button type="submit">Initiate serving</button>
+            </form>
+            <!-- DEPLOYING/TEARING_DOWN: poll to advance. -->
+            <form method="post" th:if="${v.servingState.name() == 'DEPLOYING' or v.servingState.name() == 'TEARING_DOWN'}"
+                  th:action="@{'/models/' + ${v.id} + '/serving/poll'}">
+                <button type="submit" class="secondary">Refresh status</button>
+            </form>
+            <!-- LIVE/FAILED: offer Tear down (the cost guard). -->
+            <form method="post" th:if="${v.servingState.name() == 'LIVE' or v.servingState.name() == 'FAILED'}"
+                  th:action="@{'/models/' + ${v.id} + '/serving/teardown'}"
+                  data-confirm="Tear down this deployment and stop billing the replica?"
+                  data-confirm-title="Tear down serving?" data-confirm-ok="Tear down">
+                <button type="submit" class="btn--danger">Tear down</button>
+            </form>
+            <!-- FAILED can also retry from clean. -->
+            <form method="post" th:if="${v.servingState.name() == 'FAILED'}"
+                  th:action="@{'/models/' + ${v.id} + '/serving/start'}">
+                <button type="submit" class="link">retry serve</button>
+            </form>
+        </div>
+        <p class="muted" th:if="${v.servingState.name() == 'DEPLOYING'}">
+            Cold deploy in progress (~25–35 min) — this page auto-refreshes.</p>
+    </section>
+
+    <!-- Auto-poll while a serve is in flight (the stage3/stage4 poll idiom, kept trivial here). -->
+    <script th:if="${servingEnabled and (v.servingState.name() == 'DEPLOYING' or v.servingState.name() == 'TEARING_DOWN')}">
+        setTimeout(function () {
+            var f = document.querySelector('form[action$="/serving/poll"]');
+            if (f) { f.dataset.confirmed = "1"; f.requestSubmit ? f.requestSubmit() : f.submit(); }
+        }, 20000);
+    </script>
+
     <h2>Off-GCP serving handoff</h2>
-    <p class="muted">No persistent serving on GCP — rent a GPU, serve with vLLM, tear it down.</p>
+    <p class="muted">Or serve elsewhere — rent a GPU, serve with vLLM, tear it down.</p>
     <pre class="preview" th:text="${serveCommand}"># …</pre>
 </main>
 </body>

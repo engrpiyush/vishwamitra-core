@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.BaseKind
 import ai.vishwakarma.labelling.domain.ModelVersion
 import ai.vishwakarma.labelling.domain.Promotion
+import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.TuningMethod
 import ai.vishwakarma.labelling.domain.VersionStatus
 import com.google.cloud.firestore.DocumentSnapshot
@@ -46,6 +47,13 @@ class ModelVersionRepository(private val db: Firestore) {
             "displayName" to displayName,
             "createdBy" to createdBy,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
+            "servingState" to servingState.name,
+            "servingModelResource" to servingModelResource,
+            "servingEndpointId" to servingEndpointId,
+            "servingDeployedModelId" to servingDeployedModelId,
+            "servingOperation" to servingOperation,
+            "servedAt" to servedAt?.toTimestamp(),
+            "servingError" to servingError,
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -75,6 +83,15 @@ class ModelVersionRepository(private val db: Firestore) {
             displayName = getString("displayName") ?: "",
             createdBy = getString("createdBy"),
             createdAt = instant("createdAt"),
+            servingState =
+                runCatching { ServingState.valueOf(getString("servingState") ?: "NONE") }
+                    .getOrDefault(ServingState.NONE),
+            servingModelResource = getString("servingModelResource"),
+            servingEndpointId = getString("servingEndpointId"),
+            servingDeployedModelId = getString("servingDeployedModelId"),
+            servingOperation = getString("servingOperation"),
+            servedAt = instant("servedAt"),
+            servingError = getString("servingError"),
         )
 
     companion object {

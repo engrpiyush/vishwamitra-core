@@ -65,6 +65,21 @@ app:
   # Tuning recipe defaults (see continue-tune.sh): foundation omits customBaseModel.
   tuning:
     base-model: ${TUNING_BASE_MODEL:qwen/qwen3@qwen3-32b}
+    # tuningJobs location; blank = app.gcp.region. The 2B-class Qwen catalog entries live only
+    # in us-central1 — set TUNING_REGION=us-central1 to tune them (dataset/output gs:// URIs
+    # stay on the home-region buckets; GCS access is IAM-, not region-gated).
+    region: ${TUNING_REGION:}
+  # Serving control plane (VA-67): deploy a tuned advocate onto the shared Vertex endpoint and tear
+  # it down. Backend-agnostic (Vertex now; AWS later). Defaults are the VA-74-probed V100 pins;
+  # endpoint-id + image are required in prod to actually deploy (empty ⇒ serve returns a clear
+  # error). A deployed replica bills until torn down — teardown is the cost guard.
+  serving:
+    enabled: ${SERVING_ENABLED:false}
+    dry-run: ${SERVING_DRYRUN:false}
+    backend: ${SERVING_BACKEND:vertex}
+    region: ${SERVING_REGION:us-central1}
+    endpoint-id: ${SERVING_ENDPOINT_ID:}
+    image: ${SERVING_IMAGE:}
   # Stage 2 (A/V → Claims): managed transcription + Claude claim extraction.
   stage2:
     # STT batchRecognize writes diarized transcripts here (separate lifecycle from intake media).
@@ -125,6 +140,9 @@ app:
   tuning:
     enabled: true     # allowed locally, but…
     dry-run: true     # …simulated — never calls Vertex / spends credits in dev
+  serving:
+    enabled: true     # serving controls visible locally, but…
+    dry-run: true     # …simulated deploy/teardown — never calls Vertex / bills a replica in dev
   stage2:
     transcripts-bucket: ""   # no GCP locally
     dry-run: true            # canned diarized transcript — never calls Speech-to-Text in dev
@@ -159,6 +177,9 @@ app:
     dev-bypass: false
   tuning:
     enabled: true   # real Vertex tuningJobs are submitted in prod
+  serving:
+    enabled: ${SERVING_ENABLED:true}  # real endpoint deploy/undeploy; needs endpoint-id + image
+    dry-run: ${SERVING_DRYRUN:false}
   stage2:
     dry-run: false  # real Speech-to-Text batchRecognize in prod
   stage3:

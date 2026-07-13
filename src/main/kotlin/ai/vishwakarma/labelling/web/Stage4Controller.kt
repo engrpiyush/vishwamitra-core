@@ -191,6 +191,29 @@ class Stage4Controller(
         }
 
     /**
+     * The judge-trusting shortcut through the QA-4 queue: approve every SUBMITTED current-stamp
+     * example whose latest judgment on unedited turns is PASS. The confirm popup carries the
+     * warning; the flash message itemizes what was approved and what was left for a human.
+     */
+    @PostMapping("/stage4/runs/{runId}/bulk-approve")
+    fun bulkApprove(@PathVariable runId: String, ra: RedirectAttributes): String =
+        runAction(runId, ra) {
+            stage4
+                .bulkApprove(runId, actor())
+                .fold(
+                    { ra.addFlashAttribute("error", it.message) },
+                    { o ->
+                        ra.addFlashAttribute(
+                            "ok",
+                            "Bulk-approved ${o.approved} judge-PASS example(s) — left for review: " +
+                                "${o.notPass} borderline/fail, ${o.unjudged} unjudged or edited, " +
+                                "${o.sentBack} sent-back",
+                        )
+                    },
+                )
+        }
+
+    /**
      * The QA-4 gate's other side: export the parked run's APPROVED current-stamp examples and
      * complete it (REVIEW_WAIT → DONE). Validator failures come back verbatim with exampleId
      * pointers — nothing was written.

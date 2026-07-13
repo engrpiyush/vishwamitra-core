@@ -34,6 +34,7 @@ class BaseModelRepository(private val db: Firestore) {
             "displayName" to displayName,
             "family" to family,
             "active" to active,
+            "tunable" to tunable,
             "updatedBy" to updatedBy,
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
         )
@@ -45,6 +46,9 @@ class BaseModelRepository(private val db: Firestore) {
             displayName = getString("displayName") ?: "",
             family = getString("family") ?: "",
             active = getBoolean("active") ?: true,
+            // Legacy rows (pre-tunable) default true so nothing silently disappears from the
+            // picker.
+            tunable = getBoolean("tunable") ?: true,
             updatedBy = getString("updatedBy"),
             updatedAt = instant("updatedAt"),
         )

@@ -13,6 +13,7 @@ data class AppProperties(
     val hostedDomain: String = "vishwakarma.ai",
     val gcp: Gcp = Gcp(),
     val tuning: Tuning = Tuning(),
+    val serving: Serving = Serving(),
     val auth: Auth = Auth(),
     val comingSoon: ComingSoon = ComingSoon(),
     val intake: Intake = Intake(),
@@ -71,6 +72,45 @@ data class AppProperties(
         val dryRun: Boolean = false,
         /** Per-example token cap (Gemma 3 27B / Qwen 3 32B). Import validation warns past this. */
         val maxTokensPerExample: Int = 8192,
+        /**
+         * Vertex location for `tuningJobs`, decoupled from [Gcp.region] because the managed-OSS
+         * catalog is regional: the 2B-class Qwen entries (qwen3-1.7b / qwen3-0.6b / qwen3.5-2b)
+         * resolve only in us-central1 (verified 2026-07-13), while the home region carries 4B+.
+         * Blank → [Gcp.region] (the VA-59-verified asia-southeast1 posture, byte-for-byte).
+         */
+        val region: String = "",
+    )
+
+    /**
+     * Serving control plane (VA-67 / advocate serving): deploy a tuned model version to a Vertex
+     * endpoint and tear it down, behind the pluggable `serving.ServingBackend` seam (Vertex now;
+     * AWS later). Defaults are the VA-74-probed V100 pins. All fields override via env; the
+     * endpoint bills only while a model is deployed.
+     */
+    data class Serving(
+        /** Kill-switch: the serve/teardown controls are only offered when true. */
+        val enabled: Boolean = false,
+        /** Dev/test: simulate deploy/teardown (instant LIVE/NONE) instead of calling Vertex. */
+        val dryRun: Boolean = false,
+        /** Backend id — `vertex` (only impl today) or a future `aws`. */
+        val backend: String = "vertex",
+        /** Endpoint region (V100 custom-serving quota is us-central1/us-west1/europe-west4). */
+        val region: String = "us-central1",
+        /** The shared Vertex endpoint id models deploy onto (VA-74 probe: 328332313995771904). */
+        val endpointId: String = "",
+        /** vLLM-on-Volta serving image (VA-74 pin; v0.20+ dropped SM70). */
+        val image: String = "",
+        val machineType: String = "n1-standard-8",
+        val acceleratorType: String = "NVIDIA_TESLA_V100",
+        val acceleratorCount: Int = 1,
+        /** Container args — the VA-74 float16/Volta pins. */
+        val servedModelArgs: List<String> =
+            listOf(
+                "--served-model-name=advocate",
+                "--dtype=float16",
+                "--max-model-len=8192",
+                "--gpu-memory-utilization=0.90",
+            ),
     )
 
     data class Auth(

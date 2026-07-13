@@ -28,6 +28,9 @@
                 </td>
                 <td class="actions">
                     <a th:href="@{'/models/' + ${v.id} + '/serve'}" th:if="${v.status.name() == 'READY'}">serve</a>
+                    <span th:if="${servingEnabled and v.servingState.name() != 'NONE'}"
+                          class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.servingState),'_','-')}"
+                          th:text="${v.servingState}">LIVE</span>
                     <a th:href="@{/training(parent=${v.id})}" th:if="${v.status.name() == 'READY'}">new tune</a>
                     <form sec:authorize="hasRole('REVIEWER')" method="post" th:action="@{'/models/' + ${v.id} + '/promote'}"
                           th:if="${v.status.name() == 'READY' and v.promotion.name() != 'CURRENT'}">
