@@ -285,6 +285,27 @@ class Stage4VoicingPlannerTest {
         assertTrue(audience.constraints.any { it.contains("voice") && it.contains("stay") })
     }
 
+    @Test
+    fun `QD-3 and QD-5 probe classes — comparative, proprietary and identity voices`() {
+        fun q(kind: QuestionClass) =
+            planner.plan(PlanUnit.QuestionUnit(kind, "probe question"), persona, personaHash)
+
+        val comparative = q(QuestionClass.COMPARATIVE)
+        val proprietary = q(QuestionClass.PROPRIETARY)
+        val identity = q(QuestionClass.IDENTITY)
+
+        assertEquals(12, comparative.rowId)
+        assertEquals(Stage4Category.NEGATIVE, comparative.category)
+        assertTrue(comparative.constraints.any { it.contains("Never rank against") })
+        assertEquals(13, proprietary.rowId)
+        assertEquals(Stage4Category.NEGATIVE, proprietary.category)
+        assertTrue(proprietary.constraints.any { it.contains("system internals") })
+        assertTrue(proprietary.constraints.any { it.contains("never impersonate") })
+        assertEquals(14, identity.rowId)
+        assertEquals(Stage4Category.META, identity.category)
+        assertTrue(identity.constraints.any { it.contains("fixed card") })
+    }
+
     // ---- the implicit floor ---------------------------------------------------------------
 
     @Test

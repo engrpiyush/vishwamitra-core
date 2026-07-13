@@ -9,6 +9,8 @@ import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.splitLabels
+import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
+import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.AssetPatch
 import ai.vishwakarma.labelling.service.DomainError
@@ -40,6 +42,8 @@ class IntakeController(
     private val subjectService: SubjectService,
     private val intake: IntakeService,
     private val stage2: Stage2Service,
+    private val subjectScores: SubjectScoreRepository,
+    private val personas: SubjectPersonaRepository,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -110,6 +114,9 @@ class IntakeController(
             "modalities",
             AssetModality.entries.filter { it != AssetModality.LINK },
         )
+        // Stage 4 hub links (VA-63/64 entry points): visible once the subject is published.
+        model.addAttribute("stage4Ready", subjectScores.find(id) != null)
+        model.addAttribute("personaStored", personas.findBySubject(id) != null)
         return "intake/detail"
     }
 

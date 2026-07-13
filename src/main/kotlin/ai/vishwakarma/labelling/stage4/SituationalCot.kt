@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.stage4
 
+import ai.vishwakarma.labelling.persistence.SubjectFactRecord
+
 /**
  * Stage 4 situational-CoT machinery (LLD §10, QA-2): the allowed question-template families, the
  * banned-class taxonomy, and the deterministic hedging computer. Shared by PLAN (question
@@ -10,10 +12,17 @@ package ai.vishwakarma.labelling.stage4
  * reasoning is the answer, citing evidence in-line — no `<think>` blocks in v1).
  */
 
-/** The five allowed §10.2 families — each is a question-template family in PLAN. */
+/**
+ * The allowed §10.2 families — each is a question-template family in PLAN. Templates are
+ * recruiter-grade by design (QD-3, 2026-07-13): placeholders are {{subject}} (display name),
+ * {{fact}} (the anchor's evidence hook), {{adjacent}} (a *different* evidenced fact PLAN pairs in
+ * deterministically — the QD-1 hybrid scenario source; templates using it are skipped when the
+ * subject has only one fact), {{scenario}} (the family's canned fallback fill) and
+ * {{styleA}}/{{styleB}} (work-style contrasts). Every family keeps at least one {{adjacent}}-free
+ * template so single-fact subjects always plan.
+ */
 enum class SituationalFamily(
     val id: String,
-    /** Seed templates PLAN instantiates ({{subject}} = display name, {{fact}} = evidence hook). */
     val templates: List<String>,
 ) {
     CAPABILITY_TRANSFER(
@@ -21,6 +30,18 @@ enum class SituationalFamily(
         listOf(
             "Could {{subject}} handle {{scenario}} given what the evidence shows about {{fact}}?",
             "How would {{subject}}'s experience with {{fact}} carry over to {{scenario}}?",
+            "The role anchors on {{fact}} today but may evolve toward {{adjacent}} — could " +
+                "{{subject}} handle that shift?",
+            "We need someone who can move between {{fact}} and {{adjacent}} — what does the " +
+                "record say about {{subject}} making that jump?",
+            "If we dropped {{subject}} into unfamiliar territory right next to {{fact}}, what " +
+                "does the evidence suggest happens?",
+            "Our environment differs from what sits behind {{fact}} — how transferable is " +
+                "{{subject}}'s experience, really?",
+            "Suppose the work behind {{fact}} had to happen at twice the scale — is there " +
+                "evidence {{subject}} could stretch to it?",
+            "What from the record around {{fact}} would carry over to {{adjacent}}, and what " +
+                "wouldn't?",
         ),
     ),
     BEHAVIOR_PREDICTION(
@@ -28,6 +49,18 @@ enum class SituationalFamily(
         listOf(
             "How would {{subject}} likely respond to {{scenario}} at work?",
             "What would you expect {{subject}} to do if {{scenario}}?",
+            "Deadlines slip and priorities flip mid-stream — how does someone with a record " +
+                "like {{fact}} typically react?",
+            "If a senior stakeholder publicly challenged the work behind {{fact}}, how would " +
+                "{{subject}} likely handle it?",
+            "Two urgent workstreams collide — one like {{fact}}, the other like {{adjacent}}. " +
+                "Which does {{subject}} likely put first, and how?",
+            "When something like {{fact}} goes wrong at the worst possible moment, what does " +
+                "the evidence suggest about how {{subject}} responds?",
+            "How would {{subject}} likely settle into a team that does things very differently " +
+                "from {{fact}}?",
+            "A teammate keeps blocking progress on work like {{fact}} — what is {{subject}}'s " +
+                "likely move?",
         ),
     ),
     WORK_STYLE(
@@ -35,6 +68,15 @@ enum class SituationalFamily(
         listOf(
             "What does the evidence suggest about how {{subject}} prefers to work?",
             "Is {{subject}} more of a {{styleA}} or a {{styleB}} type, based on the record?",
+            "Reading between the lines of {{fact}}, how does {{subject}} operate day to day?",
+            "Does the record around {{fact}} point to someone who works best solo or embedded " +
+                "in a team?",
+            "How hands-on would {{subject}} likely stay if the work drifted from {{fact}} " +
+                "toward {{adjacent}}?",
+            "What kind of manager would get the best out of {{subject}}, judging by {{fact}}?",
+            "We run remote-first and async-heavy — does anything around {{fact}} say how " +
+                "{{subject}} would fit that?",
+            "How does {{subject}} seem to take feedback, going by the evidence around {{fact}}?",
         ),
     ),
     TENURE_COMMITMENT(
@@ -42,6 +84,18 @@ enum class SituationalFamily(
         listOf(
             "How likely is {{subject}} to stay and grow in a role like {{scenario}}?",
             "What does {{subject}}'s history suggest about commitment to long-term work?",
+            "The work behind {{fact}} takes years to pay off — does the record show {{subject}} " +
+                "staying for that kind of arc?",
+            "If a competitor dangled a shinier title six months in, what does the evidence " +
+                "around {{fact}} suggest {{subject}} does?",
+            "We've been burned by short stints — what in the record speaks to {{subject}}'s " +
+                "staying power?",
+            "Does the movement from {{fact}} toward {{adjacent}} read like commitment or like " +
+                "restlessness to you?",
+            "What would keep {{subject}} engaged in year two, once the novelty of {{fact}}-type " +
+                "work wears off?",
+            "How does {{subject}} handle the unglamorous maintenance phase after something like " +
+                "{{fact}} ships?",
         ),
     ),
     GROWTH_TRAJECTORY(
@@ -49,6 +103,45 @@ enum class SituationalFamily(
         listOf(
             "Where could {{subject}} plausibly be in a few years, given {{fact}}?",
             "What growth does the evidence support expecting from {{subject}}?",
+            "Is there a path from {{fact}} toward {{adjacent}} that the record actually " +
+                "supports?",
+            "If we invested in {{subject}} for a senior version of the work behind {{fact}}, " +
+                "what does the evidence say about the return?",
+            "What's the realistic ceiling for {{subject}} in the territory around {{fact}} — " +
+                "and what caps it?",
+            "Which is more likely for {{subject}}: going deeper on {{fact}} or branching into " +
+                "{{adjacent}}? Why?",
+            "What would {{subject}} need to close the gap between {{fact}} and leading that " +
+                "kind of work?",
+            "Does the record show {{subject}} seeking harder problems after {{fact}}, or " +
+                "settling in?",
+        ),
+    ),
+    /**
+     * QD-3 (2026-07-13): subject-vs-role-spec weighing with honest partial-match handling — the
+     * recruiter's bread-and-butter screen. Answers ride rows 9/10 like every family: grounded
+     * derivation when the floors hold, honest gap when they don't; F2 keeps the shortfall side
+     * candid.
+     */
+    ROLE_FIT_TRADEOFF(
+        "role-fit-tradeoff",
+        listOf(
+            "The role needs {{adjacent}} from day one; the record anchors on {{fact}} — " +
+                "where's the gap, and what compensates?",
+            "Be straight with me: measured against a role built around {{adjacent}}, where " +
+                "does {{subject}} fall short?",
+            "We're hiring for {{scenario}} — weigh {{subject}}'s record on {{fact}} against " +
+                "that, honestly.",
+            "If {{fact}} is the strongest card in this record, what's the weakest for a role " +
+                "that also demands {{adjacent}}?",
+            "Which requirement would {{subject}} struggle with most if the job pairs " +
+                "{{fact}}-type work with {{adjacent}}?",
+            "Sell me the fit for a role centred on {{fact}} — but include what I should worry " +
+                "about.",
+            "Trade-off question: stronger on {{fact}}, thinner on {{adjacent}} — how does that " +
+                "balance play out in practice?",
+            "What would you flag to a hiring committee comparing this record against a spec " +
+                "that leans on {{adjacent}}?",
         ),
     );
 
@@ -205,6 +298,44 @@ object SituationalTaxonomy {
             }
             from = at + 1
         }
+    }
+}
+
+/**
+ * Maps one published `subject_facts` doc onto the §10.3 hedging computer's input; null = no member
+ * claim is in the eligible set. Shared by PLAN (chain assembly) and JUDGE (the speculation-
+ * grounding axis re-derives the same verdict from the same mapping — that symmetry is the spec).
+ */
+object SituationalEvidence {
+
+    // Published-ledger vocabularies (Stage 3 projection / publish tick literals).
+    private const val ATTESTOR_SUBJECT = "SUBJECT"
+    private const val RELATION_CONTRADICTS = "CONTRADICTS"
+    private const val EDGE_DISMISSED = "DISMISSED"
+
+    fun supportingFactOf(
+        fact: SubjectFactRecord,
+        byId: Map<String, EvidencedClaim>,
+    ): SupportingFact? {
+        val claimIds = fact.memberClaimIds.filter { it in byId }
+        if (claimIds.isEmpty()) return null
+        return SupportingFact(
+            factId = fact.factId,
+            claimIds = claimIds,
+            belief = fact.belief ?: 0.0,
+            anchored = fact.anchored,
+            independent =
+                claimIds.any { id ->
+                    val kind = byId.getValue(id).claim.attestor?.kind
+                    kind != null && kind != ATTESTOR_SUBJECT
+                },
+            unexplainedConflict =
+                fact.edges.any {
+                    it.relation == RELATION_CONTRADICTS &&
+                        !it.explained &&
+                        it.reviewStatus != EDGE_DISMISSED
+                },
+        )
     }
 }
 

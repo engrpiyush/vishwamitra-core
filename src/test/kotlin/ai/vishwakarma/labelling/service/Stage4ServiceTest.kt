@@ -7,14 +7,18 @@ import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.ExampleStatus
+import ai.vishwakarma.labelling.domain.ExportRecord
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.IntakeManifest
+import ai.vishwakarma.labelling.domain.JudgeAxis
+import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.domain.PersonaDefaults
 import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.SftExample
 import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.domain.Stage4Counters
+import ai.vishwakarma.labelling.domain.Stage4Judgment
 import ai.vishwakarma.labelling.domain.Stage4Plan
 import ai.vishwakarma.labelling.domain.Stage4Run
 import ai.vishwakarma.labelling.domain.Stage4RunStatus
@@ -23,14 +27,17 @@ import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectPersona
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
+import ai.vishwakarma.labelling.gcs.Exporter
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.DpoPairRepository
+import ai.vishwakarma.labelling.persistence.ExportRepository
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SftExampleRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
+import ai.vishwakarma.labelling.persistence.Stage4JudgmentRepository
 import ai.vishwakarma.labelling.persistence.Stage4PlanRepository
 import ai.vishwakarma.labelling.persistence.Stage4RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectFactRecord
@@ -39,8 +46,19 @@ import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
+import ai.vishwakarma.labelling.serialization.ContentsPartsSerializer
+import ai.vishwakarma.labelling.serialization.DatasetLineValidator
+import ai.vishwakarma.labelling.serialization.DpoSerializer
+import ai.vishwakarma.labelling.serialization.DpoValidator
+import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.serialization.SftValidator
+import ai.vishwakarma.labelling.serialization.ToolCallMapper
+import ai.vishwakarma.labelling.stage4.AxisVote
+import ai.vishwakarma.labelling.stage4.HedgePhrase
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
+import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
+import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
@@ -205,9 +223,88 @@ private class FakeS4DpoRepo : DpoPairRepository(mock(Firestore::class.java)) {
     }
 }
 
+private class FakeS4JudgmentRepo : Stage4JudgmentRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, Stage4Judgment>()
+    private var seq = 0
+
+    override fun newId(): String = "judgment-${++seq}"
+
+    override fun findById(id: String): Stage4Judgment? = store[id]
+
+    override fun findByExample(exampleId: String): List<Stage4Judgment> =
+        store.values.filter { it.exampleId == exampleId }.sortedByDescending { it.createdAt }
+
+    override fun findBySubject(subjectId: String): List<Stage4Judgment> =
+        store.values.filter { it.subjectId == subjectId }.sortedByDescending { it.createdAt }
+
+    override fun save(judgment: Stage4Judgment) {
+        store[judgment.id] = judgment
+    }
+}
+
+/**
+ * Recording judge double: every judged plan lands in [requests] (once, on the first ensemble
+ * sample); verdicts are scripted per planId via [script] (unscripted plans vote all-PASS; a
+ * non-PASS script votes on FAITHFULNESS). [stamp] is mutable so tests can bump the rubric.
+ */
+private class FakeS4Judge : Stage4JudgeSampler {
+    val requests = mutableListOf<Stage4JudgeRequest>()
+    val script = mutableMapOf<String, JudgeVerdict>()
+    var stamp = "fake-judge:1"
+
+    override val versionStamp: String
+        get() = stamp
+
+    override val promptVersion: Int = 1
+
+    override val modelId: String = "fake-judge"
+
+    override fun sample(request: Stage4JudgeRequest, sampleIndex: Int): Map<JudgeAxis, AxisVote> {
+        if (sampleIndex == 0) requests += request
+        val overall = script[request.plan.planId] ?: JudgeVerdict.PASS
+        return JudgeAxis.entries.associateWith { axis ->
+            if (axis == JudgeAxis.FAITHFULNESS && overall != JudgeVerdict.PASS) {
+                AxisVote(overall, "scripted $overall")
+            } else {
+                AxisVote(JudgeVerdict.PASS, "scripted PASS")
+            }
+        }
+    }
+}
+
+private class FakeS4ExportRepo : ExportRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, ExportRecord>()
+    private var seq = 0
+
+    override fun newId(): String = "export-${++seq}"
+
+    override fun findById(id: String): ExportRecord? = store[id]
+
+    override fun findAll(): List<ExportRecord> = store.values.toList()
+
+    override fun save(record: ExportRecord) {
+        store[record.id] = record
+    }
+
+    override fun delete(id: String) {
+        store.remove(id)
+    }
+}
+
+/** Captures export blobs in memory — [written] keyed by object path. */
+private class FakeS4Exporter : Exporter(AppProperties()) {
+    val written = linkedMapOf<String, String>()
+
+    override fun write(objectPath: String, content: String): String {
+        written[objectPath] = content
+        return "gs://test-bucket/$objectPath"
+    }
+}
+
 /**
  * [Stage4Service]: the VA-53 chassis (submit/poll/retry, reclaim, paramsSnapshot), the VA-54 SELECT
- * guards + eligible set + QA-6 drift sweep, and the VA-55 PLAN tick end-to-end.
+ * guards + eligible set + QA-6 drift sweep, the VA-55 PLAN tick, the VA-56 GENERATE cache, the
+ * VA-57 JUDGE loop (cursor, routing, counters) and the VA-58 export path end-to-end.
  */
 class Stage4ServiceTest {
 
@@ -223,6 +320,10 @@ class Stage4ServiceTest {
     private val dpos = FakeS4DpoRepo()
     private val promptRepo = FakeS4PromptRepo()
     private val drafter = FakeS4Drafter()
+    private val judge = FakeS4Judge()
+    private val judgments = FakeS4JudgmentRepo()
+    private val exportRepo = FakeS4ExportRepo()
+    private val exporter = FakeS4Exporter()
 
     /** The hash SELECT freezes for a subject with nothing stored (defaults-only persona). */
     private val defaultPersonaHash =
@@ -235,6 +336,22 @@ class Stage4ServiceTest {
 
     private fun service(props: AppProperties = AppProperties()): Stage4Service {
         val promptService = ExtractionPromptService(promptRepo)
+        val toolCallMapper = ToolCallMapper()
+        val sftSerializer = ContentsPartsSerializer(toolCallMapper)
+        val dpoSerializer = DpoSerializer(toolCallMapper)
+        val sftService = SftService(sfts, SftValidator(), sftSerializer)
+        val exportService =
+            ExportService(
+                sft = sftService,
+                dpo = DpoService(dpos, DpoValidator(), dpoSerializer, sftService),
+                sftExamples = sfts,
+                sftSerializer = sftSerializer,
+                dpoSerializer = dpoSerializer,
+                sftValidator = SftValidator(),
+                lineValidator = DatasetLineValidator(props),
+                exporter = exporter,
+                exports = exportRepo,
+            )
         return Stage4Service(
             runs = runs,
             subjects = subjects,
@@ -248,6 +365,9 @@ class Stage4ServiceTest {
                 PersonaService(props, personas, subjects, FakeS4NameRepo(), promptService),
             prompts = promptService,
             drafter = drafter,
+            judge = judge,
+            judgments = judgments,
+            exportService = exportService,
             plans = plans,
             sftExamples = sfts,
             dpoPairs = dpos,
@@ -325,7 +445,9 @@ class Stage4ServiceTest {
         svc: Stage4Service,
         runId: String,
         target: Stage4RunStatus,
-        maxPolls: Int = 10,
+        // The QD-5 probe banks put ~40 plans behind the default seed at batch 8 — a full walk
+        // to REVIEW_WAIT is ~16 ticks; 40 keeps headroom without masking a stuck phase.
+        maxPolls: Int = 40,
     ): Stage4Run {
         var run = svc.run(runId)!!
         var polls = 0
@@ -374,7 +496,9 @@ class Stage4ServiceTest {
         val afterGenerate = pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
         val generated = assertNotNull(afterGenerate.counters[Stage4Counters.GENERATED])
         assertTrue(generated > 0)
-        assertEquals(Stage4RunStatus.REVIEW_WAIT, svc.poll(run.id).expectRight().status)
+        // JUDGE ticks in bounded batches, then parks the run at the QA-4 gate (VA-57).
+        val parked = pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+        assertEquals(generated, parked.counters[Stage4Counters.JUDGED_PASS])
         // The QA-4 park: further polls are no-ops.
         assertEquals(Stage4RunStatus.REVIEW_WAIT, svc.poll(run.id).expectRight().status)
     }
@@ -469,7 +593,21 @@ class Stage4ServiceTest {
 
         pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
         assertTrue(plans.store.isNotEmpty())
-        assertTrue(plans.store.values.all { it.plan.category == Stage4Category.QA })
+        // The zeroed situational/multi-claim dials plan nothing there; the QD-5 probe banks
+        // (NEGATIVE/META) ride along regardless of the mix.
+        val factDriven =
+            plans.store.values.filter {
+                it.plan.category in
+                    setOf(
+                        Stage4Category.QA,
+                        Stage4Category.SITUATIONAL,
+                        Stage4Category.MULTI_CLAIM,
+                    )
+            }
+        assertTrue(factDriven.isNotEmpty())
+        assertTrue(factDriven.all { it.plan.category == Stage4Category.QA })
+        assertTrue(plans.store.values.any { it.plan.category == Stage4Category.NEGATIVE })
+        assertTrue(plans.store.values.any { it.plan.category == Stage4Category.META })
     }
 
     @Test
@@ -849,5 +987,286 @@ class Stage4ServiceTest {
         ineligible.forEach { p ->
             assertNull(live[p.plan.planId], "row-5 plan ${p.plan.planId} must not generate")
         }
+    }
+
+    // ---- VA-57: JUDGE — bounded ensemble batches, verdict routing, the judge-once cursor ----
+
+    @Test
+    fun `JUDGE judges every generated example in bounded batches and lands the verdicts`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+
+        // First tick: bounded work (default judge-batch-per-poll = 8).
+        svc.poll(run.id).expectRight()
+        assertTrue(judgments.store.size <= 8, "first judge tick wrote ${judgments.store.size}")
+
+        val parked = pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        val live = liveByPlan().values
+        assertTrue(live.isNotEmpty())
+        // One judgment doc and one recorded ensemble per example; verdicts land on the example
+        // and PASS routes it into the human queue (QA-4: SUBMITTED, 100% review).
+        assertEquals(live.size, judgments.store.size)
+        assertEquals(live.size, judge.requests.size)
+        live.forEach {
+            assertEquals(JudgeVerdict.PASS, it.judgeVerdict)
+            assertEquals(ExampleStatus.SUBMITTED, it.status)
+        }
+        assertEquals(live.size.toLong(), parked.counters[Stage4Counters.JUDGED_PASS])
+        assertEquals(0L, parked.counters[Stage4Counters.JUDGED_BORDERLINE])
+        assertEquals(0L, parked.counters[Stage4Counters.JUDGED_FAIL])
+        // The distillation payload: four axes with votes, rubric provenance, turns hash, model.
+        val doc = judgments.store.values.first()
+        assertEquals(4, doc.axes.size)
+        assertTrue(doc.axes.values.all { it.votes.isNotEmpty() })
+        assertEquals("fake-judge:1", doc.judgePromptHash)
+        assertEquals(1, doc.judgePromptVersion)
+        assertNotNull(doc.turnsHash)
+        assertEquals("fake-judge", doc.model)
+        assertEquals(run.id, doc.runId)
+    }
+
+    @Test
+    fun `FAIL routes to NEEDS_CHANGES with rationale, BORDERLINE queues, counters split`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
+        val eligible = plans.store.values.filter { it.plan.sftEligible }.sortedBy { it.plan.planId }
+        judge.script[eligible[0].plan.planId] = JudgeVerdict.FAIL
+        judge.script[eligible[1].plan.planId] = JudgeVerdict.BORDERLINE
+
+        val parked = pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        val failed = assertNotNull(liveByPlan()[eligible[0].plan.planId])
+        assertEquals(ExampleStatus.NEEDS_CHANGES, failed.status)
+        assertEquals(JudgeVerdict.FAIL, failed.judgeVerdict)
+        val comment = failed.reviewComments.last()
+        assertEquals("stage4-judge", comment.by)
+        assertTrue(comment.text.contains("faithfulness"))
+        assertTrue(comment.text.contains("scripted FAIL"))
+
+        val borderline = assertNotNull(liveByPlan()[eligible[1].plan.planId])
+        assertEquals(ExampleStatus.SUBMITTED, borderline.status)
+        assertEquals(JudgeVerdict.BORDERLINE, borderline.judgeVerdict)
+
+        assertEquals(1L, parked.counters[Stage4Counters.JUDGED_FAIL])
+        assertEquals(1L, parked.counters[Stage4Counters.JUDGED_BORDERLINE])
+        assertEquals(
+            (liveByPlan().size - 2).toLong(),
+            parked.counters[Stage4Counters.JUDGED_PASS],
+        )
+    }
+
+    @Test
+    fun `judge-once cursor - unchanged never re-judges, an edit re-judges, a rubric bump re-judges all`() {
+        seedPublished()
+        val svc = service()
+        val first = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, first.id, Stage4RunStatus.REVIEW_WAIT)
+        val calls = judge.requests.size
+        val docs = judgments.store.size
+
+        // Unchanged re-run: the verdict cache serves everything — zero samples, counters land.
+        val second = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        val parked = pollUntil(svc, second.id, Stage4RunStatus.REVIEW_WAIT)
+        assertEquals(calls, judge.requests.size)
+        assertEquals(docs, judgments.store.size)
+        assertEquals(docs.toLong(), parked.counters[Stage4Counters.JUDGED_PASS])
+
+        // An edited conversation misses at its new turnsHash: exactly it re-judges, and the new
+        // pass lands a NEW judgment doc (§11 feedback loop — the append-only distillation set).
+        val edited = sfts.store.values.first { it.status == ExampleStatus.SUBMITTED }
+        sfts.store[edited.id] =
+            edited.copy(
+                turns =
+                    listOf(
+                        edited.turns.first(),
+                        Turn(role = TurnRole.MODEL, text = "hand-edited reply"),
+                    )
+            )
+        val third = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, third.id, Stage4RunStatus.REVIEW_WAIT)
+        assertEquals(calls + 1, judge.requests.size)
+        assertEquals(docs + 1, judgments.store.size)
+        assertEquals(2, judgments.store.values.count { it.exampleId == edited.id })
+
+        // A judge rubric bump changes the stamp: everything re-judges cleanly.
+        val live = liveByPlan().size
+        judge.stamp = "fake-judge:2"
+        val fourth = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, fourth.id, Stage4RunStatus.REVIEW_WAIT)
+        assertEquals(calls + 1 + live, judge.requests.size)
+        assertTrue(judgments.store.values.count { it.judgePromptHash == "fake-judge:2" } == live)
+    }
+
+    @Test
+    fun `judge disabled at submit (QD-6) - examples submit unjudged and the run parks`() {
+        seedPublished()
+        val svc = service(AppProperties(stage4 = AppProperties.Stage4(judgeEnabled = false)))
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        val parked = pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        assertTrue(parked.paramsSnapshot!!.contains("\"judgeEnabled\":false"))
+        val stamped = sfts.store.values.filter { it.stamp != null }
+        assertTrue(stamped.isNotEmpty())
+        assertTrue(stamped.all { it.status == ExampleStatus.SUBMITTED })
+        assertTrue(stamped.all { it.judgeVerdict == null }, "no verdicts land with the judge off")
+        assertTrue(judge.requests.isEmpty(), "no judge samples are drawn")
+        assertTrue(judgments.store.isEmpty(), "the distillation set does not accrue")
+        assertTrue(Stage4Counters.JUDGED_PASS !in parked.counters)
+    }
+
+    @Test
+    fun `situational judging re-derives the hedging ground truth, other categories carry none`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        val situational = judge.requests.filter { it.plan.category == Stage4Category.SITUATIONAL }
+        assertTrue(situational.isNotEmpty())
+        // The seeded chain (one anchored fact, belief 0.9) re-derives floors-met "very likely" —
+        // the same verdict PLAN froze into the row-9 constraints (the VA-57 symmetry).
+        situational.forEach {
+            val hedge = assertNotNull(it.expectedHedge, "situational request without ground truth")
+            assertTrue(hedge.floorsMet)
+            assertEquals(HedgePhrase.VERY_LIKELY, hedge.phrase)
+        }
+        judge.requests
+            .filter { it.plan.category != Stage4Category.SITUATIONAL }
+            .forEach { assertNull(it.expectedHedge) }
+    }
+
+    // ---- VA-58: REVIEW_WAIT park → operator export completes the run ----------------------
+
+    /** Approve every queued (SUBMITTED) conversation, returning the approved ids. */
+    private fun approveQueue(): List<String> =
+        sfts.store.values
+            .filter { it.status == ExampleStatus.SUBMITTED }
+            .sortedBy { it.id }
+            .map {
+                sfts.store[it.id] = it.copy(status = ExampleStatus.APPROVED)
+                it.id
+            }
+
+    @Test
+    fun `export completes the parked run with exactly the APPROVED current-stamp examples`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        // One conversation stays NEEDS_CHANGES, one APPROVED row carries a stale stamp, one is
+        // ARCHIVED — none of the three may reach the dataset (the VA-58 filter contract).
+        val queued =
+            sfts.store.values.filter { it.status == ExampleStatus.SUBMITTED }.sortedBy { it.id }
+        val leftBehind = queued.first()
+        sfts.store[leftBehind.id] = leftBehind.copy(status = ExampleStatus.NEEDS_CHANGES)
+        val approvedIds = approveQueue().toSet()
+        val turns =
+            listOf(Turn(role = TurnRole.USER, text = "q"), Turn(role = TurnRole.MODEL, text = "a"))
+        sfts.store["e-stale-approved"] =
+            SftExample(
+                id = "e-stale-approved",
+                status = ExampleStatus.APPROVED,
+                turns = turns,
+                stamp =
+                    Stage4Stamp(
+                        subjectId = "s1",
+                        scoreRunId = "pub-0",
+                        personaHash = defaultPersonaHash,
+                        planId = "p-old",
+                    ),
+            )
+        sfts.store["e-archived-cur"] =
+            SftExample(
+                id = "e-archived-cur",
+                status = ExampleStatus.ARCHIVED,
+                turns = turns,
+                stamp =
+                    Stage4Stamp(
+                        subjectId = "s1",
+                        scoreRunId = "pub-1",
+                        personaHash = defaultPersonaHash,
+                        planId = "p-arch",
+                    ),
+            )
+
+        val outcome = svc.export(run.id, "op").expectRight()
+
+        // The run completes: REVIEW_WAIT → DONE with the exportRecordId journaled (§9.4).
+        assertEquals(Stage4RunStatus.DONE, outcome.run.status)
+        assertEquals(outcome.record.id, outcome.run.exportRecordId)
+        assertNotNull(outcome.run.finishedAt)
+        assertEquals(Stage4RunStatus.DONE, runs.store[run.id]!!.status)
+        assertEquals(Stage4RunStatus.DONE, svc.poll(run.id).expectRight().status)
+        // Exactly the APPROVED current-stamp set, each journaled with the record id.
+        assertEquals(approvedIds, outcome.record.exampleIds.toSet())
+        assertEquals(approvedIds.size, outcome.record.count)
+        approvedIds.forEach { assertTrue(sfts.store[it]!!.exportedIn.contains(outcome.record.id)) }
+        assertTrue(sfts.store[leftBehind.id]!!.exportedIn.isEmpty())
+        assertTrue(sfts.store["e-stale-approved"]!!.exportedIn.isEmpty())
+        // The blob round-trips the §19 contents/parts line shape — one line per example, guest
+        // first, advocate last, text parts only.
+        val content = exporter.written.values.single()
+        val lines = content.split("\n")
+        assertEquals(approvedIds.size, lines.size)
+        lines.forEach { line ->
+            val obj = Json.parse(line) as Map<*, *>
+            val contents = assertNotNull(obj["contents"] as? List<*>)
+            val firstTurn = contents.first() as Map<*, *>
+            val lastTurn = contents.last() as Map<*, *>
+            assertEquals("user", firstTurn["role"])
+            assertEquals("model", lastTurn["role"])
+            val parts = assertNotNull(lastTurn["parts"] as? List<*>)
+            assertNotNull((parts.first() as Map<*, *>)["text"])
+        }
+    }
+
+    @Test
+    fun `a validator failure aborts the export with exampleId pointers and no partial record`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+        val approved = approveQueue()
+        val broken = approved.first()
+        sfts.store[broken] =
+            sfts.store[broken]!!.copy(
+                turns =
+                    listOf(
+                        Turn(role = TurnRole.USER, text = "q"),
+                        Turn(role = TurnRole.MODEL, text = ""),
+                    )
+            )
+
+        val err = assertIs<DomainError.Invalid>(svc.export(run.id, "op").err())
+
+        assertTrue(err.message.contains(broken))
+        assertTrue(exportRepo.store.isEmpty())
+        assertTrue(exporter.written.isEmpty())
+        assertEquals(Stage4RunStatus.REVIEW_WAIT, runs.store[run.id]!!.status)
+        assertTrue(sfts.store.values.all { it.exportedIn.isEmpty() })
+    }
+
+    @Test
+    fun `export requires the QA-4 park and at least one approved example`() {
+        seedPublished()
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
+
+        assertIs<DomainError.Conflict>(svc.export(run.id, "op").err())
+
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+        // Everything is still SUBMITTED (queued, unreviewed) — nothing to export yet.
+        assertIs<DomainError.Invalid>(svc.export(run.id, "op").err())
+        assertEquals(Stage4RunStatus.REVIEW_WAIT, runs.store[run.id]!!.status)
+
+        assertIs<DomainError.NotFound>(svc.export("nope", "op").err())
     }
 }

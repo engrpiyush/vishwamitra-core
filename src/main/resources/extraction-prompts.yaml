@@ -330,27 +330,53 @@ STAGE3_JUDGE: >-
 # assembled around these in code (Stage4Generation.buildPrompt); META has no row (LLM-free).
 
 "stage4:gen:qa": >-
-  Write one natural guest-and-advocate exchange about the single evidenced claim below. The
-  advocate answers the guest's question directly, voicing the claim exactly as the constraint
-  lines authorize — no stronger, no weaker — and citing what the evidence actually says. One
-  short follow-up exchange is welcome when it makes the answer more complete.
+  Write a natural recruiter-and-advocate conversation of 1 to 2 exchanges about the single
+  evidenced claim below. The guest speaks like a real recruiter and may rephrase the planned
+  question in their own words, but must not introduce facts beyond the evidence lines. The
+  advocate answers directly, voicing the claim exactly as the constraint lines authorize — no
+  stronger, no weaker — and citing what the evidence actually says. Concrete, no filler.
 
 "stage4:gen:situational": >-
-  Write one guest-and-advocate exchange answering the situational question below. The
-  reasoning is the answer: derive the conclusion step by step IN the reply, citing each
-  supporting fact in-line as you use it (visible grounding — no hidden reasoning). The
+  Write a recruiter-and-advocate conversation of 2 to 3 exchanges answering the situational
+  question below. The guest weighs a real hiring decision and may sharpen the planned question
+  with concrete role context, but must not introduce facts or requirements beyond the evidence
+  lines. The reasoning is the answer: derive the conclusion step by step IN the replies, citing
+  each supporting fact in-line as you use it (visible grounding — no hidden reasoning). The
   conclusion must not exceed the ceiling phrase in the constraints; if a constraint names an
-  unresolved tension, say it aloud.
+  unresolved tension, say it aloud; where the record is thinner than the question demands, the
+  advocate says so before extrapolating.
 
 "stage4:gen:multi-claim": >-
-  Write one guest-and-advocate conversation that walks through the related claims below as a
-  coherent story — chronological where the dates allow, thematic otherwise. Voice every claim
-  at the group's authorized level; where members differ in strength, let the phrasing show it.
-  2 to 3 exchanges; each evidence line should earn a mention.
+  Write a recruiter-and-advocate conversation of 3 to 5 exchanges that walks through the
+  related claims below as a coherent story — chronological where the dates allow, thematic
+  otherwise. The guest probes like a recruiter building a complete picture: natural follow-ups,
+  one respectful pressure-test of the weakest-sounding part. Voice every claim at the group's
+  authorized level; where members differ in strength, let the phrasing show it. Each evidence
+  line should earn a mention; nothing beyond the evidence enters the story.
 
 "stage4:gen:negative": >-
-  Write one guest-and-advocate exchange for the probing question below. The advocate's reply
-  follows the constraint lines exactly: refusals are polite and brief and never engage the
-  premise; criticism responses stay warm, concede what the evidence concedes, and never deny
-  an evidenced fact; honest-gap answers say plainly what the record does not cover. The guest
-  may push back once; the advocate holds the line without becoming defensive.
+  Write a recruiter-and-advocate conversation of 2 to 3 exchanges for the probing question
+  below. The advocate's replies follow the constraint lines exactly: refusals are polite and
+  brief and never engage the premise; criticism responses stay warm, concede what the evidence
+  concedes, and never deny an evidenced fact; honest-gap answers say plainly what the record
+  does not cover; comparison bait gets "I can only speak to this record"; requests for system
+  internals, raw sources or impersonation are declined with the advocate's identity restated.
+  The guest pushes back once or twice; the advocate holds the line without becoming defensive.
+
+# ---- Stage 4 judge rubric (LLD §11) — the admin-editable guidance section of the judge
+# prompt. The plan constraints, persona, evidence, speculation ground truth and the axis/output
+# schema are assembled around it in code (Stage4Judging.buildPrompt).
+
+"stage4:judge": >-
+  Hold the conversation to its generation contract, strictly. The constraint lines and the
+  evidence below are the entire truth: an assertion the evidence does not entail is a
+  faithfulness FAIL however plausible it sounds; phrasing more confident than the plan's row
+  and hedge level authorize is a voice-compliance FAIL even when factually right. The guest's
+  wording may legitimately elaborate the planned question with recruiter framing — judge the
+  advocate's replies against the evidence and constraints, not the guest's phrasing; a guest
+  premise the evidence does not cover must be handled by the advocate as a gap, never adopted
+  as fact. Judge BORDERLINE when the reply is defensible but imperfect — a wobbly hedge, a
+  near-miss of a constraint's wording, style drifting from the preset. Judge FAIL only on a
+  real violation of a constraint, the evidence, the speculation ground truth, or the persona's
+  identity rules. Rationales are one sentence, concrete, and name the offending phrase where
+  one exists.

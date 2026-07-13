@@ -145,7 +145,8 @@
                 </span>
             </div>
             <div class="row-actions" style="margin-top:0.8rem;">
-                <a class="btn btn--sm" th:href="@{/intake/{id}/stage3/dashboard(id=${subject.id})}">Dashboard &rarr;</a>
+                <a class="btn btn--sm" th:href="@{/intake/{id}/stage4(id=${subject.id})}">Stage 4 &rarr;</a>
+                <a class="btn btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/dashboard(id=${subject.id})}">Dashboard &rarr;</a>
                 <a class="btn btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/scores(id=${subject.id})}">Scored claims &rarr;</a>
                 <a class="btn btn--ghost btn--sm" th:href="@{/intake/{id}/stage3/timeline(id=${subject.id})}">Timeline &rarr;</a>
                 <button type="button" class="btn--ghost btn--sm" data-rerun-open>Re-run</button>

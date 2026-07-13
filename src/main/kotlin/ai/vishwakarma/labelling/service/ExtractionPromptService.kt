@@ -23,6 +23,20 @@ data class ReservedPromptRow(
     val builtin: String,
 )
 
+/** The Stage 4 slice of the extraction-prompts admin page (VA-66, LLD §6/§15). */
+data class Stage4PromptRows(
+    /** The admin-designated default preset id (the `stage4:preset-default` pointer). */
+    val defaultPresetId: String,
+    /** Every offerable preset id, built-in and admin-added. */
+    val presetIds: List<String>,
+    /** The preset rows, keyed `stage4:preset:<id>` — admin-added ones have no builtin. */
+    val presets: List<ReservedPromptRow>,
+    /** The four LLM-backed per-category generator rows (META is template-rendered, no row). */
+    val generators: List<ReservedPromptRow>,
+    /** The §11 judge rubric row. */
+    val judge: ReservedPromptRow,
+)
+
 /** The instruction block an extraction run actually used, with its provenance stamp. */
 data class ResolvedExtractionPrompt(
     val instructions: String,
@@ -90,6 +104,41 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** True when [id] is a reserved Stage 3 row the admin page may edit alongside content types. */
     fun isStage3Key(id: String): Boolean = id in STAGE3_KEYS
 
+    /** True when [id] is a reserved Stage 4 row (presets incl. admin-added, generators, judge). */
+    fun isStage4Key(id: String): Boolean =
+        id == STAGE4_JUDGE_KEY ||
+            id == STAGE4_PRESET_DEFAULT_KEY ||
+            id.startsWith(STAGE4_PRESET_PREFIX) ||
+            id in STAGE4_GENERATOR_KEYS
+
+    /** The VA-66 admin-page slice: presets (+ default pointer), generator rows, judge rubric. */
+    fun listStage4(): Stage4PromptRows {
+        val existing = prompts.findAll().associateBy { it.id }
+        fun row(key: String) =
+            ReservedPromptRow(key, existing[key], ExtractionPrompt.builtinForKey(key))
+        val presetIds = stage4PresetIds()
+        return Stage4PromptRows(
+            defaultPresetId = defaultStage4PresetId(),
+            presetIds = presetIds,
+            presets = presetIds.map { row(STAGE4_PRESET_PREFIX + it) },
+            generators = STAGE4_GENERATOR_KEYS.map { row(it) },
+            judge = row(STAGE4_JUDGE_KEY),
+        )
+    }
+
+    /**
+     * Register a new admin preset (`stage4:preset:<slug>`, VA-66) — [stage4PresetIds] picks stored
+     * rows up by prefix, so saving the row IS the registration. Slugged, collision-refused.
+     */
+    fun createStage4Preset(name: String, instructions: String, actor: String?): ExtractionPrompt {
+        val slug = name.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(48)
+        require(slug.isNotEmpty()) { "Preset name must contain letters or digits" }
+        val key = STAGE4_PRESET_PREFIX + slug
+        require(slug !in stage4PresetIds()) { "Preset '$slug' already exists" }
+        require(instructions.isNotBlank()) { "Preset style text cannot be blank" }
+        return updateKey(key, instructions, actor)
+    }
+
     /**
      * Persona-preset ids the wizard offers (B3): the built-in trio plus any admin-added
      * `stage4:preset:<id>` rows (the LLD §6 reserved-key idiom).
@@ -156,6 +205,9 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
         /** The reserved non-ContentType rows, in admin-page order. */
         val STAGE3_KEYS = listOf("STAGE3_ENTITY", "STAGE3_JUDGE")
 
+        /** The reserved §11 judge-rubric row (VA-57) — resolved by [GeminiStage4Judge]. */
+        const val STAGE4_JUDGE_KEY = "stage4:judge"
+
         /** Reserved Stage 4 persona-preset rows (LLD §6) + the default-preset pointer row. */
         const val STAGE4_PRESET_PREFIX = "stage4:preset:"
         const val STAGE4_PRESET_DEFAULT_KEY = "stage4:preset-default"
@@ -164,6 +216,17 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
                 "stage4:preset:warm-storyteller",
                 "stage4:preset:crisp-professional",
                 "stage4:preset:grounded-mentor",
+            )
+
+        /**
+         * The reserved `stage4:gen:*` rows (§9.3), in admin-page order — see [stage4GeneratorKey].
+         */
+        val STAGE4_GENERATOR_KEYS =
+            listOf(
+                "stage4:gen:qa",
+                "stage4:gen:situational",
+                "stage4:gen:multi-claim",
+                "stage4:gen:negative",
             )
     }
 }

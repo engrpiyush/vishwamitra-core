@@ -159,15 +159,36 @@ class SituationalCotTest {
     }
 
     @Test
-    fun `the five allowed families each carry usable templates`() {
-        assertEquals(5, SituationalFamily.entries.size)
+    fun `the six allowed families each carry a usable recruiter-grade template bank`() {
+        assertEquals(6, SituationalFamily.entries.size)
         SituationalFamily.entries.forEach { family ->
-            assertTrue(family.templates.isNotEmpty(), "family ${family.id} has no templates")
-            assertTrue(family.templates.all { it.contains("{{subject}}") })
+            assertTrue(
+                family.templates.size >= 8,
+                "family ${family.id} has ${family.templates.size} templates — QD-3 wants 8+",
+            )
+            // Every template is parameterized on the subject's record — never a static string.
+            assertTrue(
+                family.templates.all { t ->
+                    listOf("{{subject}}", "{{fact}}", "{{adjacent}}", "{{scenario}}").any {
+                        t.contains(it)
+                    }
+                },
+                "family ${family.id} has a static template",
+            )
+            // The QD-1 fallback invariant the planner relies on: a single-fact subject (no
+            // adjacent evidence) must always find an {{adjacent}}-free template.
+            assertTrue(
+                family.templates.any { !it.contains("{{adjacent}}") },
+                "family ${family.id} has no adjacent-free fallback template",
+            )
         }
         assertEquals(
             SituationalFamily.CAPABILITY_TRANSFER,
             SituationalFamily.fromIdOrNull("capability-transfer"),
+        )
+        assertEquals(
+            SituationalFamily.ROLE_FIT_TRADEOFF,
+            SituationalFamily.fromIdOrNull("role-fit-tradeoff"),
         )
     }
 }

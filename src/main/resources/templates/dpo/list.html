@@ -24,13 +24,24 @@
     </div>
 
     <nav class="subnav">
-        <a th:href="@{/dpo}" th:classappend="${activeStatus == null} ? 'active'">All</a>
-        <a th:each="s : ${statuses}" th:href="@{/dpo(status=${s})}"
-           th:classappend="${activeStatus == s.name()} ? 'active'" th:text="${s}">STATUS</a>
+        <a th:href="@{/dpo(subject=${subjectFilter})}" th:classappend="${activeStatus == null and !staleView} ? 'active'">All</a>
+        <a th:each="s : ${statuses}" th:href="@{/dpo(status=${s}, subject=${subjectFilter})}"
+           th:classappend="${activeStatus == s.name() and !staleView} ? 'active'" th:text="${s}">STATUS</a>
+        <a th:if="${staleCount > 0 or staleView}" th:href="@{/dpo(stale=true, subject=${subjectFilter})}"
+           th:classappend="${staleView} ? 'active'"
+           th:text="'Stale (' + ${staleCount} + ')'"
+           title="Stage 4 pairs whose publish or persona moved on — the next run's SELECT tick archives them (QA-6)">Stale</a>
     </nav>
 
+    <!-- The Stage 4 run-page hand-off: pairs faceted to one subject. -->
+    <p th:if="${subjectFilter != null}" class="muted" style="margin:-0.8rem 0 1rem;">
+        <span class="badge badge--info">SUBJECT</span>
+        Stage 4 pairs for <strong th:text="${subjectFilterName ?: subjectFilter}">subject</strong>
+        &middot; <a th:href="@{/dpo(status=${activeStatus})}">clear filter</a>
+    </p>
+
     <table class="grid">
-        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Source</th><th>From SFT</th><th>Status</th><th>Updated</th></tr></thead>
+        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Source</th><th>From SFT</th><th>Stage 4</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="p : ${pairs}" class="clickable" th:attr="data-href=@{/dpo/{id}(id=${p.id})}">
             <td th:text="${p.tags.claimType != null ? p.tags.claimType.name().toLowerCase() : ''}">claim</td>
@@ -38,10 +49,16 @@
             <td th:text="${#strings.listJoin(p.tags.labels, ', ')}">labels</td>
             <td th:text="${p.source}">MANUAL</td>
             <td th:text="${p.fromSftId} ? '✓' : ''"></td>
+            <td>
+                <span th:if="${p.stamp != null}" class="badge badge--info"
+                      th:text="${p.stamp.category != null ? p.stamp.category : 'STAGE 4'}">QA</span>
+                <span th:if="${staleIds.contains(p.id)}" class="badge badge--warning"
+                      title="Publish or persona moved on — archived on the next SELECT tick">stale</span>
+            </td>
             <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(p.status),'_','-')}" th:text="${p.status}">DRAFT</span></td>
             <td class="muted"><time class="js-ts" th:datetime="${p.updatedAt}" th:text="${p.updatedAt}">ts</time></td>
         </tr>
-        <tr th:if="${pairs.isEmpty()}"><td colspan="7"><div class="empty-state">No preference pairs yet — create one manually or seed from approved SFT.</div></td></tr>
+        <tr th:if="${pairs.isEmpty()}"><td colspan="8"><div class="empty-state">No preference pairs here — create one manually or seed from approved SFT.</div></td></tr>
         </tbody>
     </table>
 </main>

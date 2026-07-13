@@ -3,11 +3,13 @@ package ai.vishwakarma.labelling.web
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleStatus
+import ai.vishwakarma.labelling.domain.Stage4Stamp
 import ai.vishwakarma.labelling.domain.splitLabels
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.DpoService
 import ai.vishwakarma.labelling.service.DraftingService
+import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TaxonomyService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -26,18 +28,65 @@ class DpoController(
     private val dpo: DpoService,
     private val taxonomy: TaxonomyService,
     private val drafting: DraftingService,
+    private val subjects: SubjectService,
+    private val stage4Panels: Stage4ReviewPanels,
 ) {
 
     private fun actor() = CurrentUser.email()
 
+    /**
+     * VA-65, the [SftController.list] semantics minus the judge pre-sort (pairs are flagged by
+     * generation, not judged): optional `subject` facet, stale-stamp rows excluded from default
+     * views (`stale=true` shows exactly them), ARCHIVED excluded from "All".
+     */
     @GetMapping
-    fun list(@RequestParam(required = false) status: String?, model: Model): String {
+    fun list(
+        @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) subject: String?,
+        @RequestParam(required = false, defaultValue = "false") stale: Boolean,
+        model: Model,
+    ): String {
         val parsed =
             status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
+        var pairs = dpo.list(parsed)
+        if (!subject.isNullOrBlank()) {
+            pairs = pairs.filter { it.stamp?.subjectId == subject }
+        }
+        val current =
+            pairs
+                .mapNotNull { it.stamp?.subjectId }
+                .distinct()
+                .associateWith { stage4Panels.currentFor(it) }
+        fun isStale(stamp: Stage4Stamp): Boolean {
+            val c = current[stamp.subjectId] ?: return false
+            return c.scoreRunId == null ||
+                stamp.scoreRunId != c.scoreRunId ||
+                stamp.personaHash != c.personaHash
+        }
+        // A concrete HashSet, never Kotlin's EmptySet singleton: the template's SpEL
+        // `staleIds.contains(...)` resolves reflectively, and Set<Nothing> breaks it.
+        val staleIds =
+            pairs.filter { p -> p.stamp?.let { isStale(it) } == true }.mapTo(HashSet()) { it.id }
+        val visible =
+            when {
+                stale -> pairs.filter { it.id in staleIds }
+                parsed == ExampleStatus.ARCHIVED -> pairs
+                parsed == null ->
+                    pairs.filter { it.status != ExampleStatus.ARCHIVED && it.id !in staleIds }
+                else -> pairs.filter { it.id !in staleIds }
+            }
         model.addAttribute("pageTitle", "DPO")
-        model.addAttribute("pairs", dpo.list(parsed))
+        model.addAttribute("pairs", visible)
         model.addAttribute("statuses", ExampleStatus.entries)
         model.addAttribute("activeStatus", parsed?.name)
+        model.addAttribute("staleView", stale)
+        model.addAttribute("staleCount", staleIds.size)
+        model.addAttribute("staleIds", staleIds)
+        model.addAttribute("subjectFilter", subject?.takeIf { it.isNotBlank() })
+        model.addAttribute(
+            "subjectFilterName",
+            subject?.takeIf { it.isNotBlank() }?.let { subjects.get(it)?.displayName },
+        )
         model.addAttribute("seedable", dpo.seedableSft())
         return "dpo/list"
     }
@@ -74,6 +123,15 @@ class DpoController(
         model.addAttribute("errors", dpo.validate(pair))
         model.addAttribute("preview", dpo.preview(pair))
         model.addAttribute("draftProvider", drafting.activeProviderId())
+        // VA-65: stamp + voicing-plan panels on Stage 4-flagged pairs (§12); legacy pairs render
+        // unchanged. Pairs are not judged — no judge panel here.
+        val stamp = pair.stamp
+        model.addAttribute("stampChips", stamp?.let { stage4Panels.stampChips(it) })
+        model.addAttribute("planPanel", stamp?.let { stage4Panels.planPanel(it) })
+        model.addAttribute(
+            "subjectName",
+            stamp?.let { subjects.get(it.subjectId)?.displayName },
+        )
         return "dpo/edit"
     }
 

@@ -4,19 +4,25 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ExampleSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
+import ai.vishwakarma.labelling.domain.ExportRecord
+import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.domain.ResolvedPersona
+import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.SftExample
 import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.domain.Stage4Counters
+import ai.vishwakarma.labelling.domain.Stage4Judgment
 import ai.vishwakarma.labelling.domain.Stage4Plan
 import ai.vishwakarma.labelling.domain.Stage4Run
 import ai.vishwakarma.labelling.domain.Stage4RunStatus
 import ai.vishwakarma.labelling.domain.Stage4Stamp
+import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.DpoPairRepository
 import ai.vishwakarma.labelling.persistence.PublishContract
 import ai.vishwakarma.labelling.persistence.SftExampleRepository
+import ai.vishwakarma.labelling.persistence.Stage4JudgmentRepository
 import ai.vishwakarma.labelling.persistence.Stage4PlanRepository
 import ai.vishwakarma.labelling.persistence.Stage4RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectFactRepository
@@ -24,9 +30,15 @@ import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.stage4.EvidencedClaim
+import ai.vishwakarma.labelling.stage4.HedgeVerdict
+import ai.vishwakarma.labelling.stage4.SituationalEvidence
+import ai.vishwakarma.labelling.stage4.SituationalHedging
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
 import ai.vishwakarma.labelling.stage4.Stage4Generation
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
+import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
+import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
+import ai.vishwakarma.labelling.stage4.Stage4Judging
 import ai.vishwakarma.labelling.stage4.Stage4Planning
 import arrow.core.Either
 import arrow.core.left
@@ -50,6 +62,9 @@ data class Stage4SubmitRequest(val fresh: Boolean = false, val mix: MixOverrides
     )
 }
 
+/** What [Stage4Service.export] returns: the completed run plus its `exports` record (VA-58). */
+data class Stage4ExportOutcome(val run: Stage4Run, val record: ExportRecord)
+
 /**
  * Stage 4 (published ledger → conversation notebooks) — the run lifecycle chassis (LLD §9): the
  * Stage 2/3 submit-then-poll idiom exactly. No scheduler — the run advances only inside poll
@@ -58,9 +73,10 @@ data class Stage4SubmitRequest(val fresh: Boolean = false, val mix: MixOverrides
  * .phase-timeout` is reclaimed to FAILED on the next poll; REVIEW_WAIT parks the run at the QA-4
  * 100%-human-review gate (export moves it on, never the poll loop).
  *
- * Phases in this slice: SELECT (§9.1 — guards, eligible set, QA-6 drift sweep), PLAN (§9.2 —
- * [Stage4Planning] over the frozen params) and GENERATE (§9.3 — bounded drafter batches through the
- * plan-keyed generation cache, VA-56). JUDGE advances as a no-op until VA-57 lands its body.
+ * Phases: SELECT (§9.1 — guards, eligible set, QA-6 drift sweep), PLAN (§9.2 — [Stage4Planning]
+ * over the frozen params), GENERATE (§9.3 — bounded drafter batches through the plan-keyed
+ * generation cache, VA-56), JUDGE (§11 — bounded ensemble batches through the judge-once cursor,
+ * VA-57) and the operator [export] that completes a parked run (§9.4/§13, VA-58).
  */
 @Service
 class Stage4Service(
@@ -74,6 +90,9 @@ class Stage4Service(
     private val personaService: PersonaService,
     private val prompts: ExtractionPromptService,
     private val drafter: Stage4ConversationDrafter,
+    private val judge: Stage4JudgeSampler,
+    private val judgments: Stage4JudgmentRepository,
+    private val exportService: ExportService,
     private val plans: Stage4PlanRepository,
     private val sftExamples: SftExampleRepository,
     private val dpoPairs: DpoPairRepository,
@@ -83,6 +102,9 @@ class Stage4Service(
     private val log = LoggerFactory.getLogger(Stage4Service::class.java)
 
     private val planning = Stage4Planning()
+
+    /** Same §10.3 computer (and default bands) the voicing planner derives with — the symmetry. */
+    private val hedging = SituationalHedging()
 
     // ---- submit -----------------------------------------------------------------
 
@@ -640,10 +662,244 @@ class Stage4Service(
         )
     }
 
-    // ---- JUDGE — skeleton no-op until VA-57 lands its body -------------------------------
+    // ---- JUDGE (LLD §11, VA-57) --------------------------------------------------------
 
+    /**
+     * One bounded tick, the GENERATE idiom mirrored: the store is the cursor — an example is
+     * *judged* when a `stage4_judgments` doc exists at its (exampleId, rubric versionStamp,
+     * turnsHash). Unchanged examples never re-judge (the verdict cache), a rubric bump re-judges
+     * everything, and an edited example misses at its new turnsHash and re-judges (§11 feedback
+     * loop). The overall verdict lands on the example (the queue's FAIL → BORDERLINE → PASS
+     * pre-sort key) and routes it: FAIL → NEEDS_CHANGES with the failing axes as a review comment;
+     * PASS and BORDERLINE → SUBMITTED, the human queue — 100% review in v1 (QA-4:
+     * `review-sample-rate` exists but is deliberately not read). Counters recompute absolutely.
+     */
     private fun runJudge(run: Stage4Run): Stage4Run =
-        inPhase(run, "JUDGE") { advance(run, Stage4RunStatus.REVIEW_WAIT, emptyMap()) }
+        inPhase(run, "JUDGE") {
+            val scoreRunId =
+                checkNotNull(run.scoreRunId) { "run carries no frozen scoreRunId — SELECT first" }
+            checkNotNull(run.personaHash) { "run carries no frozen personaHash — SELECT first" }
+
+            // QD-6: judge disabled at submit — the whole queue goes to the human unsorted and
+            // unverdicted; no judgments accrue. One tick, then the QA-4 park as usual.
+            if (!frozenParams(run).judgeEnabled) {
+                val now = Instant.now()
+                val submitted = liveStampedExamples(run).filter { it.status == ExampleStatus.DRAFT }
+                submitted.forEach {
+                    sftExamples.save(it.copy(status = ExampleStatus.SUBMITTED, updatedAt = now))
+                }
+                log.info(
+                    "Run {}: judge disabled (judgeEnabled=false) — {} example(s) submitted " +
+                        "unjudged",
+                    run.id,
+                    submitted.size,
+                )
+                return@inPhase advance(run, Stage4RunStatus.REVIEW_WAIT, emptyMap())
+            }
+
+            val stamp = judge.versionStamp
+            val judgedHashes = judgedTurnsHashes(run.subjectId, stamp)
+            fun judged(e: SftExample): Boolean =
+                Stage4Judging.turnsHash(e.turns) in judgedHashes[e.id].orEmpty()
+
+            val pending = liveStampedExamples(run).filterNot(::judged)
+            if (pending.isEmpty()) {
+                return@inPhase advance(run, Stage4RunStatus.REVIEW_WAIT, judgeCounters(run, stamp))
+            }
+
+            val persona = personaService.resolved(run.subjectId)
+            val presetStyle = prompts.resolveStage4Preset(persona.presetId).instructions
+            val subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject"
+            val evidenceById = eligibleClaims(run.subjectId, scoreRunId).associateBy { it.claim.id }
+            val params = frozenParams(run)
+            pending.take(params.judgeBatchPerPoll).forEach { e ->
+                judgeOne(run, e, subjectName, persona, presetStyle, evidenceById, params.ensembleK)
+            }
+            run.copy(
+                    counters = run.counters + judgeCounters(run, stamp),
+                    phaseSince = Instant.now()
+                )
+                .also { runs.save(it) }
+        }
+
+    /** Judge one example: k ensemble samples, majority per axis, persist + verdict routing. */
+    private fun judgeOne(
+        run: Stage4Run,
+        example: SftExample,
+        subjectName: String,
+        persona: ResolvedPersona,
+        presetStyle: String,
+        evidenceById: Map<String, EvidencedClaim>,
+        ensembleK: Int,
+    ) {
+        val planId = checkNotNull(example.stamp?.planId)
+        val plan =
+            plans.findById(planId)
+                ?: error("plan $planId behind example ${example.id} is missing — resubmit the run")
+        val request =
+            Stage4JudgeRequest(
+                subjectName = subjectName,
+                turns = example.turns,
+                plan = plan.plan,
+                persona = persona,
+                presetStyle = presetStyle,
+                evidence =
+                    plan.plan.sourceClaimIds.mapNotNull { id ->
+                        evidenceById[id]?.let { evidenceLine(it) }
+                    },
+                expectedHedge = expectedHedge(run, plan.plan, evidenceById),
+            )
+        val samples = (0 until ensembleK).mapNotNull { judge.sample(request, it) }
+        check(samples.isNotEmpty()) {
+            "judge cast no votes on example ${example.id} ($ensembleK unusable samples)"
+        }
+        val axes = Stage4Judging.aggregate(samples)
+        val overall = Stage4Judging.overallOf(axes)
+        val now = Instant.now()
+        judgments.save(
+            Stage4Judgment(
+                id = judgments.newId(),
+                exampleId = example.id,
+                runId = run.id,
+                subjectId = run.subjectId,
+                axes = axes.mapKeys { it.key.name },
+                overall = overall,
+                judgePromptVersion = judge.promptVersion,
+                judgePromptHash = judge.versionStamp,
+                turnsHash = Stage4Judging.turnsHash(example.turns),
+                model = judge.modelId,
+                createdAt = now,
+            )
+        )
+        val routed =
+            when {
+                example.status !in ROUTABLE_STATUSES ->
+                    example.copy(judgeVerdict = overall, updatedAt = now)
+                overall == JudgeVerdict.FAIL ->
+                    example.copy(
+                        status = ExampleStatus.NEEDS_CHANGES,
+                        judgeVerdict = overall,
+                        reviewComments =
+                            example.reviewComments +
+                                ReviewComment("stage4-judge", Stage4Judging.failRationale(axes)),
+                        updatedAt = now,
+                    )
+                else ->
+                    example.copy(
+                        status = ExampleStatus.SUBMITTED,
+                        judgeVerdict = overall,
+                        updatedAt = now,
+                    )
+            }
+        sftExamples.save(routed)
+    }
+
+    /**
+     * The judge-time §10.3 re-derivation for a situational plan: the fact chain intersecting the
+     * plan's surviving claims, mapped through the same [SituationalEvidence] and the same [hedging]
+     * PLAN derived with — same evidence, same verdict (the VA-57 symmetry).
+     */
+    private fun expectedHedge(
+        run: Stage4Run,
+        plan: VoicingPlan,
+        evidenceById: Map<String, EvidencedClaim>,
+    ): HedgeVerdict? {
+        if (plan.category != Stage4Category.SITUATIONAL) return null
+        val claimIds = plan.sourceClaimIds.toSet()
+        val chain =
+            subjectFacts
+                .findBySubject(run.subjectId)
+                .filter {
+                    it.scoreRunId == run.scoreRunId &&
+                        it.memberClaimIds.any { id -> id in claimIds }
+                }
+                .sortedBy { it.factId }
+                .mapNotNull { SituationalEvidence.supportingFactOf(it, evidenceById) }
+        return hedging.compute(chain)
+    }
+
+    /** Live current-stamp examples with a planId — the judge's (and export's) working set. */
+    private fun liveStampedExamples(run: Stage4Run): List<SftExample> =
+        sftExamples
+            .findByStampSubject(run.subjectId)
+            .filter {
+                it.status != ExampleStatus.ARCHIVED &&
+                    it.stamp?.scoreRunId == run.scoreRunId &&
+                    it.stamp?.personaHash == run.personaHash &&
+                    it.stamp?.planId != null
+            }
+            .sortedBy { it.id }
+
+    /** exampleId → turns hashes already judged at the current rubric stamp (one subject read). */
+    private fun judgedTurnsHashes(subjectId: String, stamp: String): Map<String, Set<String>> =
+        judgments
+            .findBySubject(subjectId)
+            .filter { it.judgePromptHash == stamp }
+            .groupBy({ it.exampleId }, { it.turnsHash })
+            .mapValues { (_, hashes) -> hashes.filterNotNull().toSet() }
+
+    /**
+     * Absolute JUDGE counters, recomputed from the store each tick (re-entrant, never
+     * double-counted): every live current-stamp example counted by its latest judgment at the
+     * current rubric stamp and current turns.
+     */
+    private fun judgeCounters(run: Stage4Run, stamp: String): Map<String, Long> {
+        val byExample =
+            judgments
+                .findBySubject(run.subjectId)
+                .filter { it.judgePromptHash == stamp }
+                .groupBy { it.exampleId }
+        val verdicts =
+            liveStampedExamples(run).mapNotNull { e ->
+                byExample[e.id]
+                    ?.filter { it.turnsHash == Stage4Judging.turnsHash(e.turns) }
+                    ?.maxByOrNull { it.createdAt ?: Instant.EPOCH }
+                    ?.overall
+            }
+        return mapOf(
+            Stage4Counters.JUDGED_PASS to verdicts.count { it == JudgeVerdict.PASS }.toLong(),
+            Stage4Counters.JUDGED_BORDERLINE to
+                verdicts.count { it == JudgeVerdict.BORDERLINE }.toLong(),
+            Stage4Counters.JUDGED_FAIL to verdicts.count { it == JudgeVerdict.FAIL }.toLong(),
+        )
+    }
+
+    // ---- export (LLD §9.4/§13, VA-58) — the operator action that completes a parked run ----
+
+    /**
+     * Complete a REVIEW_WAIT run: [ExportService.exportStage4Run] filters APPROVED + current-stamp
+     * examples and gates them through both validators (any failure aborts with exampleId pointers
+     * before a blob or record lands), then the exportRecordId is journaled and the run finishes —
+     * REVIEW_WAIT → DONE, the one transition the poll loop never makes (QA-4).
+     * `TrainingService.submit` consumes the record unchanged (DatasetSource.EXPORT).
+     */
+    fun export(runId: String, actor: String?): Either<DomainError, Stage4ExportOutcome> {
+        val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
+        if (run.status != Stage4RunStatus.REVIEW_WAIT)
+            return DomainError.Conflict(
+                    "Only a REVIEW_WAIT run can be exported (run is ${run.status})"
+                )
+                .left()
+        return exportService.exportStage4Run(run, actor).map { record ->
+            val now = Instant.now()
+            val done =
+                run.copy(
+                    status = Stage4RunStatus.DONE,
+                    exportRecordId = record.id,
+                    finishedAt = now,
+                    phaseSince = now,
+                )
+            runs.save(done)
+            log.info(
+                "Run {}: REVIEW_WAIT → DONE (export {}, {} example(s) → {})",
+                run.id,
+                record.id,
+                record.count,
+                record.gcsUri,
+            )
+            Stage4ExportOutcome(done, record)
+        }
+    }
 
     // ---- params snapshot ------------------------------------------------------------
 
@@ -670,6 +926,8 @@ class Stage4Service(
             mapOf(
                 "enabled" to effective.enabled,
                 "dryRun" to effective.dryRun,
+                "dryRunJudgeFailRate" to effective.dryRunJudgeFailRate,
+                "dryRunJudgeBorderlineRate" to effective.dryRunJudgeBorderlineRate,
                 "mix" to
                     mapOf(
                         "qa" to effective.mix.qa,
@@ -683,6 +941,7 @@ class Stage4Service(
                 "generateBatchPerPoll" to effective.generateBatchPerPoll,
                 "judgeBatchPerPoll" to effective.judgeBatchPerPoll,
                 "ensembleK" to effective.ensembleK,
+                "judgeEnabled" to effective.judgeEnabled,
                 "reviewSampleRate" to effective.reviewSampleRate,
                 "dpoEnabled" to effective.dpoEnabled,
                 "evalHoldoutFraction" to effective.evalHoldoutFraction,
@@ -697,6 +956,9 @@ class Stage4Service(
         val maxConversationsPerClaim: Int,
         val dedupeJaccardThreshold: Double,
         val generateBatchPerPoll: Int,
+        val judgeBatchPerPoll: Int,
+        val ensembleK: Int,
+        val judgeEnabled: Boolean,
     )
 
     /**
@@ -732,6 +994,10 @@ class Stage4Service(
                     ?: base.dedupeJaccardThreshold,
             generateBatchPerPoll =
                 (raw["generateBatchPerPoll"] as? Number)?.toInt() ?: base.generateBatchPerPoll,
+            judgeBatchPerPoll =
+                (raw["judgeBatchPerPoll"] as? Number)?.toInt() ?: base.judgeBatchPerPoll,
+            ensembleK = (raw["ensembleK"] as? Number)?.toInt() ?: base.ensembleK,
+            judgeEnabled = (raw["judgeEnabled"] as? Boolean) ?: base.judgeEnabled,
         )
     }
 
@@ -795,5 +1061,11 @@ class Stage4Service(
             "${run.status} made no progress for ${timeout.toMinutes()}m (since $since) — " +
                 "reclaimed; Retry resumes the phase",
         )
+    }
+
+    companion object {
+        /** Statuses a verdict may route (§11); APPROVED and ARCHIVED are never touched. */
+        private val ROUTABLE_STATUSES =
+            setOf(ExampleStatus.DRAFT, ExampleStatus.SUBMITTED, ExampleStatus.NEEDS_CHANGES)
     }
 }

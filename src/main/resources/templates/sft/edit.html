@@ -12,9 +12,38 @@
             SFT example
             <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(ex.status),'_','-')}" th:text="${ex.status}">DRAFT</span>
             <span class="badge badge--info" th:if="${ex.tags.hasToolCall}">tool-call</span>
+            <span class="badge"
+                  th:if="${ex.judgeVerdict != null}"
+                  th:classappend="${ex.judgeVerdict.name() == 'FAIL'} ? 'badge--danger' : (${ex.judgeVerdict.name() == 'BORDERLINE'} ? 'badge--warning' : 'badge--success')"
+                  th:text="'judge: ' + ${ex.judgeVerdict}">judge</span>
         </h1>
-        <a th:href="@{/sft}" class="muted">&larr; back to queue</a>
+        <a th:href="@{/sft(subject=${stampChips != null ? stampChips.subjectId : null})}" class="muted">&larr; back to queue</a>
     </div>
+
+    <!-- VA-65: the §6 traceability stamp — which publish, persona and prompt authorized this
+         conversation. Absent on legacy manual examples. -->
+    <div class="row-actions" th:if="${stampChips != null}" style="margin-bottom:0.6rem;">
+        <span class="badge badge--info" th:text="${stampChips.category ?: 'STAGE 4'}">QA</span>
+        <span class="muted">subject <strong th:text="${subjectName ?: stampChips.subjectId}">who</strong></span>
+        <span class="badge" th:classappend="${stampChips.scoreRunCurrent} ? 'badge--success' : 'badge--warning'"
+              th:text="${stampChips.scoreRunCurrent} ? 'publish: current' : 'publish: stale'"
+              th:title="${stampChips.scoreRunCurrent} ? 'Stamped with the current publish (scoreRunId matches)' : 'The subject was re-published — the next SELECT tick archives this example (QA-6)'">publish</span>
+        <span class="badge" th:classappend="${stampChips.personaCurrent} ? 'badge--success' : 'badge--warning'"
+              th:text="${stampChips.personaCurrent} ? 'persona: current' : 'persona: stale'"
+              th:title="${stampChips.personaCurrent} ? 'Stamped with the current resolved persona hash' : 'The persona changed — the next SELECT tick archives this example (QA-6)'">persona</span>
+        <span class="muted" style="font-size:0.85em;">
+            score run <code class="copyable" th:text="${stampChips.scoreRunId ?: '—'}">id</code>
+            &middot; persona <code th:text="${stampChips.personaHashShort ?: '—'}">hash</code>
+            &middot; generator <code th:text="${stampChips.generatorPromptHash ?: 'template'}">hash</code>
+            &middot; <span th:text="${stampChips.sourceClaimCount}">1</span> source claim(s)
+        </span>
+    </div>
+
+    <!-- QA-6: why this example left the queue. -->
+    <p th:if="${ex.status.name() == 'ARCHIVED' and ex.archivedReason != null}" style="margin:0 0 0.8rem;">
+        <span class="badge badge--muted">ARCHIVED</span>
+        <span class="muted" th:text="${ex.archivedReason}">superseded by …</span>
+    </p>
 
     <!-- lifecycle actions -->
     <div class="actions-bar">
@@ -129,6 +158,73 @@
         </section>
 
         <aside class="editor-side">
+            <!-- VA-65: the latest §11 judge pass — four axes, votes, rationale. -->
+            <div class="panel" th:if="${judgePanel != null}">
+                <div class="row-between">
+                    <h3>Judge verdict</h3>
+                    <span class="badge"
+                          th:classappend="${judgePanel.overall == 'FAIL'} ? 'badge--danger' : (${judgePanel.overall == 'BORDERLINE'} ? 'badge--warning' : 'badge--success')"
+                          th:text="${judgePanel.overall}">PASS</span>
+                </div>
+                <p class="muted" th:if="${judgePanel.turnsStale}" style="margin:0 0 0.6rem;">
+                    <span class="badge badge--warning">edited since judged</span>
+                    the turns changed after this pass — the next run tick re-judges and this
+                    panel refreshes (§11 loop).</p>
+                <div th:each="a : ${judgePanel.axes}" style="margin-bottom:0.55rem;">
+                    <div class="row-actions">
+                        <span class="badge"
+                              th:classappend="${a.verdict == 'FAIL'} ? 'badge--danger' : (${a.verdict == 'BORDERLINE'} ? 'badge--warning' : 'badge--success')"
+                              th:text="${a.verdict}">PASS</span>
+                        <strong th:text="${a.label}">axis</strong>
+                        <span class="muted" th:if="${a.votesText != null}" style="font-size:0.85em;"
+                              th:text="'votes: ' + ${a.votesText}">votes</span>
+                    </div>
+                    <p class="muted" th:if="${a.rationale != null}" style="margin:0.2rem 0 0; font-size:0.88em;"
+                       th:text="${a.rationale}">why</p>
+                </div>
+                <p class="muted" style="margin:0.6rem 0 0; font-size:0.82em;">
+                    <th:block th:if="${judgePanel.model != null}">
+                        <span th:text="${judgePanel.model}">model</span> &middot;</th:block>
+                    <time class="js-ts" th:datetime="${judgePanel.judgedAt}" th:text="${judgePanel.judgedAt}">when</time>
+                    &middot; rubric v<span th:text="${judgePanel.promptVersion ?: 0}">1</span>
+                    &middot; pass <span th:text="${judgePanel.passes}">1</span> on record
+                    &middot; doc <code class="copyable" th:text="${judgePanel.docId}">id</code>
+                </p>
+            </div>
+
+            <!-- VA-65: the frozen voicing plan — why this phrasing (§8). -->
+            <div class="panel" th:if="${planPanel != null}">
+                <h3>Voicing plan <span class="muted" style="font-weight:normal;">— why this phrasing</span></h3>
+                <div class="row-actions" style="margin-bottom:0.5rem;">
+                    <span class="badge badge--info" th:text="'row ' + ${planPanel.rowId}">row</span>
+                    <span class="badge badge--muted" th:text="${planPanel.hedgeLevel}">HEDGED</span>
+                    <span class="badge badge--muted" th:text="${planPanel.category}">QA</span>
+                    <span class="badge badge--warning" th:unless="${planPanel.sftEligible}"
+                          title="Row 5: unexplained CONFIRMED conflict — DPO rejected-side candidate, never SFT">not SFT-eligible</span>
+                </div>
+                <p style="margin:0 0 0.5rem;"><strong th:text="${planPanel.voice}">voice</strong></p>
+                <p class="muted" th:if="${planPanel.question != null}" style="margin:0 0 0.5rem; font-size:0.88em;">
+                    planned question: <em th:text="${planPanel.question}">q</em></p>
+                <p class="muted" style="margin:0 0 0.2rem; font-size:0.85em;">Constraints in force
+                    (embedded verbatim in the generation prompt):</p>
+                <ul class="comments" style="margin:0 0 0.6rem;">
+                    <li th:each="c : ${planPanel.constraints}" th:text="${c}" style="font-size:0.85em;">constraint</li>
+                </ul>
+                <p class="muted" style="margin:0 0 0.2rem; font-size:0.85em;">Source claims:</p>
+                <ul class="comments" style="margin:0;">
+                    <li th:each="c : ${planPanel.claims}" style="font-size:0.85em;">
+                        <span class="badge"
+                              th:if="${c.tier != null}"
+                              th:classappend="${c.tier == 'HIGH'} ? 'badge--high' : (${c.tier == 'MEDIUM'} ? 'badge--medium' : 'badge--low')"
+                              th:text="${c.scoreText + ' ' + c.tier}">0.82 HIGH</span>
+                        <span th:text="${c.text}">claim text</span>
+                        <code class="copyable" style="font-size:0.85em;" th:text="${c.claimId}">id</code>
+                    </li>
+                </ul>
+                <p class="muted" style="margin:0.6rem 0 0; font-size:0.82em;">
+                    plan <code class="copyable" th:text="${planPanel.planId}">id</code></p>
+            </div>
+
             <div class="panel">
                 <div class="row-between">
                     <h3>Validation</h3>

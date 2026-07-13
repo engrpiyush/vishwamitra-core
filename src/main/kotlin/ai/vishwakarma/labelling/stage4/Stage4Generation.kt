@@ -165,7 +165,9 @@ object Stage4Generation {
      */
     fun parse(raw: String): List<Turn> {
         val turns = DraftPrompts.parseTurns(raw)
-        check(turns.size in 2..6) { "expected 2–6 turns, got ${turns.size}" }
+        // Up to 5 exchanges (QD-2 mixed depth: multi-claim runs 3–5; the per-category targets
+        // live in the stage4:gen:* prompt rows).
+        check(turns.size in 2..10) { "expected 2–10 turns, got ${turns.size}" }
         check(turns.all { it.kind == TurnKind.TEXT }) { "advocate conversations are text-only" }
         check(turns.first().role == TurnRole.USER) { "first turn must be the guest (user)" }
         check(turns.last().role == TurnRole.MODEL) { "last turn must be the advocate (model)" }
@@ -181,7 +183,9 @@ object Stage4Generation {
  */
 class GeminiStage4Drafter(
     private val gemini: GeminiDrafting,
-    private val maxTokens: Int = 4096,
+    // 8192: QD-2's 3–5-exchange conversations plus up-to-1024 thinking must fit — 4096 clipped
+    // mid-JSON on live flash even at 1–2 exchanges (observed 2026-07-13).
+    private val maxTokens: Int = 8192,
     private val thinkingBudget: Int = 1024,
 ) : Stage4ConversationDrafter {
 

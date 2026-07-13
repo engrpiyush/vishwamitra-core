@@ -109,6 +109,86 @@ class ExtractionPromptServiceTest {
         assertNotEquals(a.hash, c.hash)
     }
 
+    // ---- Stage 4 rows (VA-66) ----------------------------------------------------------
+
+    @Test
+    fun `isStage4Key covers presets, the default pointer, generators and the judge`() {
+        assertTrue(service.isStage4Key("stage4:judge"))
+        assertTrue(service.isStage4Key("stage4:preset-default"))
+        assertTrue(service.isStage4Key("stage4:preset:warm-storyteller"))
+        assertTrue(service.isStage4Key("stage4:preset:brand-new-admin-one"))
+        assertTrue(service.isStage4Key("stage4:gen:qa"))
+        assertTrue(service.isStage4Key("stage4:gen:multi-claim"))
+        assertTrue(!service.isStage4Key("stage4:gen:meta")) // META is template-rendered — no row
+        assertTrue(!service.isStage4Key("STAGE3_JUDGE"))
+        assertTrue(!service.isStage4Key("RESUME_CV"))
+    }
+
+    @Test
+    fun `listStage4 ships the built-in trio, four generators and the judge with builtins`() {
+        val rows = service.listStage4()
+
+        assertEquals(
+            listOf("warm-storyteller", "crisp-professional", "grounded-mentor"),
+            rows.presetIds,
+        )
+        assertEquals("warm-storyteller", rows.defaultPresetId)
+        assertEquals(3, rows.presets.size)
+        assertTrue(rows.presets.all { it.prompt == null && it.builtin.isNotBlank() })
+        assertEquals(
+            listOf(
+                "stage4:gen:qa",
+                "stage4:gen:situational",
+                "stage4:gen:multi-claim",
+                "stage4:gen:negative",
+            ),
+            rows.generators.map { it.key },
+        )
+        assertTrue(rows.generators.all { it.builtin.isNotBlank() })
+        assertEquals("stage4:judge", rows.judge.key)
+        assertTrue(rows.judge.builtin.isNotBlank())
+    }
+
+    @Test
+    fun `createStage4Preset slugs the name and the row joins every preset surface`() {
+        val saved =
+            service.createStage4Preset("Quiet Analyst!", "Reserved, precise, no humor.", "admin")
+
+        assertEquals("stage4:preset:quiet-analyst", saved.id)
+        assertTrue("quiet-analyst" in service.stage4PresetIds())
+        assertTrue("quiet-analyst" in service.listStage4().presetIds)
+        assertEquals(
+            "Reserved, precise, no humor.",
+            service.resolveStage4Preset("quiet-analyst").instructions,
+        )
+        // Admin-added rows have no code default — reset deletes them outright.
+        assertEquals("", service.listStage4().presets.single { it.key == saved.id }.builtin)
+    }
+
+    @Test
+    fun `createStage4Preset refuses collisions, blank names and blank style text`() {
+        assertFailsWith<IllegalArgumentException> {
+            service.createStage4Preset("Warm Storyteller", "dup of a built-in id", "admin")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            service.createStage4Preset("!!!", "unsluggable", "admin")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            service.createStage4Preset("fine-name", "   ", "admin")
+        }
+    }
+
+    @Test
+    fun `the default-preset pointer row redirects the default and falls back when stale`() {
+        service.updateKey("stage4:preset-default", "grounded-mentor", "admin")
+        assertEquals("grounded-mentor", service.defaultStage4PresetId())
+        assertEquals("grounded-mentor", service.listStage4().defaultPresetId)
+
+        // A pointer at a deleted/unknown preset falls back to the first offerable id.
+        service.updateKey("stage4:preset-default", "no-such-preset", "admin")
+        assertEquals("warm-storyteller", service.defaultStage4PresetId())
+    }
+
     @Test
     fun `list covers every content type grouped by source class`() {
         service.update(ContentType.SKILL_DEMO, "Custom demo block.", "admin")

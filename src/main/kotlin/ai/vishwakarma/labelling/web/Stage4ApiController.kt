@@ -18,8 +18,8 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * Stage 4 (published ledger → conversation notebooks) JSON API — LLD §15. Same conventions as
  * [Stage3ApiController]: same-origin, REVIEWER+, CSRF on, submit-then-poll, error model `{"error":
- * "..."}` with 404/409/400. Review-queue and export endpoints arrive with their phase tickets
- * (VA-57/VA-58).
+ * "..."}` with 404/409/400. Review of judged conversations rides the existing sft/ pages; the
+ * judge-verdict panel arrives with the FE tickets (VA-63…66).
  */
 @RestController
 @RequestMapping("/api/stage4")
@@ -46,6 +46,15 @@ class Stage4ApiController(private val stage4: Stage4Service) {
     /** FAILED → resume from the failed phase (phases are re-entrant). */
     @PostMapping("/runs/{id}/retry")
     fun retry(@PathVariable id: String): ResponseEntity<Any> = stage4.retry(id).toResponse()
+
+    /**
+     * The QA-4 gate's other side: export the parked run's APPROVED current-stamp examples and
+     * complete it (REVIEW_WAIT → DONE, exportRecordId journaled). Validator failures come back 400
+     * with exampleId pointers; a non-parked run is a 409.
+     */
+    @PostMapping("/runs/{id}/export")
+    fun export(@PathVariable id: String): ResponseEntity<Any> =
+        stage4.export(id, actor()).toResponse()
 
     /** The subject's latest run (poll-loop + run-page read). */
     @GetMapping("/subjects/{id}/run")

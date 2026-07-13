@@ -99,6 +99,8 @@ data class Stage4Run(
     val cursors: Map<String, String> = emptyMap(),
     /** Verbatim provider error on FAILED (terminal-state failure idiom). */
     val error: String? = null,
+    /** The `exports` doc that completed this run (REVIEW_WAIT → DONE journal, §9.4/VA-58). */
+    val exportRecordId: String? = null,
     val createdBy: String? = null,
     val createdAt: Instant? = null,
     val startedAt: Instant? = null,
@@ -258,6 +260,11 @@ data class Stage4Judgment(
     /** Judge rubric provenance (ExtractionPrompt idiom) — rubric fixes re-run cleanly. */
     val judgePromptVersion: Int? = null,
     val judgePromptHash: String? = null,
+    /**
+     * Short hash of the exact turns judged — the judge-once cursor's staleness key: an edited
+     * example misses at its new hash and re-judges (§11 feedback loop, the ctx-verdict idiom).
+     */
+    val turnsHash: String? = null,
     val model: String? = null,
     val createdAt: Instant? = null,
 )

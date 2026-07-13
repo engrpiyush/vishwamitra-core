@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Persona <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <span class="row-actions">
+            <a th:href="@{/intake/{id}(id=${subject.id})}" class="muted">&larr; intake</a>
+            <a class="btn btn--sm" th:href="@{/intake/{id}/stage4(id=${subject.id})}">Stage 4 &rarr;</a>
+        </span>
+    </div>
+    <p class="muted">How the advocate speaks — 15 questions, every one skippable
+        (skip = the marked default). Behavior floors are fixed; the dials only tune within them.</p>
+
+    <!-- Saved-state summary: what a run started now would freeze (QA-6). -->
+    <div class="panel" th:if="${stored != null}">
+        <div class="row-actions">
+            <span class="badge badge--success">SAVED</span>
+            <span class="muted">
+                advocate <strong th:text="${resolved.advocateName}">name</strong>
+                &middot; preset <strong th:text="${resolved.presetId}">preset</strong>
+                &middot; <span th:text="${stored.skipped.size()}">9</span> question(s) on defaults
+                &middot; hash <code class="copyable" th:text="${view.personaHash}">hash</code>
+            </span>
+        </div>
+        <p class="muted" style="margin:0.5rem 0 0; font-size:0.85em;">
+            updated <time class="js-ts" th:datetime="${stored.updatedAt}" th:text="${stored.updatedAt}">when</time>
+            <th:block th:if="${stored.updatedBy != null}">by <span th:text="${stored.updatedBy}">who</span></th:block>
+            — generation runs pin to the hash; changing any resolved answer changes it.</p>
+    </div>
+
+    <!-- Stepper rail (persona-wizard.js recolors the chips as you move). -->
+    <div class="row-actions" id="personaStepper" style="margin:1rem 0;">
+        <th:block th:each="label,iter : ${stepLabels}">
+            <span class="badge badge--muted" th:attr="data-step-chip=${iter.index}"
+                  th:text="${(iter.index) + ' · ' + label}" style="cursor:pointer;">0 · Card</span>
+            <span class="muted" th:unless="${iter.last}" style="font-size:0.75em;">&rarr;</span>
+        </th:block>
+    </div>
+
+    <form method="post" th:action="@{/intake/{id}/persona(id=${subject.id})}" id="personaForm"
+          th:attr="data-confirm=${hasRuns} ? 'This subject already has a Stage 4 run. Saving a persona change re-stamps the persona hash — the next run automatically ARCHIVES every example generated under the old persona (QA-6) and regenerates from cache where turns are unchanged.' : null"
+          data-confirm-title="Persona change archives existing examples" data-confirm-ok="Save persona">
+
+        <!-- Step 0: the fixed card — behavior that is NOT configurable (§7). -->
+        <section class="panel" data-step="0">
+            <h3>The fixed card <span class="muted" style="font-weight:normal;">— always true, not questions</span></h3>
+            <ul style="margin:0.4rem 0 0.8rem; padding-left:1.2rem; line-height:1.7;">
+                <li>Always discloses being an <strong>AI advocate</strong> — never impersonates the subject.</li>
+                <li><strong>Never denies an evidenced fact</strong>, including weaknesses on the record.</li>
+                <li>PII is shared only if the subject <strong>opted in</strong>, and rendered <strong>verbatim only</strong>.</li>
+                <li>The voice <strong>never exceeds what the authenticity score authorizes</strong> — hedging is computed, not stylistic.</li>
+                <li>Dates and numbers are spoken at their <strong>stated precision</strong> — never sharpened.</li>
+                <li>General-audience register that <strong>adapts when the audience self-identifies</strong> (facts and confidence unchanged).</li>
+            </ul>
+            <p class="muted" style="margin:0;">Everything after this step tunes style and manner
+                <em>within</em> these rules.</p>
+        </section>
+
+        <!-- Steps 1–5: the §7 question groups. persona-wizard.js shows one at a time; with JS
+             disabled all steps render stacked and the single POST still works. -->
+        <section class="panel" th:each="step : ${steps}" th:attr="data-step=${step.index}">
+            <fieldset th:each="q : ${step.questions}" style="border:none; margin:0 0 1.1rem; padding:0;">
+                <div class="row-actions" style="margin-bottom:0.15rem;">
+                    <span class="badge badge--muted" th:text="${q.id}">A1</span>
+                    <strong th:text="${q.title}">Question</strong>
+                    <span class="badge badge--info" th:if="${q.skipped}"
+                          title="No stored answer — the default applies">skipped &rarr; default</span>
+                </div>
+                <p class="muted" th:if="${q.help != null}" style="margin:0 0 0.4rem; font-size:0.85em;"
+                   th:text="${q.help}">help</p>
+                <label th:each="o : ${q.options}"
+                       style="display:flex; gap:0.5rem; align-items:baseline; margin:0.25rem 0; font-weight:normal; cursor:pointer;">
+                    <input type="radio" th:name="${q.field}" th:value="${o.value}"
+                           th:checked="${o.selected}" style="width:auto;"/>
+                    <span>
+                        <span th:text="${o.label}" th:style="${o.default} ? 'font-weight:600;' : ''">label</span>
+                        <span class="muted" th:if="${o.note != null}" style="display:block; font-size:0.82em;"
+                              th:text="${o.note}">note</span>
+                    </span>
+                </label>
+            </fieldset>
+        </section>
+
+        <!-- Step 6: free-text personality + save. -->
+        <section class="panel" data-step="6">
+            <h3>Personality free text <span class="muted" style="font-weight:normal;">— optional</span></h3>
+            <p class="muted" style="margin:0 0 0.5rem; font-size:0.9em;">
+                Merge rule (§7): free text may <strong>adjust style</strong> (stance/name/preset
+                territory) and may only <strong>tighten behavior</strong> — it can never loosen a
+                dial or override the fixed card. The voicing planner never reads it; only the
+                generation prompt's style section does. Custom hedging phrases belong here.</p>
+            <textarea name="customText" rows="6" style="width:100%;"
+                      placeholder="e.g. Warm but never gushing. Prefers 'the record shows' over 'I believe'. When hedging, says 'as far as the evidence goes'."
+                      th:text="${customText}"></textarea>
+            <p class="muted" style="margin:0.6rem 0 0.8rem; font-size:0.85em;">
+                Saving stores the sparse answers, resolves the defaults, and stamps the persona
+                hash the next generation run freezes.</p>
+            <button type="submit">Save persona</button>
+        </section>
+    </form>
+
+    <!-- Prev/next live outside the form (moving steps must never submit it). -->
+    <div class="row-between" style="margin-top:0.8rem;">
+        <button type="button" class="btn--ghost btn--sm" data-step-back disabled>&larr; Back</button>
+        <button type="button" class="btn--sm" data-step-next>Next &rarr;</button>
+    </div>
+</main>
+<script th:src="@{/js/persona-wizard.js}" defer></script>
+</body>
+</html>

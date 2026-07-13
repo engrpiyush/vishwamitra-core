@@ -136,6 +136,21 @@ class Stage4GenerationTest {
         }
     }
 
+    @Test
+    fun `parse accepts up to five exchanges and rejects beyond (QD-2 cap)`() {
+        fun conversation(exchanges: Int): String =
+            (1..exchanges).joinToString(
+                ",",
+                prefix = "[",
+                postfix = "]",
+            ) {
+                """{"role":"user","text":"Q$it?"},{"role":"model","text":"A$it."}"""
+            }
+
+        assertEquals(10, Stage4Generation.parse(conversation(5)).size)
+        assertFailsWith<IllegalStateException> { Stage4Generation.parse(conversation(6)) }
+    }
+
     // ---- the VA-62 dry-run double ------------------------------------------------------
 
     @Test

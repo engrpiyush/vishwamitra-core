@@ -24,13 +24,25 @@
     </div>
 
     <nav class="subnav">
-        <a th:href="@{/sft}" th:classappend="${activeStatus == null} ? 'active'">All</a>
-        <a th:each="s : ${statuses}" th:href="@{/sft(status=${s})}"
-           th:classappend="${activeStatus == s.name()} ? 'active'" th:text="${s}">STATUS</a>
+        <a th:href="@{/sft(subject=${subjectFilter})}" th:classappend="${activeStatus == null and !staleView} ? 'active'">All</a>
+        <a th:each="s : ${statuses}" th:href="@{/sft(status=${s}, subject=${subjectFilter})}"
+           th:classappend="${activeStatus == s.name() and !staleView} ? 'active'" th:text="${s}">STATUS</a>
+        <a th:if="${staleCount > 0 or staleView}" th:href="@{/sft(stale=true, subject=${subjectFilter})}"
+           th:classappend="${staleView} ? 'active'"
+           th:text="'Stale (' + ${staleCount} + ')'"
+           title="Stage 4 examples whose publish or persona moved on — the next run's SELECT tick archives them (QA-6)">Stale</a>
     </nav>
 
+    <!-- The Stage 4 run-page hand-off: queue faceted to one subject. -->
+    <p th:if="${subjectFilter != null}" class="muted" style="margin:-0.8rem 0 1rem;">
+        <span class="badge badge--info">SUBJECT</span>
+        Stage 4 examples for <strong th:text="${subjectFilterName ?: subjectFilter}">subject</strong>
+        &middot; queue pre-sorted FAIL &rarr; BORDERLINE &rarr; PASS
+        &middot; <a th:href="@{/sft(status=${activeStatus})}">clear filter</a>
+    </p>
+
     <table class="grid">
-        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Tool?</th><th>Turns</th><th>Status</th><th>Updated</th></tr></thead>
+        <thead><tr><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Tool?</th><th>Turns</th><th>Judge</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="e : ${examples}" class="clickable"
             th:attr="data-href=@{/sft/{id}(id=${e.id})}">
@@ -39,10 +51,17 @@
             <td th:text="${#strings.listJoin(e.tags.labels, ', ')}">labels</td>
             <td th:text="${e.tags.hasToolCall} ? '✓' : ''"></td>
             <td th:text="${e.turns.size()}">0</td>
+            <td>
+                <span th:if="${e.judgeVerdict != null}" class="badge"
+                      th:classappend="${e.judgeVerdict.name() == 'FAIL'} ? 'badge--danger' : (${e.judgeVerdict.name() == 'BORDERLINE'} ? 'badge--warning' : 'badge--success')"
+                      th:text="${e.judgeVerdict}">PASS</span>
+                <span th:if="${staleIds.contains(e.id)}" class="badge badge--warning"
+                      title="Publish or persona moved on — archived on the next SELECT tick">stale</span>
+            </td>
             <td><span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(e.status),'_','-')}" th:text="${e.status}">DRAFT</span></td>
             <td class="muted"><time class="js-ts" th:datetime="${e.updatedAt}" th:text="${e.updatedAt}">ts</time></td>
         </tr>
-        <tr th:if="${examples.isEmpty()}"><td colspan="7"><div class="empty-state">No examples yet — create one to get started.</div></td></tr>
+        <tr th:if="${examples.isEmpty()}"><td colspan="8"><div class="empty-state">No examples here — Stage 4 runs fill this queue, or create one manually.</div></td></tr>
         </tbody>
     </table>
 </main>

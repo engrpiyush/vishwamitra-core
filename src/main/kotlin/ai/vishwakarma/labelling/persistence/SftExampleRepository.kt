@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.ExampleSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
+import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.SftExample
 import ai.vishwakarma.labelling.domain.Turn
@@ -76,6 +77,7 @@ class SftExampleRepository(private val db: Firestore) {
             "llmModel" to llmModel,
             "scenarioId" to scenarioId,
             "stamp" to stamp?.toStampMap(),
+            "judgeVerdict" to judgeVerdict?.name,
             "archivedReason" to archivedReason,
             "reviewComments" to
                 reviewComments.map {
@@ -119,6 +121,7 @@ class SftExampleRepository(private val db: Firestore) {
             llmModel = getString("llmModel"),
             scenarioId = getString("scenarioId"),
             stamp = (get("stamp") as? Map<String, Any?>)?.toStage4Stamp(),
+            judgeVerdict = JudgeVerdict.fromOrNull(getString("judgeVerdict")),
             archivedReason = getString("archivedReason"),
             reviewComments =
                 commentsList.map {

@@ -13,7 +13,55 @@
             <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(p.status),'_','-')}" th:text="${p.status}">DRAFT</span>
             <span class="badge badge--info" th:if="${p.fromSftId}">from SFT</span>
         </h1>
-        <a th:href="@{/dpo}" class="muted">&larr; back to queue</a>
+        <a th:href="@{/dpo(subject=${stampChips != null ? stampChips.subjectId : null})}" class="muted">&larr; back to queue</a>
+    </div>
+
+    <!-- VA-65: the §6 traceability stamp — absent on legacy manual pairs. -->
+    <div class="row-actions" th:if="${stampChips != null}" style="margin-bottom:0.6rem;">
+        <span class="badge badge--info" th:text="${stampChips.category ?: 'STAGE 4'}">QA</span>
+        <span class="muted">subject <strong th:text="${subjectName ?: stampChips.subjectId}">who</strong></span>
+        <span class="badge" th:classappend="${stampChips.scoreRunCurrent} ? 'badge--success' : 'badge--warning'"
+              th:text="${stampChips.scoreRunCurrent} ? 'publish: current' : 'publish: stale'">publish</span>
+        <span class="badge" th:classappend="${stampChips.personaCurrent} ? 'badge--success' : 'badge--warning'"
+              th:text="${stampChips.personaCurrent} ? 'persona: current' : 'persona: stale'">persona</span>
+        <span class="muted" style="font-size:0.85em;">
+            score run <code class="copyable" th:text="${stampChips.scoreRunId ?: '—'}">id</code>
+            &middot; persona <code th:text="${stampChips.personaHashShort ?: '—'}">hash</code>
+            &middot; <span th:text="${stampChips.sourceClaimCount}">1</span> source claim(s)
+        </span>
+    </div>
+
+    <!-- QA-6: why this pair left the queue. -->
+    <p th:if="${p.status.name() == 'ARCHIVED' and p.archivedReason != null}" style="margin:0 0 0.8rem;">
+        <span class="badge badge--muted">ARCHIVED</span>
+        <span class="muted" th:text="${p.archivedReason}">superseded by …</span>
+    </p>
+
+    <!-- VA-65: the frozen voicing plan behind a Stage 4-flagged pair (§12: row 5 rejected-side). -->
+    <div class="panel" th:if="${planPanel != null}" style="margin-bottom:1rem;">
+        <h3>Voicing plan <span class="muted" style="font-weight:normal;">— why this pair exists</span></h3>
+        <div class="row-actions" style="margin-bottom:0.5rem;">
+            <span class="badge badge--info" th:text="'row ' + ${planPanel.rowId}">row</span>
+            <span class="badge badge--muted" th:text="${planPanel.hedgeLevel}">HEDGED</span>
+            <span class="badge badge--muted" th:text="${planPanel.category}">QA</span>
+            <span class="badge badge--warning" th:unless="${planPanel.sftEligible}"
+                  title="Row 5: unexplained CONFIRMED conflict — DPO rejected-side candidate, never SFT">not SFT-eligible</span>
+        </div>
+        <p style="margin:0 0 0.5rem;"><strong th:text="${planPanel.voice}">voice</strong></p>
+        <p class="muted" th:if="${planPanel.question != null}" style="margin:0 0 0.5rem; font-size:0.88em;">
+            planned question: <em th:text="${planPanel.question}">q</em></p>
+        <ul class="comments" style="margin:0;">
+            <li th:each="c : ${planPanel.claims}" style="font-size:0.85em;">
+                <span class="badge"
+                      th:if="${c.tier != null}"
+                      th:classappend="${c.tier == 'HIGH'} ? 'badge--high' : (${c.tier == 'MEDIUM'} ? 'badge--medium' : 'badge--low')"
+                      th:text="${c.scoreText + ' ' + c.tier}">0.82 HIGH</span>
+                <span th:text="${c.text}">claim text</span>
+                <code class="copyable" style="font-size:0.85em;" th:text="${c.claimId}">id</code>
+            </li>
+        </ul>
+        <p class="muted" style="margin:0.6rem 0 0; font-size:0.82em;">
+            plan <code class="copyable" th:text="${planPanel.planId}">id</code></p>
     </div>
 
     <div class="actions-bar">

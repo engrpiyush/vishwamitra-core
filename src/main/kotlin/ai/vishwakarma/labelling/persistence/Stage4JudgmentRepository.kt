@@ -60,6 +60,7 @@ class Stage4JudgmentRepository(private val db: Firestore) {
             "overall" to overall.name,
             "judgePromptVersion" to judgePromptVersion,
             "judgePromptHash" to judgePromptHash,
+            "turnsHash" to turnsHash,
             "model" to model,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
@@ -92,6 +93,7 @@ class Stage4JudgmentRepository(private val db: Firestore) {
             overall = JudgeVerdict.fromOrNull(getString("overall")) ?: JudgeVerdict.PASS,
             judgePromptVersion = getLong("judgePromptVersion")?.toInt(),
             judgePromptHash = getString("judgePromptHash"),
+            turnsHash = getString("turnsHash"),
             model = getString("model"),
             createdAt = instant("createdAt"),
         )

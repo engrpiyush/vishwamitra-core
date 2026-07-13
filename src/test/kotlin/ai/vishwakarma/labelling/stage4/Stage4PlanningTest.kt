@@ -107,17 +107,35 @@ class Stage4PlanningTest {
             dedupeJaccardThreshold = threshold,
         )
 
-    // ---- mix weights (QA-3) ---------------------------------------------------------------
+    // ---- mix weights (QA-3, QD-5) -----------------------------------------------------------
 
     @Test
-    fun `mix weights steer category counts and a zero dial plans nothing in that category`() {
+    fun `mix weights steer the fact-driven trio and a zero dial plans nothing in that category`() {
         val eligible = (1..4).map { claim("c$it") }
         val facts = listOf(fact("f1", members = listOf("c1", "c2")))
 
         val qaOnly = plan(eligible, facts, mix = mix(qa = 1.0))
 
-        assertTrue(qaOnly.planned.isNotEmpty())
-        assertTrue(qaOnly.planned.all { it.plan.category == Stage4Category.QA })
+        val categories = qaOnly.planned.map { it.plan.category }.toSet()
+        assertTrue(Stage4Category.QA in categories)
+        assertTrue(Stage4Category.SITUATIONAL !in categories)
+        assertTrue(Stage4Category.MULTI_CLAIM !in categories)
+    }
+
+    @Test
+    fun `negative and meta probe banks plan in full regardless of the mix (QD-5)`() {
+        val eligible = (1..4).map { claim("c$it") }
+
+        val qaOnly = plan(eligible, mix = mix(qa = 1.0))
+        val banksOnly = plan(eligible, mix = mix(negative = 1.0))
+
+        // The behavioral curriculum rides along whatever the fact-driven dials say…
+        val qaCategories = qaOnly.planned.map { it.plan.category }.toSet()
+        assertTrue(Stage4Category.NEGATIVE in qaCategories)
+        assertTrue(Stage4Category.META in qaCategories)
+        // …and an all-zero fact-driven trio is a banks-only run.
+        val bankCategories = banksOnly.planned.map { it.plan.category }.toSet()
+        assertEquals(setOf(Stage4Category.NEGATIVE, Stage4Category.META), bankCategories)
     }
 
     @Test
@@ -149,17 +167,18 @@ class Stage4PlanningTest {
 
     @Test
     fun `near-duplicate questions dedupe, keeping the first`() {
-        // Two member claims of the same fact carry the same published label — their planned
-        // questions are identical and the second is dropped.
+        // Nine same-label claims: the QA template ring (QD-3, 8 templates) wraps at the ninth,
+        // whose question is then identical to the first and drops. The eight in between carry
+        // distinct templates and survive — the dedupe compares substance, not boilerplate.
         val eligible =
-            listOf(
-                claim("c1", text = "led the payments migration", factLabel = "Led the migration"),
-                claim("c2", text = "she led that migration", factLabel = "Led the migration"),
-            )
+            (1..9).map {
+                claim("c$it", text = "wording variant $it", factLabel = "Led the migration")
+            }
 
         val outcome = plan(eligible, mix = mix(qa = 1.0))
 
-        assertEquals(1, outcome.planned.size)
+        val qa = outcome.planned.filter { it.plan.category == Stage4Category.QA }
+        assertEquals(8, qa.size)
         assertEquals(1, outcome.deduped)
     }
 
@@ -187,9 +206,8 @@ class Stage4PlanningTest {
     fun `qa plans carry row, hedge, constraints and source claims`() {
         val outcome = plan(listOf(claim("c1", score = 0.9)), mix = mix(qa = 1.0))
 
-        val p = outcome.planned.single().plan
+        val p = outcome.planned.single { it.plan.category == Stage4Category.QA }.plan
         assertEquals(1, p.rowId)
-        assertEquals(Stage4Category.QA, p.category)
         assertEquals(listOf("c1"), p.sourceClaimIds)
         assertTrue(p.constraints.any { it.startsWith("F2") })
         assertTrue(p.constraints.any { it.startsWith("F5") })
@@ -203,8 +221,9 @@ class Stage4PlanningTest {
 
         val outcome = plan(eligible, facts, mix = mix(situational = 1.0))
 
-        assertTrue(outcome.planned.isNotEmpty())
-        assertTrue(outcome.planned.all { it.plan.rowId == 10 })
+        val situational = outcome.planned.filter { it.plan.category == Stage4Category.SITUATIONAL }
+        assertTrue(situational.isNotEmpty())
+        assertTrue(situational.all { it.plan.rowId == 10 })
     }
 
     @Test
@@ -214,8 +233,9 @@ class Stage4PlanningTest {
 
         val outcome = plan(eligible, facts, mix = mix(situational = 1.0))
 
-        assertTrue(outcome.planned.isNotEmpty())
-        assertTrue(outcome.planned.all { it.plan.rowId == 9 })
+        val situational = outcome.planned.filter { it.plan.category == Stage4Category.SITUATIONAL }
+        assertTrue(situational.isNotEmpty())
+        assertTrue(situational.all { it.plan.rowId == 9 })
     }
 
     @Test
@@ -229,8 +249,7 @@ class Stage4PlanningTest {
 
         val outcome = plan(eligible, facts, mix = mix(multiClaim = 1.0))
 
-        val chain = outcome.planned.single()
-        assertEquals(Stage4Category.MULTI_CLAIM, chain.plan.category)
+        val chain = outcome.planned.single { it.plan.category == Stage4Category.MULTI_CLAIM }
         assertEquals(setOf("c1", "c2"), chain.plan.sourceClaimIds.toSet())
     }
 
@@ -240,21 +259,79 @@ class Stage4PlanningTest {
 
         val outcome = plan(eligible, mix = mix(negative = 1.0))
 
-        val rows = outcome.planned.map { it.plan.rowId }.toSet()
-        assertTrue(13 in rows, "banned-class probes plan onto row 13")
+        val negative = outcome.planned.filter { it.plan.category == Stage4Category.NEGATIVE }
+        val rows = negative.map { it.plan.rowId }.toSet()
+        assertTrue(13 in rows, "banned-class + proprietary probes plan onto row 13")
         assertTrue(11 in rows, "criticism/integrity-bait probes plan onto row 11")
-        assertTrue(12 in rows, "out-of-corpus probes plan onto row 12")
-        assertTrue(outcome.planned.all { it.plan.category == Stage4Category.NEGATIVE })
+        assertTrue(12 in rows, "out-of-corpus + comparative probes plan onto row 12")
         // The defensive-advocacy probe cites the unfavorable claim it attacks.
-        assertTrue(outcome.planned.any { it.plan.rowId == 11 && "c1" in it.plan.sourceClaimIds })
+        assertTrue(negative.any { it.plan.rowId == 11 && "c1" in it.plan.sourceClaimIds })
+        // QD-3/QD-5 probe classes carry their own constraint lines.
+        assertTrue(
+            negative.any { p -> p.plan.constraints.any { it.contains("Never rank against") } },
+            "comparative bait plans a this-record-only constraint",
+        )
+        assertTrue(
+            negative.any { p -> p.plan.constraints.any { it.contains("system internals") } },
+            "proprietary probes plan a refusal-with-identity constraint",
+        )
     }
 
     @Test
-    fun `meta templates plan onto row 14 in the META category`() {
+    fun `meta bank plans register-shift and identity probes onto row 14`() {
         val outcome = plan(listOf(claim("c1")), mix = mix(meta = 1.0))
 
-        assertTrue(outcome.planned.isNotEmpty())
-        assertTrue(outcome.planned.all { it.plan.rowId == 14 })
-        assertTrue(outcome.planned.all { it.plan.category == Stage4Category.META })
+        val meta = outcome.planned.filter { it.plan.category == Stage4Category.META }
+        assertTrue(meta.isNotEmpty())
+        assertTrue(meta.all { it.plan.rowId == 14 })
+        assertTrue(
+            meta.any { p -> p.plan.constraints.any { it.startsWith("F6") } },
+            "audience probes carry the register-shift constraint",
+        )
+        assertTrue(
+            meta.any { p -> p.plan.constraints.any { it.contains("fixed card") } },
+            "identity probes carry the plain-disclosure constraint",
+        )
+    }
+
+    // ---- QD-1: hybrid adjacent-evidence scenarios ----------------------------------------------
+
+    @Test
+    fun `adjacent-evidence templates pair a second fact into the question and its chain`() {
+        val eligible =
+            listOf(claim("c1", attestorKind = "ISSUER"), claim("c2", attestorKind = "ISSUER"))
+        val facts =
+            listOf(
+                fact("f1", members = listOf("c1"), label = "Java platform work", belief = 0.9),
+                fact("f2", members = listOf("c2"), label = "Python tooling work", belief = 0.8),
+            )
+
+        // Relaxed cap: with one claim per fact, the anchor's six family units would exhaust the
+        // default budget before the adjacent-using units arrive — the cap has its own test.
+        val outcome = plan(eligible, facts, mix = mix(situational = 1.0), cap = 20)
+
+        val paired =
+            outcome.planned.filter {
+                it.plan.category == Stage4Category.SITUATIONAL &&
+                    it.question.contains("\"Java platform work\"") &&
+                    it.question.contains("\"Python tooling work\"")
+            }
+        assertTrue(paired.isNotEmpty(), "some template pairs the anchor with the adjacent fact")
+        // The adjacent fact's evidence joins the chain — its claims are cited sources, so the
+        // generation prompt carries its evidence and the §10.3 hedging weighs it.
+        assertTrue(paired.any { "c1" in it.plan.sourceClaimIds && "c2" in it.plan.sourceClaimIds })
+    }
+
+    @Test
+    fun `single-fact subjects fall back to adjacent-free templates`() {
+        val eligible = listOf(claim("c1", attestorKind = "ISSUER"))
+        val facts = listOf(fact("f1", members = listOf("c1"), label = "Solo fact", belief = 0.9))
+
+        val outcome = plan(eligible, facts, mix = mix(situational = 1.0))
+
+        val situational = outcome.planned.filter { it.plan.category == Stage4Category.SITUATIONAL }
+        assertTrue(situational.isNotEmpty())
+        assertTrue(situational.none { it.question.contains("{{adjacent}}") })
+        assertTrue(situational.none { it.question.contains("\"\"") })
     }
 }

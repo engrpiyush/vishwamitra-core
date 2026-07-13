@@ -10,13 +10,15 @@ class Stage4PropertiesTest {
     fun `defaults match the LLD §16 table`() {
         val stage4 = AppProperties().stage4
 
-        assertEquals(0.40, stage4.mix.qa)
-        assertEquals(0.25, stage4.mix.situational)
-        assertEquals(0.15, stage4.mix.multiClaim)
-        assertEquals(0.15, stage4.mix.negative)
+        // QD-4 (2026-07-13): situational-led rebalance, QA anchor retained.
+        assertEquals(0.25, stage4.mix.qa)
+        assertEquals(0.35, stage4.mix.situational)
+        assertEquals(0.25, stage4.mix.multiClaim)
+        assertEquals(0.10, stage4.mix.negative)
         assertEquals(0.05, stage4.mix.meta)
         assertEquals(6, stage4.maxConversationsPerClaim)
         assertEquals(0.85, stage4.dedupeJaccardThreshold)
+        assertEquals(true, stage4.judgeEnabled)
         assertEquals(1.0, stage4.reviewSampleRate)
         assertEquals(false, stage4.dpoEnabled)
         assertEquals(0.10, stage4.evalHoldoutFraction)

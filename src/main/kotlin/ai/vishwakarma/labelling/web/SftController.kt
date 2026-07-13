@@ -4,6 +4,9 @@ import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
+import ai.vishwakarma.labelling.domain.JudgeVerdict
+import ai.vishwakarma.labelling.domain.SftExample
+import ai.vishwakarma.labelling.domain.Stage4Stamp
 import ai.vishwakarma.labelling.domain.TurnKind
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.splitLabels
@@ -13,6 +16,7 @@ import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.DraftingService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.SftService
+import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TaxonomyService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -33,21 +37,91 @@ class SftController(
     private val catalog: CatalogService,
     private val drafting: DraftingService,
     private val scenarios: ScenarioService,
+    private val subjects: SubjectService,
+    private val stage4Panels: Stage4ReviewPanels,
 ) {
 
     private fun actor() = CurrentUser.email()
 
+    /**
+     * The queue, VA-65 semantics: optional `subject` facet (Stage 4 run-page hand-off), stale-stamp
+     * rows excluded from every default view (`stale=true` shows exactly them), ARCHIVED excluded
+     * from "All", and the QA-4 pre-sort — FAIL → BORDERLINE → PASS → unjudged/legacy — so reviewer
+     * attention lands on the judge's rejects first. Legacy (stamp-less) examples ride along
+     * unchanged: never stale, never verdict-ranked ahead of judged work.
+     */
     @GetMapping
-    fun list(@RequestParam(required = false) status: String?, model: Model): String {
+    fun list(
+        @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) subject: String?,
+        @RequestParam(required = false, defaultValue = "false") stale: Boolean,
+        model: Model,
+    ): String {
         val parsed =
             status?.let { runCatching { ExampleStatus.valueOf(it.uppercase()) }.getOrNull() }
+        var examples = sft.list(parsed)
+        if (!subject.isNullOrBlank()) {
+            examples = examples.filter { it.stamp?.subjectId == subject }
+        }
+        // Staleness against the subject's CURRENT publish + resolved persona, computed once per
+        // distinct subject (the resolve reads Firestore).
+        val current =
+            examples
+                .mapNotNull { it.stamp?.subjectId }
+                .distinct()
+                .associateWith { stage4Panels.currentFor(it) }
+        // A concrete HashSet, never Kotlin's EmptySet singleton: the template's SpEL
+        // `staleIds.contains(...)` resolves reflectively, and Set<Nothing> breaks it.
+        val staleIds =
+            examples
+                .filter { ex -> ex.stamp?.let { isStale(it, current) } == true }
+                .mapTo(HashSet()) { it.id }
+        val visible =
+            when {
+                // The stale triage view: exactly the rows the next SELECT tick would archive.
+                stale -> examples.filter { it.id in staleIds }
+                // ARCHIVED is its own facet; everywhere else stale rows are noise (QA-6).
+                parsed == ExampleStatus.ARCHIVED -> examples
+                parsed == null ->
+                    examples.filter { it.status != ExampleStatus.ARCHIVED && it.id !in staleIds }
+                else -> examples.filter { it.id !in staleIds }
+            }
         model.addAttribute("pageTitle", "SFT")
-        model.addAttribute("examples", sft.list(parsed))
+        model.addAttribute(
+            "examples",
+            visible.sortedWith(
+                compareBy<SftExample> { verdictRank(it) }.thenByDescending { it.updatedAt }
+            ),
+        )
         model.addAttribute("statuses", ExampleStatus.entries)
         model.addAttribute("activeStatus", parsed?.name)
+        model.addAttribute("staleView", stale)
+        model.addAttribute("staleCount", staleIds.size)
+        model.addAttribute("staleIds", staleIds)
+        model.addAttribute("subjectFilter", subject?.takeIf { it.isNotBlank() })
+        model.addAttribute(
+            "subjectFilterName",
+            subject?.takeIf { it.isNotBlank() }?.let { subjects.get(it)?.displayName },
+        )
         model.addAttribute("scenarios", scenarios.list())
         model.addAttribute("draftProvider", drafting.activeProviderId())
         return "sft/list"
+    }
+
+    /** FAIL first, then BORDERLINE, PASS, and unjudged/legacy last (QA-4 pre-sort). */
+    private fun verdictRank(example: SftExample): Int =
+        when (example.judgeVerdict) {
+            JudgeVerdict.FAIL -> 0
+            JudgeVerdict.BORDERLINE -> 1
+            JudgeVerdict.PASS -> 2
+            null -> 3
+        }
+
+    private fun isStale(stamp: Stage4Stamp, current: Map<String, CurrentStamp>): Boolean {
+        val c = current[stamp.subjectId] ?: return false
+        return c.scoreRunId == null ||
+            stamp.scoreRunId != c.scoreRunId ||
+            stamp.personaHash != c.personaHash
     }
 
     @PostMapping("/new")
@@ -112,6 +186,19 @@ class SftController(
         model.addAttribute("errors", sft.validate(example))
         model.addAttribute("preview", sft.preview(example))
         model.addAttribute("draftProvider", drafting.activeProviderId())
+        // VA-65: the Stage 4 panels — all null on legacy (stamp-less) examples, which render
+        // exactly as before.
+        val stamp = example.stamp
+        model.addAttribute("stampChips", stamp?.let { stage4Panels.stampChips(it) })
+        model.addAttribute(
+            "judgePanel",
+            stamp?.let { stage4Panels.judgePanel(example.id, example.turns) },
+        )
+        model.addAttribute("planPanel", stamp?.let { stage4Panels.planPanel(it) })
+        model.addAttribute(
+            "subjectName",
+            stamp?.let { subjects.get(it.subjectId)?.displayName },
+        )
         return "sft/edit"
     }
 

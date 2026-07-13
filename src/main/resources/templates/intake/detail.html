@@ -282,6 +282,14 @@
                     <a class="btn" style="margin-top:0.8rem;"
                        th:href="@{/intake/{id}/stage2(id=${subject.id})}"
                        th:text="${manifest.stage2StartedAt != null} ? 'Stage 2 progress →' : 'Run Stage 2 →'">Stage 2 →</a>
+                    <!-- Stage 4 entry points (VA-63/64): the ledger is published — the advocate
+                         pipeline is open. Persona first, then the run page. -->
+                    <div class="row-actions" th:if="${stage4Ready}" style="margin-top:0.6rem;">
+                        <span class="badge badge--success">PUBLISHED</span>
+                        <a class="btn btn--ghost btn--sm" th:href="@{/intake/{id}/persona(id=${subject.id})}"
+                           th:text="${personaStored} ? 'Persona →' : 'Set up persona →'">Persona →</a>
+                        <a class="btn btn--sm" th:href="@{/intake/{id}/stage4(id=${subject.id})}">Stage 4 →</a>
+                    </div>
                     <form sec:authorize="hasRole('ADMIN')" th:if="${manifest.stage2StartedAt == null}" method="post"
                           th:action="@{/intake/{id}/unseal(id=${subject.id})}" class="form" style="margin-top:0.8rem; max-width:none;"
                           data-confirm="Unsealing reopens the manifest and its assets for editing; it will need a fresh seal before the Stage 2 handoff."

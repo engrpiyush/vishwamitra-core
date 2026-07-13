@@ -374,6 +374,12 @@ data class AppProperties(
         val enabled: Boolean = true,
         /** Dev/test: offline generator + judge doubles over the Stage 3 dry-run corpus (VA-62). */
         val dryRun: Boolean = false,
+        /**
+         * VA-62 scripted-judge verdict distribution (dry-run only): fraction of plans judged FAIL
+         * and BORDERLINE respectively (deterministic per planId); the rest judge PASS.
+         */
+        val dryRunJudgeFailRate: Double = 0.10,
+        val dryRunJudgeBorderlineRate: Double = 0.15,
         /** Dataset-category mix weights (S4-D7 / QA-3) — fluid dials, normalized before use. */
         val mix: Mix = Mix(),
         /** PLAN fan-out cap: conversations planned per claim across all categories (§9.2). */
@@ -386,6 +392,13 @@ data class AppProperties(
         val judgeBatchPerPoll: Int = 8,
         /** Judge samples per axis (self-consistency ensemble, §11 — Stage 3's §11.6 idiom). */
         val ensembleK: Int = 3,
+        /**
+         * The QD-6 dial (2026-07-13): false skips the §11 LLM judge entirely — generated examples
+         * land in the human queue as SUBMITTED, unsorted and unverdicted. The product framing is
+         * judge-as-paid-QA-add-on; skipping also stops the `stage4_judgments` distillation set from
+         * accruing, and v1.1's sampled human review needs it back on.
+         */
+        val judgeEnabled: Boolean = true,
         /**
          * Fraction of PASS-judged conversations routed to the human queue. v1 IGNORES this and
          * enforces 1.0 — 100% human review (QA-4); the dial exists for the designed v1.1
@@ -402,14 +415,17 @@ data class AppProperties(
         val phaseTimeout: Duration = Duration.ofMinutes(15),
     ) {
         /**
-         * The five S4-D7 category weights (defaults 40/25/15/15/5, QA-3). Any non-negative dial
-         * values are accepted; consumers read [normalized].
+         * The five S4-D7 category weights (defaults 25/35/25/10/5 — QA-3, rebalanced QD-4
+         * 2026-07-13: situational-led with the QA anchor retained). Any non-negative dial values
+         * are accepted. Since QD-5 the planner steers only the fact-driven trio (qa / situational /
+         * multiClaim, normalized among themselves); [negative] and [meta] plan their full probe
+         * banks and these two dials are recorded in the snapshot but not read.
          */
         data class Mix(
-            val qa: Double = 0.40,
-            val situational: Double = 0.25,
-            val multiClaim: Double = 0.15,
-            val negative: Double = 0.15,
+            val qa: Double = 0.25,
+            val situational: Double = 0.35,
+            val multiClaim: Double = 0.25,
+            val negative: Double = 0.10,
             val meta: Double = 0.05,
         ) {
             /**

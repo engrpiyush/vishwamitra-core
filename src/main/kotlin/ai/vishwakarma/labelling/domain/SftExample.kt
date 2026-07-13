@@ -74,6 +74,11 @@ data class SftExample(
     val scenarioId: String? = null,
     /** Stage 4 traceability stamp (§6); null on legacy labelling-era examples. */
     val stamp: Stage4Stamp? = null,
+    /**
+     * Latest §11 judge rollup landed on the example — the review queue's pre-sort key (FAIL →
+     * BORDERLINE → PASS). Null until judged; full per-axis detail lives in `stage4_judgments`.
+     */
+    val judgeVerdict: JudgeVerdict? = null,
     /** Why the example was ARCHIVED, e.g. "superseded by <scoreRunId|personaHash>" (QA-6). */
     val archivedReason: String? = null,
     val reviewComments: List<ReviewComment> = emptyList(),

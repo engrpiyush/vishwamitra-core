@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container">
+    <nav th:replace="~{fragments/common :: adminnav('advocate-names')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Advocate names</h1>
+    <p class="muted">The Stage 4 name pool (QA on A2): a skipped wizard name auto-assigns
+        deterministically from this list — <code>pool[hash(subjectId) % size]</code>, stable per
+        subject while the pool is unchanged. Adding or removing rows shifts the auto-assignment
+        <strong>only for subjects without a pinned name</strong>; their next run re-stamps the
+        persona hash and archives the examples generated under the old name (QA-6).</p>
+
+    <div class="row-actions" style="margin-bottom:1rem;">
+        <span class="badge badge--info" th:text="${pool.size()} + ' in pool'">18 in pool</span>
+        <span class="badge badge--muted" th:each="rc : ${regionCounts}"
+              th:text="${rc.key} + ' ' + ${rc.value}">US 6</span>
+        <span class="muted" style="font-size:0.85em;">target 15–20 names, ~50/50 across regions</span>
+    </div>
+
+    <table class="grid">
+        <thead><tr><th>Name</th><th>Region</th><th>Gender</th><th>Added by</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="n : ${pool}">
+            <td th:text="${n.name}">Name</td>
+            <td th:text="${n.region ?: '—'}">US</td>
+            <td th:text="${n.gender ?: '—'}">F</td>
+            <td class="muted" th:text="${n.createdBy ?: '—'}">seed</td>
+            <td>
+                <form method="post" class="inline-form"
+                      th:action="@{/admin/advocate-names/{id}/delete(id=${n.id})}"
+                      th:attr="data-confirm=${'Remove ' + n.name + ' from the pool? Auto-assignment shifts for subjects without a pinned name — their next Stage 4 run archives examples generated under the old name. A persona explicitly pinned to this name keeps working until re-saved.'}"
+                      data-confirm-title="Remove this name?" data-confirm-ok="Remove" data-confirm-danger>
+                    <button type="submit" class="link danger">&times;</button>
+                </form>
+            </td>
+        </tr>
+        <tr th:if="${pool.isEmpty()}"><td colspan="5"><div class="empty-state">Pool is empty —
+            the deterministic fallback name applies until names are added (dev seeds 18 on boot).</div></td></tr>
+        </tbody>
+    </table>
+
+    <div class="panel" style="margin-top:1.2rem; max-width:32rem;">
+        <h3>Add a name</h3>
+        <form method="post" th:action="@{/admin/advocate-names}" class="form" style="max-width:none;">
+            <label>Name <input type="text" name="name" required placeholder="e.g. Maya Sharma"/></label>
+            <label>Region
+                <select name="region">
+                    <option value="">—</option>
+                    <option th:each="r : ${regions}" th:value="${r}" th:text="${r}">US</option>
+                </select>
+            </label>
+            <label>Gender <span class="muted">(display metadata — keep the pool ~50/50)</span>
+                <input type="text" name="gender" placeholder="F / M" maxlength="12"/>
+            </label>
+            <button type="submit">Add to pool</button>
+        </form>
+    </div>
+</main>
+</body>
+</html>

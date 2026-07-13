@@ -1,11 +1,14 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.AdvocateName
+import ai.vishwakarma.labelling.domain.AdvocateRegion
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.ToolParam
 import ai.vishwakarma.labelling.domain.ToolStatus
 import ai.vishwakarma.labelling.domain.splitLabels
+import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.CatalogService
@@ -15,6 +18,7 @@ import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.TaxonomyService
 import ai.vishwakarma.labelling.service.UserService
+import java.time.Instant
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
@@ -37,6 +41,7 @@ class AdminController(
     private val users: UserService,
     private val providers: ProviderService,
     private val extractionPrompts: ExtractionPromptService,
+    private val advocateNames: AdvocateNameRepository,
 ) {
 
     private fun actor() = CurrentUser.email()
@@ -297,6 +302,7 @@ class AdminController(
         model.addAttribute("section", "extraction-prompts")
         model.addAttribute("groups", extractionPrompts.list())
         model.addAttribute("stage3Rows", extractionPrompts.listStage3())
+        model.addAttribute("stage4", extractionPrompts.listStage4())
         return "admin/extraction-prompts"
     }
 
@@ -306,7 +312,10 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") instructions: String,
         ra: RedirectAttributes,
     ): String {
-        val known = extractionPrompts.isStage3Key(id) || ContentType.fromOrNull(id) != null
+        val known =
+            extractionPrompts.isStage3Key(id) ||
+                extractionPrompts.isStage4Key(id) ||
+                ContentType.fromOrNull(id) != null
         when {
             !known -> ra.addFlashAttribute("error", "Unknown prompt '$id'")
             instructions.isBlank() ->
@@ -324,12 +333,104 @@ class AdminController(
 
     @PostMapping("/extraction-prompts/{id}/reset")
     fun resetExtractionPrompt(@PathVariable id: String, ra: RedirectAttributes): String {
-        if (!extractionPrompts.isStage3Key(id) && ContentType.fromOrNull(id) == null) {
+        if (
+            !extractionPrompts.isStage3Key(id) &&
+                !extractionPrompts.isStage4Key(id) &&
+                ContentType.fromOrNull(id) == null
+        ) {
             ra.addFlashAttribute("error", "Unknown prompt '$id'")
         } else {
             extractionPrompts.resetKey(id)
             ra.addFlashAttribute("ok", "$id reverted to the code default")
         }
         return "redirect:/admin/extraction-prompts"
+    }
+
+    /** VA-66: the admin-designated default preset — the `stage4:preset-default` pointer row. */
+    @PostMapping("/extraction-prompts/stage4-preset-default")
+    fun setStage4DefaultPreset(@RequestParam presetId: String, ra: RedirectAttributes): String {
+        val ids = extractionPrompts.listStage4().presetIds
+        if (presetId !in ids) {
+            ra.addFlashAttribute("error", "Unknown preset '$presetId'")
+        } else {
+            extractionPrompts.updateKey(
+                ExtractionPromptService.STAGE4_PRESET_DEFAULT_KEY,
+                presetId,
+                actor(),
+            )
+            ra.addFlashAttribute("ok", "Default preset is now '$presetId'")
+        }
+        return "redirect:/admin/extraction-prompts"
+    }
+
+    /** VA-66: register a new admin preset (`stage4:preset:<slug>`). */
+    @PostMapping("/extraction-prompts/stage4-preset")
+    fun createStage4Preset(
+        @RequestParam name: String,
+        @RequestParam(required = false, defaultValue = "") instructions: String,
+        ra: RedirectAttributes,
+    ): String {
+        runCatching { extractionPrompts.createStage4Preset(name, instructions, actor()) }
+            .fold(
+                { saved -> ra.addFlashAttribute("ok", "Preset '${saved.id}' created") },
+                { ra.addFlashAttribute("error", it.message ?: "Could not create the preset") },
+            )
+        return "redirect:/admin/extraction-prompts"
+    }
+
+    // ---- Advocate names (VA-66, QA on A2) -------------------------------------
+    @GetMapping("/advocate-names")
+    fun advocateNamesPage(model: Model): String {
+        val pool = advocateNames.findAll()
+        model.addAttribute("pageTitle", "Advocate names")
+        model.addAttribute("section", "advocate-names")
+        model.addAttribute("pool", pool)
+        model.addAttribute("regions", AdvocateRegion.entries)
+        model.addAttribute(
+            "regionCounts",
+            AdvocateRegion.entries.associateWith { r -> pool.count { it.region == r } },
+        )
+        return "admin/advocate-names"
+    }
+
+    @PostMapping("/advocate-names")
+    fun createAdvocateName(
+        @RequestParam name: String,
+        @RequestParam(required = false) region: String?,
+        @RequestParam(required = false) gender: String?,
+        ra: RedirectAttributes,
+    ): String {
+        val trimmed = name.trim()
+        when {
+            trimmed.isEmpty() -> ra.addFlashAttribute("error", "Name cannot be blank")
+            advocateNames.findAll().any { it.name.equals(trimmed, ignoreCase = true) } ->
+                ra.addFlashAttribute("error", "'$trimmed' is already in the pool")
+            else -> {
+                advocateNames.save(
+                    AdvocateName(
+                        id = advocateNames.newId(),
+                        name = trimmed,
+                        region = AdvocateRegion.fromOrNull(region),
+                        gender = gender?.trim()?.takeIf { it.isNotBlank() },
+                        createdBy = actor(),
+                        createdAt = Instant.now(),
+                    )
+                )
+                ra.addFlashAttribute("ok", "'$trimmed' added to the pool")
+            }
+        }
+        return "redirect:/admin/advocate-names"
+    }
+
+    @PostMapping("/advocate-names/{id}/delete")
+    fun deleteAdvocateName(@PathVariable id: String, ra: RedirectAttributes): String {
+        val existing = advocateNames.findById(id)
+        if (existing == null) {
+            ra.addFlashAttribute("error", "Name not found")
+        } else {
+            advocateNames.delete(id)
+            ra.addFlashAttribute("ok", "'${existing.name}' removed from the pool")
+        }
+        return "redirect:/admin/advocate-names"
     }
 }
