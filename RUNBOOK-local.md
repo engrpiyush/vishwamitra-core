@@ -63,7 +63,7 @@ run.
 
 | Piece | Dev behavior |
 | --- | --- |
-| Firestore | Emulator (in-memory — restart = wipe) |
+| Firestore | Emulator (in-memory — restart = wipe; snapshot/restore: §7) |
 | Neo4j graph | **Real** container; data persists in the `neo4j-data` volume |
 | Intake uploads | Local disk `var/intake/` (no GCS, no signed URLs) |
 | Stage 2 STT + extraction | Dry-run: canned diarized transcript / canned claims |
@@ -175,10 +175,50 @@ the §15 #6 staleness design, not a bug). Stage 2 live STT similarly: `APP_STAGE
 | --- | --- |
 | Wipe the graph (exact worked-example repro) | `docker compose down -v && docker compose up -d neo4j`, then re-seed |
 | Wipe Firestore (subjects, claims, runs, golden set) | Restart the emulator (in-memory), restart the app |
+| Snapshot / restore Firestore across restarts (protect a paid judge run) | `scripts/firestore-emulator-backup.sh` / `…-restore.sh` — see below |
 | Re-seed the corpus | `POST /api/stage3/dev/seed-corpus` (refused while its run is active) |
 | Re-run a subject (PUBLISHED or parked AWAITING_REVIEW) | Run page → **Re-run** (cache-warm) or **Fresh re-run** (wipes the subject's evidence layer + cached judge verdicts). From AWAITING_REVIEW the parked run retires as SUPERSEDED — its provisional scores are discarded without touching the ledger |
 | Get back to the queue after publish | `curl -X POST http://localhost:8090/api/stage3/runs/{runId}/reopen` (ADMIN; PUBLISHED → AWAITING_REVIEW — the ledger keeps the last-published values until the next publish) |
 | Un-stick a FAILED run | Run page → **Retry** (resumes the failed phase; phases are re-entrant) |
+
+### Snapshot / restore the Firestore ledger
+
+The emulator holds everything in memory — a restart loses artifacts that cost real credits to
+produce (a live judge run: `stage3_runs`, `stage3_edges`, scores). The habit: **expensive run
+finishes → snapshot immediately.** A snapshot is point-in-time and needs the emulator still
+alive — an unplanned crash loses everything since the last one.
+
+```bash
+scripts/firestore-emulator-backup.sh   # → var/firestore-backups/<utc-stamp>/ (+ manifest.tsv of doc counts)
+```
+
+Snapshots are plain Firestore export bundles on disk (gitignored under `var/`): they survive
+emulator, app, and machine restarts. Only disk/laptop loss is uncovered — copy
+`var/firestore-backups/<stamp>/` to a bucket for real durability.
+
+**Round-trip across a restart** — order matters, because the app seeds strawman catalogs into an
+empty ledger at startup; restore *before* the app's first start:
+
+```bash
+# 1. While the emulator is still up — capture state
+scripts/firestore-emulator-backup.sh
+
+# 2. Restart whatever needs restarting (emulator or the whole machine)
+
+# 3. Start the emulator as usual (§2 T2)
+gcloud beta emulators firestore start --host-port=127.0.0.1:8082 --project=vishwakarma-ai-poc
+
+# 4. Load the newest snapshot back — ends with a per-collection count check vs the manifest
+scripts/firestore-emulator-restore.sh
+#    (or a specific one: scripts/firestore-emulator-restore.sh var/firestore-backups/<stamp>)
+
+# 5. Only now start the app (§2 T3)
+```
+
+The restore refuses a non-empty database — the "app already started and seeded" mistake —
+`--force` overrides (documents are overwritten by path). Both scripts honor
+`FIRESTORE_EMULATOR_HOST` / `GCP_PROJECT_ID` / `FIRESTORE_DATABASE`, defaulting to the §2
+posture.
 
 ## 8. Troubleshooting
 
