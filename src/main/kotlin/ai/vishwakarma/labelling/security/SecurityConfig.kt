@@ -103,6 +103,7 @@ class SecurityConfig {
                 authorize("/error", permitAll)
                 // Public coming-soon page + its subscribe API.
                 authorize("/coming-soon.html", permitAll)
+                authorize("/vishwakarma-ai-landing.html", permitAll)
                 authorize("/coming-soon/**", permitAll)
                 // Public data-collection guide (static pages, read before gathering data).
                 authorize("/user-guide/**", permitAll)
