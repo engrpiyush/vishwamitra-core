@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('dashboard')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="page-head">
+        <h1>Admin Console</h1>
+        <p class="muted">Operator configuration and managed resources (LLD §14A). ADMIN-only;
+            runtime-editable — changes apply on the next run, no deploy.</p>
+    </div>
+
+    <div class="console-cards">
+        <section class="panel console-card">
+            <h3>Global configuration</h3>
+            <span class="card-stat"><span th:text="${providersEnabled}">0</span><span class="muted"> / </span><span th:text="${providersTotal}">0</span></span>
+            <p class="muted">providers enabled · <span th:text="${toolsCount}">0</span> tools in the catalog.
+                Key refs stay in Secret Manager. Live config store lands with VA-83.</p>
+            <div class="card-links">
+                <a th:href="@{/admin/providers}">Providers</a>
+                <a th:href="@{/admin/tools}">Tools</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Stages</h3>
+            <span class="card-stat"><span th:text="${configOverrides}">0</span><span class="muted"> + </span><span th:text="${promptOverrides}">0</span></span>
+            <p class="muted">config + prompt overrides live. Each stage has a Configuration tab
+                (live store — override → yml → code default) and a Prompts tab.</p>
+            <div class="card-links">
+                <a th:href="@{/admin/stages/1}">1 · Collection</a>
+                <a th:href="@{/admin/stages/2}">2 · Claim extraction</a>
+                <a th:href="@{/admin/stages/3}">3 · Calibration</a>
+                <a th:href="@{/admin/stages/4}">4 · Construction</a>
+                <a th:href="@{/admin/extraction-prompts}">Prompts index</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Users / Members</h3>
+            <span class="card-stat" th:text="${membersCount}">0</span>
+            <p class="muted">modelled members. Consolidated member detail (profile · Stages 1–4 ·
+                Hosting tab) lands with VA-85 — until then the intake list is the way in.</p>
+            <div class="card-links">
+                <a th:href="@{/intake}">Intake</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Base models</h3>
+            <span class="card-stat"><span th:text="${baseModelsActive}">0</span><span class="muted"> / </span><span th:text="${baseModelsTotal}">0</span></span>
+            <p class="muted">models active · <span th:text="${baseModelsTunable}">0</span> tunable.
+                The hostable dimension (serving image, accelerator, serve-verified) lands with VA-86.</p>
+            <div class="card-links">
+                <a th:href="@{/admin/base-models}">Base models</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Notebook templates</h3>
+            <span class="card-stat"><span th:text="${templatesCount}">0</span></span>
+            <p class="muted">templates across <span th:text="${categoriesCount}">0</span> evaluation-trait
+                categories. Stage 4 planning consumes the library once VA-88 lands.</p>
+            <div class="card-links">
+                <a th:href="@{/admin/notebook-templates}">Templates</a>
+                <a th:href="@{/admin/scenarios}">Scenarios · legacy</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Operators / Team</h3>
+            <span class="card-stat" th:text="${operatorsCount}">0</span>
+            <p class="muted">operator accounts (ADMIN ⊃ REVIEWER ⊃ AUTHOR). Rename +
+                member/operator split polish lands with VA-85.</p>
+            <div class="card-links">
+                <a th:href="@{/admin/users}">Operators / Team</a>
+            </div>
+        </section>
+
+        <section class="panel console-card">
+            <h3>Utilities</h3>
+            <p class="muted">Training-data authoring and pipeline utilities — REVIEWER/AUTHOR
+                surfaces, now inside the console shell (VA-89).</p>
+            <div class="card-links">
+                <a th:href="@{/sft}">SFT</a>
+                <a th:href="@{/dpo}">DPO</a>
+                <a th:href="@{/export}">Export</a>
+                <a th:href="@{/import}">Import</a>
+                <a th:href="@{/training}">Training</a>
+                <a th:href="@{/models}">Models</a>
+            </div>
+        </section>
+    </div>
+</main>
+</body>
+</html>

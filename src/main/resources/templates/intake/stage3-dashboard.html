@@ -55,7 +55,8 @@
     .dash-tiles .tile-value { font-size: 1.45rem; }
     .dash-tiles .tile-label { font-size: 0.8rem; color: var(--muted); }
 </style>
-<main class="container wide">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <div class="row-between">

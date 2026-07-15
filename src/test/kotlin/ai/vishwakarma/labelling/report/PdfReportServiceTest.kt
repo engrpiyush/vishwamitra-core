@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.gcs.IntakeStorage
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectReport
 import ai.vishwakarma.labelling.persistence.SubjectReportRepository
@@ -41,9 +42,9 @@ private class CannedDashboards(var result: Either<DomainError, DashboardData>) :
     Stage3DashboardService(
         SubjectRepository(mock(Firestore::class.java)),
         Stage3RunRepository(mock(Firestore::class.java)),
-        Stage3GraphRepository(mock(Driver::class.java), AppProperties()),
+        Stage3GraphRepository(mock(Driver::class.java), liveConfig(AppProperties())),
         SubjectScoreRepository(mock(Firestore::class.java)),
-        AppProperties(),
+        liveConfig(AppProperties()),
     ) {
     override fun dashboard(subjectId: String): Either<DomainError, DashboardData> = result
 }
@@ -186,7 +187,8 @@ class PdfReportServiceTest {
                 }
             )
         }
-    private val service = PdfReportService(dashboards, storage, reports, runs, templates, props)
+    private val service =
+        PdfReportService(dashboards, storage, reports, runs, templates, liveConfig(props))
 
     private val localPdf: Path = Path.of("var", "intake", "reports", "s1", "profile.pdf")
 

@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage2
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.liveConfig
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,7 +14,7 @@ import kotlin.test.assertNull
  */
 class Mp4AudioProbeTest {
 
-    private val probe = Mp4AudioProbe(AppProperties())
+    private val probe = Mp4AudioProbe(liveConfig(AppProperties()))
 
     @Test
     fun `probes sample rate and channels from a faststart mp4`() {
@@ -53,7 +54,9 @@ class Mp4AudioProbeTest {
                 box("mdat", ByteArray(4))
             )
         val disabled =
-            Mp4AudioProbe(AppProperties(stage2 = AppProperties.Stage2(probeAudioParams = false)))
+            Mp4AudioProbe(
+                liveConfig(AppProperties(stage2 = AppProperties.Stage2(probeAudioParams = false)))
+            )
 
         assertNull(disabled.probe(uri))
     }

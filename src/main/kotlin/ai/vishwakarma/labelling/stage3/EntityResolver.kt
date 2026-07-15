@@ -1,6 +1,6 @@
 package ai.vishwakarma.labelling.stage3
 
-import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.service.StageConfigService
 import java.text.Normalizer
 import java.util.UUID
 import org.springframework.stereotype.Component
@@ -114,7 +114,7 @@ data class ResolutionOutcome(
 class EntityResolver(
     private val graph: Stage3GraphRepository,
     private val embeddings: EmbeddingService,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     fun resolve(
@@ -266,7 +266,7 @@ class EntityResolver(
                             )
                         })
                 .maxByOrNull { it.score }
-        val threshold = props.stage3.entityMergeThreshold
+        val threshold = config.stage3().entityMergeThreshold
         return when {
             top != null && top.score >= threshold ->
                 ResolvedTarget(top.entityType, top.canonicalKey, top.score, false, "EMBED")

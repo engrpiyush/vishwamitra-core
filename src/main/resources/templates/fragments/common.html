@@ -30,24 +30,9 @@
 <body>
 <div th:fragment="progressbar" id="progress-bar"></div>
 
+<!-- VA-89: the console left-nav is the navigation; the top bar is brand + theme + identity only. -->
 <nav th:fragment="nav" class="topnav">
     <a class="brand" th:href="@{/home}"><span class="brand-mark"></span>Vishwamitra</a>
-    <button type="button" class="icon-btn nav-burger" aria-label="Toggle menu" data-nav-toggle>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M4 6h16M4 12h16M4 18h16"/></svg>
-    </button>
-    <div class="links" id="navLinks">
-        <a th:href="@{/sft}"      th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/sft')} ? 'active'">SFT</a>
-        <a th:href="@{/dpo}"      th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/dpo')} ? 'active'">DPO</a>
-        <a th:href="@{/export}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/export')} ? 'active'">Export</a>
-        <a th:href="@{/import}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/import')} ? 'active'">Import</a>
-        <a th:href="@{/intake}"   sec:authorize="hasRole('REVIEWER')"
-           th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/intake')} ? 'active'">Intake</a>
-        <a th:href="@{/training}" th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/training')} ? 'active'">Training</a>
-        <a th:href="@{/models}"   th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/models')} ? 'active'">Models</a>
-        <a th:href="@{/admin/tools}" sec:authorize="hasRole('ADMIN')"
-           th:classappend="${currentPath != null and #strings.startsWith(currentPath, '/admin')} ? 'active'">Admin</a>
-    </div>
     <div class="nav-tools">
         <button type="button" class="icon-btn theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">
             <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -75,17 +60,61 @@
     <div class="flash error" th:if="${error}" th:text="${error}">error</div>
 </div>
 
-<nav th:fragment="adminnav(active)" class="subnav">
-    <a th:href="@{/admin/tools}"        th:classappend="${active == 'tools'} ? 'active'">Tools</a>
-    <a th:href="@{/admin/base-models}"  th:classappend="${active == 'base-models'} ? 'active'">Base models</a>
-    <a th:href="@{/admin/taxonomy}"     th:classappend="${active == 'taxonomy'} ? 'active'">Taxonomy</a>
-    <a th:href="@{/admin/scenarios}"    th:classappend="${active == 'scenarios'} ? 'active'">Scenarios</a>
-    <a th:href="@{/admin/users}"        th:classappend="${active == 'users'} ? 'active'">Users</a>
-    <a th:href="@{/admin/providers}"    th:classappend="${active == 'providers'} ? 'active'">Providers</a>
-    <a th:href="@{/admin/extraction-prompts}" th:classappend="${active == 'extraction-prompts'} ? 'active'">Extraction prompts</a>
-    <a th:href="@{/admin/entities}"     th:classappend="${active == 'entities'} ? 'active'">Entities</a>
-    <a th:href="@{/admin/stage3-eval}"  th:classappend="${active == 'stage3-eval'} ? 'active'">Stage 3 eval</a>
-    <a th:href="@{/admin/advocate-names}" th:classappend="${active == 'advocate-names'} ? 'active'">Advocate names</a>
-</nav>
+<!--
+  VA-82/VA-89 console left-nav (LLD §14A.1–14A.2): the shell for EVERY role. Groups are
+  role-filtered with sec:authorize — config sections are ADMIN-only; work surfaces show at their
+  page's minimum role (URL + method security still enforce independently). Pages call
+  consolenav(active) with their section key; `.console` on the page's <main> places this aside
+  in the left grid column.
+-->
+<aside th:fragment="consolenav(active)" class="console-nav">
+    <a th:href="@{/home}" th:classappend="${active == 'home'} ? 'active'">Home</a>
+    <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin}" th:classappend="${active == 'dashboard'} ? 'active'">Admin dashboard</a>
+    <div class="console-group" sec:authorize="hasRole('ADMIN')">
+        <span class="console-group-label">Global configuration</span>
+        <a th:href="@{/admin/providers}" th:classappend="${active == 'providers'} ? 'active'">Providers</a>
+        <a th:href="@{/admin/tools}" th:classappend="${active == 'tools'} ? 'active'">Tools</a>
+    </div>
+    <div class="console-group" sec:authorize="hasRole('ADMIN')">
+        <span class="console-group-label">Stages</span>
+        <a th:href="@{/admin/stages/1}" th:classappend="${active == 'stage1'} ? 'active'">1 · Collection</a>
+        <a th:href="@{/admin/stages/2}" th:classappend="${active == 'stage2'} ? 'active'">2 · Claim extraction</a>
+        <a th:href="@{/admin/stages/3}" th:classappend="${active == 'stage3'} ? 'active'">3 · Calibration</a>
+        <a class="sub" th:href="@{/admin/entities}" th:classappend="${active == 'entities'} ? 'active'">Entities</a>
+        <a class="sub" th:href="@{/admin/stage3-eval}" th:classappend="${active == 'stage3-eval'} ? 'active'">Eval labels</a>
+        <a th:href="@{/admin/stages/4}" th:classappend="${active == 'stage4'} ? 'active'">4 · Construction</a>
+        <a class="sub" th:href="@{/admin/advocate-names}" th:classappend="${active == 'advocate-names'} ? 'active'">Advocate names</a>
+    </div>
+    <div class="console-group" sec:authorize="hasRole('REVIEWER')">
+        <span class="console-group-label">Users / Members</span>
+        <a th:href="@{/intake}" th:classappend="${active == 'intake'} ? 'active'">Members · intake</a>
+    </div>
+    <div class="console-group" sec:authorize="hasRole('ADMIN')">
+        <span class="console-group-label">Base models</span>
+        <a th:href="@{/admin/base-models}" th:classappend="${active == 'base-models'} ? 'active'">Base models</a>
+    </div>
+    <div class="console-group" sec:authorize="hasRole('ADMIN')">
+        <span class="console-group-label">Notebook templates</span>
+        <a th:href="@{/admin/notebook-templates}" th:classappend="${active == 'notebook-templates'} ? 'active'">Templates</a>
+        <a th:href="@{/admin/taxonomy}" th:classappend="${active == 'taxonomy'} ? 'active'">Label taxonomy</a>
+        <a th:href="@{/admin/scenarios}" th:classappend="${active == 'scenarios'} ? 'active'">Scenarios · legacy</a>
+    </div>
+    <div class="console-group">
+        <span class="console-group-label">Training data</span>
+        <a th:href="@{/sft}" th:classappend="${active == 'sft'} ? 'active'">SFT</a>
+        <a th:href="@{/dpo}" th:classappend="${active == 'dpo'} ? 'active'">DPO</a>
+        <a sec:authorize="hasRole('REVIEWER')" th:href="@{/export}" th:classappend="${active == 'export'} ? 'active'">Export</a>
+        <a sec:authorize="hasRole('REVIEWER')" th:href="@{/import}" th:classappend="${active == 'import'} ? 'active'">Import</a>
+    </div>
+    <div class="console-group">
+        <span class="console-group-label">Models &amp; serving</span>
+        <a sec:authorize="hasRole('REVIEWER')" th:href="@{/training}" th:classappend="${active == 'training'} ? 'active'">Training</a>
+        <a th:href="@{/models}" th:classappend="${active == 'models'} ? 'active'">Models</a>
+    </div>
+    <div class="console-group" sec:authorize="hasRole('ADMIN')">
+        <span class="console-group-label">Team</span>
+        <a th:href="@{/admin/users}" th:classappend="${active == 'users'} ? 'active'">Operators / Team</a>
+    </div>
+</aside>
 </body>
 </html>

@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
@@ -89,7 +90,7 @@ class ClaimJudgeServiceTest {
         )
     private val edges = FakeEdgeRepo()
     private val sampler = ScriptedSampler()
-    private val service = ClaimJudgeService(sampler, edges, props)
+    private val service = ClaimJudgeService(sampler, edges, liveConfig(props))
 
     private fun pair(
         a: String,
@@ -264,7 +265,7 @@ class ClaimJudgeServiceTest {
     @Test
     fun `gemini sampler alternates presentation across samples and stamps the prompt version`() {
         val gemini = FakeGemini()
-        val judgeSampler = GeminiJudgeSampler(gemini, FixedPrompts(), props)
+        val judgeSampler = GeminiJudgeSampler(gemini, FixedPrompts(), liveConfig(props))
         assertEquals("gemini:1:abc123", judgeSampler.versionStamp)
         assertEquals("gemini-test", judgeSampler.modelId)
 

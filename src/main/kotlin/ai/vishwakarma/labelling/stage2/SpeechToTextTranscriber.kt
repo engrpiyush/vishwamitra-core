@@ -1,7 +1,7 @@
 package ai.vishwakarma.labelling.stage2
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.StageConfigService
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.StorageOptions
@@ -21,8 +21,10 @@ import org.springframework.web.client.RestClient
  * without GCP.
  */
 @Component
-class SpeechToTextTranscriber(private val props: AppProperties, private val probe: Mp4AudioProbe) :
-    Transcriber {
+class SpeechToTextTranscriber(
+    private val config: StageConfigService,
+    private val probe: Mp4AudioProbe
+) : Transcriber {
 
     private val log = LoggerFactory.getLogger(javaClass)
     private val rest = RestClient.create()
@@ -39,7 +41,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
      * region when blank (the in-region, single-region default). This is decoupled from the app's
      * GCP region so diarization can run on a multi-region/global endpoint without moving the app.
      */
-    private fun location(): String = props.stage2.sttLocation.ifBlank { props.gcp.region }
+    private fun location(): String = config.stage2().sttLocation.ifBlank { config.boot.gcp.region }
 
     private fun base(): String = "https://${sttHost(location())}/v2"
 
@@ -51,12 +53,12 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         attempt: Int,
         hints: List<String>,
     ): String {
-        if (props.stage2.dryRun) {
+        if (config.stage2().dryRun) {
             log.info("Stage 2 dry-run: simulating batchRecognize submit for asset {}", assetId)
             return "$DRY_RUN_PREFIX$assetId"
         }
         val bucket =
-            props.stage2.transcriptsBucket.ifBlank {
+            config.stage2().transcriptsBucket.ifBlank {
                 error("app.stage2.transcripts-bucket not set")
             }
         val attempts = decodingAttempts(mimeType, gcsUri)
@@ -118,7 +120,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
 
     /** Chirp (USM) models auto-detect encoding; the explicit-AAC cascade is a legacy-model need. */
     private fun isChirpModel(): Boolean =
-        props.stage2.sttModel.startsWith("chirp", ignoreCase = true)
+        config.stage2().sttModel.startsWith("chirp", ignoreCase = true)
 
     private fun explicitDecoding(encoding: String, probed: AudioParams?): Map<String, Any> =
         mapOf(
@@ -126,9 +128,9 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
                 mapOf(
                     "encoding" to encoding,
                     "sampleRateHertz" to
-                        (probed?.sampleRateHertz ?: props.stage2.explicitSampleRateHertz),
+                        (probed?.sampleRateHertz ?: config.stage2().explicitSampleRateHertz),
                     "audioChannelCount" to
-                        (probed?.channelCount ?: props.stage2.explicitChannelCount),
+                        (probed?.channelCount ?: config.stage2().explicitChannelCount),
                 )
         )
 
@@ -183,20 +185,21 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
             if (diarization) {
                 put(
                     "diarizationConfig",
-                    mapOf("minSpeakerCount" to 1, "maxSpeakerCount" to props.stage2.maxSpeakers),
+                    mapOf("minSpeakerCount" to 1, "maxSpeakerCount" to config.stage2().maxSpeakers),
                 )
             }
         }
-        val config = buildMap {
-            put("model", props.stage2.sttModel)
-            put("languageCodes", listOf(props.stage2.sttLanguage))
+        // Named to avoid shadowing the injected StageConfigService field.
+        val recognitionConfig = buildMap {
+            put("model", config.stage2().sttModel)
+            put("languageCodes", listOf(config.stage2().sttLanguage))
             putAll(decoding)
             put("features", features)
             // Phrase hints (subject name): without them ASR garbles the one term every claim
             // depends on. Boost 10 is Google's recommended starting strength (0–20). Gated by
             // app.stage2.stt-phrase-hints because the USM-based chirp_3 model may reject model
             // adaptation (§12.4 E1) — a chirp_3 deployment turns this off if the probe shows it.
-            if (hints.isNotEmpty() && props.stage2.sttPhraseHints) {
+            if (hints.isNotEmpty() && config.stage2().sttPhraseHints) {
                 put(
                     "adaptation",
                     mapOf(
@@ -217,7 +220,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         val body =
             mapOf(
                 "files" to listOf(mapOf("uri" to gcsUri)),
-                "config" to config,
+                "config" to recognitionConfig,
                 "recognitionOutputConfig" to
                     mapOf(
                         "gcsOutputConfig" to
@@ -225,7 +228,7 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
                     ),
             )
         val url =
-            "${base()}/projects/${props.gcp.projectId}/locations/${location()}" +
+            "${base()}/projects/${config.boot.gcp.projectId}/locations/${location()}" +
                 "/recognizers/_:batchRecognize"
         log.info(
             "Submitting batchRecognize for asset {} ({}, diarization={})",
@@ -372,7 +375,8 @@ class SpeechToTextTranscriber(private val props: AppProperties, private val prob
         val path = uri.removePrefix("gs://")
         val slash = path.indexOf('/')
         require(slash > 0) { "not a gs:// object uri: $uri" }
-        val storage = StorageOptions.newBuilder().setProjectId(props.gcp.projectId).build().service
+        val storage =
+            StorageOptions.newBuilder().setProjectId(config.boot.gcp.projectId).build().service
         val bytes =
             storage
                 .get(BlobId.of(path.substring(0, slash), path.substring(slash + 1)))

@@ -3,7 +3,8 @@
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
-<main class="container">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('export')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <h1>Export</h1>

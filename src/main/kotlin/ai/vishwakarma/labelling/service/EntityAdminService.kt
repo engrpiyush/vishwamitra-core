@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.persistence.Stage3EntityJournalEntry
 import ai.vishwakarma.labelling.persistence.Stage3EntityJournalRepository
 import ai.vishwakarma.labelling.stage3.EmbeddingService
@@ -57,7 +56,7 @@ class EntityAdminService(
     private val graph: Stage3GraphRepository,
     private val embeddings: EmbeddingService,
     private val journal: Stage3EntityJournalRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(EntityAdminService::class.java)
@@ -284,7 +283,7 @@ class EntityAdminService(
             graph.entityKnn(type, vector, EntityResolver.ENTITY_KNN_K + 1).firstOrNull {
                 it.entityId != entity.entityId
             }
-        val threshold = props.stage3.entityMergeThreshold
+        val threshold = config.stage3().entityMergeThreshold
         return when {
             top != null && top.score >= threshold ->
                 SplitTarget(top.entityType, top.canonicalKey, top.score, false, "EMBED")

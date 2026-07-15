@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.liveConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -25,7 +26,7 @@ private class ScriptedEmbeddings(private val vectors: Map<String, List<Double>> 
 }
 
 private class FakeEntityGraph(props: AppProperties) :
-    Stage3GraphRepository(mock(Driver::class.java), props) {
+    Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
 
     data class Stored(
         val ref: EntityRef,
@@ -120,7 +121,7 @@ class EntityResolverTest {
     private val graph = FakeEntityGraph(props)
 
     private fun resolver(embeddings: EmbeddingService = ScriptedEmbeddings()) =
-        EntityResolver(graph, embeddings, props)
+        EntityResolver(graph, embeddings, liveConfig(props))
 
     private fun claim(
         id: String,

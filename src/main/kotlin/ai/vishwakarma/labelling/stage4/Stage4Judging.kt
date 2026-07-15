@@ -11,6 +11,7 @@ import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.StageConfigService
 import java.security.MessageDigest
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -294,7 +295,7 @@ class GeminiStage4Judge(
  * counters all see every verdict class. Every sample votes identically (unanimous ensembles); the
  * distinct [versionStamp] keeps scripted judgments out of real runs' cursors.
  */
-class DryRunStage4Judge(private val props: AppProperties) : Stage4JudgeSampler {
+class DryRunStage4Judge(private val config: StageConfigService) : Stage4JudgeSampler {
 
     private val log = LoggerFactory.getLogger(DryRunStage4Judge::class.java)
 
@@ -306,8 +307,8 @@ class DryRunStage4Judge(private val props: AppProperties) : Stage4JudgeSampler {
 
     override fun sample(request: Stage4JudgeRequest, sampleIndex: Int): Map<JudgeAxis, AxisVote> {
         val u = fraction(request.plan.planId)
-        val fail = props.stage4.dryRunJudgeFailRate
-        val borderline = props.stage4.dryRunJudgeBorderlineRate
+        val fail = config.stage4().dryRunJudgeFailRate
+        val borderline = config.stage4().dryRunJudgeBorderlineRate
         val overall =
             when {
                 u < fail -> JudgeVerdict.FAIL
@@ -344,11 +345,14 @@ class DryRunStage4Judge(private val props: AppProperties) : Stage4JudgeSampler {
 @Configuration
 class Stage4JudgeConfig {
 
+    // Selection reads the BOOTSTRAP props (dry-run posture is bean-wired at startup, read-only in
+    // the admin console); the scripted double reads its rate dials live via config.
     @Bean
     fun stage4JudgeSampler(
         props: AppProperties,
+        config: StageConfigService,
         gemini: GeminiDrafting,
         prompts: ExtractionPromptService,
     ): Stage4JudgeSampler =
-        if (props.stage4.dryRun) DryRunStage4Judge(props) else GeminiStage4Judge(gemini, prompts)
+        if (props.stage4.dryRun) DryRunStage4Judge(config) else GeminiStage4Judge(gemini, prompts)
 }

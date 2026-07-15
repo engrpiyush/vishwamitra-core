@@ -18,6 +18,7 @@ import ai.vishwakarma.labelling.domain.Stage2Job
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
@@ -190,7 +191,7 @@ private class StubTranscriber : Transcriber {
     }
 }
 
-private class FakeDocumentSource : DocumentSource(AppProperties()) {
+private class FakeDocumentSource : DocumentSource(liveConfig(AppProperties())) {
     var unsupported: String? = null
     var readThrows = false
     var payload = DocumentPayload("certificate bytes".toByteArray(), "image/png")
@@ -331,7 +332,7 @@ class Stage2ServiceTest {
             extractor,
             speakerAttribution,
             documents,
-            AppProperties(),
+            liveConfig(AppProperties()),
         )
 
     private val actor = "reviewer@vishwakarma.ai"

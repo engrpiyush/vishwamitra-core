@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.domain.Subject
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
@@ -42,7 +43,7 @@ private class DashScoreRepo : SubjectScoreRepository(mock(Firestore::class.java)
 }
 
 private class DashGraphRepo(props: AppProperties) :
-    Stage3GraphRepository(mock(Driver::class.java), props) {
+    Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
     var rows: List<ScoredClaimView> = emptyList()
     var timelineView = TimelineView(emptyList(), emptyList(), emptyList(), emptyList())
 
@@ -116,7 +117,7 @@ class Stage3DashboardServiceTest {
     private val runs = DashRunRepo()
     private val graph = DashGraphRepo(props)
     private val scores = DashScoreRepo()
-    private val service = Stage3DashboardService(subjects, runs, graph, scores, props)
+    private val service = Stage3DashboardService(subjects, runs, graph, scores, liveConfig(props))
 
     private fun seed() {
         subjects.store["s1"] = Subject(id = "s1", displayName = "Asha")

@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
@@ -79,7 +78,7 @@ class Stage3Service(
     private val claimLedger: ClaimRepository,
     private val subjectScores: SubjectScoreRepository,
     private val subjectFacts: SubjectFactRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(Stage3Service::class.java)
@@ -118,7 +117,7 @@ class Stage3Service(
                 id = runs.newId(),
                 subjectId = subjectId,
                 status = Stage3RunStatus.PENDING,
-                paramsSnapshot = Json.writeLine(props.stage3),
+                paramsSnapshot = Json.writeLine(config.stage3()),
                 createdBy = actor,
                 createdAt = now,
                 phaseSince = now,
@@ -223,7 +222,7 @@ class Stage3Service(
                 id = runs.newId(),
                 subjectId = run.subjectId,
                 fresh = fresh,
-                paramsSnapshot = Json.writeLine(props.stage3),
+                paramsSnapshot = Json.writeLine(config.stage3()),
                 createdBy = actor,
                 createdAt = now,
                 phaseSince = now,
@@ -328,7 +327,7 @@ class Stage3Service(
                 graph.claimsNeedingEntityResolution(
                     run.subjectId,
                     stamp,
-                    props.stage3.entityBatchPerPoll,
+                    config.stage3().entityBatchPerPoll,
                 )
             if (batch.isEmpty()) {
                 val upgraded = graph.upgradeIssuerAttestors(run.subjectId)
@@ -391,7 +390,11 @@ class Stage3Service(
         inPhase(run, "EMBED") {
             val stamp = embeddings.versionStamp
             val batch =
-                graph.claimsNeedingEmbedding(run.subjectId, stamp, props.stage3.embedBatchPerPoll)
+                graph.claimsNeedingEmbedding(
+                    run.subjectId,
+                    stamp,
+                    config.stage3().embedBatchPerPoll
+                )
             if (batch.isEmpty()) {
                 advance(
                     run,
@@ -456,7 +459,7 @@ class Stage3Service(
                     graph.entitiesNeedingReembedding(
                         run.subjectId,
                         stamp,
-                        props.stage3.embedBatchPerPoll,
+                        config.stage3().embedBatchPerPoll,
                     )
                 if (staleEntities.isNotEmpty()) {
                     graph.setEntityEmbeddings(
@@ -491,7 +494,7 @@ class Stage3Service(
 
     /** The single blocking + cascade tick (§11.5) — all vectors verified current by the caller. */
     private fun runMatchBlocking(run: Stage3Run): Stage3Run {
-        val s3 = props.stage3
+        val s3 = config.stage3()
         val claims = graph.claimsForMatching(run.subjectId)
         val knn =
             if (s3.exhaustiveMatching) emptyList()
@@ -541,7 +544,7 @@ class Stage3Service(
      */
     private fun runJudgeTick(run: Stage3Run): Stage3Run =
         inPhase(run, "JUDGE") {
-            val batch = graph.judgeQueueBatch(run.subjectId, props.stage3.judgePairsPerPoll)
+            val batch = graph.judgeQueueBatch(run.subjectId, config.stage3().judgePairsPerPoll)
             if (batch.isEmpty()) {
                 advance(
                     run,
@@ -599,7 +602,7 @@ class Stage3Service(
                     graph.claimsForAssembly(run.subjectId),
                     graph.repeatsPairs(run.subjectId),
                     graph.judgedPairRecords(run.subjectId),
-                    props.stage3,
+                    config.stage3(),
                 )
             graph.applyAssembleOutcome(run.subjectId, outcome)
             log.info(
@@ -640,7 +643,7 @@ class Stage3Service(
         inPhase(run, "SCORE") {
             val outcome = rescore(run.subjectId)
             val queue =
-                graph.countContradictionQueue(run.subjectId, props.stage3.judgeConfidenceFloor)
+                graph.countContradictionQueue(run.subjectId, config.stage3().judgeConfidenceFloor)
             if (outcome.i2Clamped > 0)
                 log.warn(
                     "Run {}: {} claim(s) violated score ≥ scoreBare and were lifted (I2 — " +
@@ -681,8 +684,8 @@ class Stage3Service(
             Scorer.score(
                 graph.scoreSnapshot(subjectId),
                 ScorerParams(
-                    stage3 = props.stage3,
-                    favorabilityThreshold = props.stage2.favorabilityThreshold,
+                    stage3 = config.stage3(),
+                    favorabilityThreshold = config.stage2().favorabilityThreshold,
                     asOf = java.time.LocalDate.now(),
                 ),
             )
@@ -694,7 +697,7 @@ class Stage3Service(
 
     /** The §11.10 queue read: PROPOSED, unexplained contradictions at/above the floor. */
     fun contradictions(subjectId: String): List<ContradictionView> =
-        graph.contradictionQueue(subjectId, props.stage3.judgeConfidenceFloor)
+        graph.contradictionQueue(subjectId, config.stage3().judgeConfidenceFloor)
 
     /** Confirm: the penalty stands — CONFIRMED leaves the queue, keeps its effect. */
     fun confirmContradiction(edgeId: String): Either<DomainError, Stage3Run> =
@@ -805,8 +808,9 @@ class Stage3Service(
                     "Only AWAITING_REVIEW runs can publish (run is ${run.status})"
                 )
                 .left()
-        val queue = graph.countContradictionQueue(run.subjectId, props.stage3.judgeConfidenceFloor)
-        if (queue > 0 && props.stage3.publishRequiresReview && !skipReview)
+        val queue =
+            graph.countContradictionQueue(run.subjectId, config.stage3().judgeConfidenceFloor)
+        if (queue > 0 && config.stage3().publishRequiresReview && !skipReview)
             return DomainError.Conflict(
                     "$queue proposed contradiction(s) await review — confirm/dismiss/explain " +
                         "them, or publish with skipReview=true"
@@ -875,7 +879,7 @@ class Stage3Service(
                 )
             subjectFacts.replaceForSubject(run.subjectId, factDocs)
             log.info("Run {}: froze {} fact doc(s) into subject_facts", run.id, factDocs.size)
-            val aggregate = SubjectScorer.score(readback, props.stage3)
+            val aggregate = SubjectScorer.score(readback, config.stage3())
             subjectScores.save(aggregate.toRecord(run, now))
             log.info(
                 "Run {}: subject aggregate frozen — SAI {} ({})",
@@ -997,7 +1001,7 @@ class Stage3Service(
                         (Stage3Counters.CONTRADICTION_QUEUE to
                             graph.countContradictionQueue(
                                 run.subjectId,
-                                props.stage3.judgeConfidenceFloor,
+                                config.stage3().judgeConfidenceFloor,
                             )),
             )
             .also { runs.save(it) }
@@ -1012,8 +1016,8 @@ class Stage3Service(
 
     private fun tierOf(score: Double): String =
         when {
-            score >= props.stage3.tierHigh -> "HIGH"
-            score >= props.stage3.tierMedium -> "MEDIUM"
+            score >= config.stage3().tierHigh -> "HIGH"
+            score >= config.stage3().tierMedium -> "MEDIUM"
             else -> "LOW"
         }
 
@@ -1068,7 +1072,7 @@ class Stage3Service(
     private fun reclaimIfStuck(run: Stage3Run): Stage3Run? {
         if (run.status == Stage3RunStatus.PENDING) return null
         val since = run.phaseSince ?: return null
-        val timeout = props.stage3.phaseTimeout
+        val timeout = config.stage3().phaseTimeout
         if (Instant.now().isBefore(since.plus(timeout))) return null
         log.warn("Run {}: {} stuck since {} — reclaiming to FAILED", run.id, run.status, since)
         return fail(

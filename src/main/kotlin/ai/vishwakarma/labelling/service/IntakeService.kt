@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Asset
 import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
@@ -99,7 +98,7 @@ class IntakeService(
     private val subjects: SubjectRepository,
     private val manifests: IntakeManifestRepository,
     private val storage: IntakeStorage,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     fun listAssets(subjectId: String): List<Asset> = assets.findBySubject(subjectId)
@@ -129,10 +128,13 @@ class IntakeService(
                         (reg.originalFilename ?: "(no filename)")
                 )
                 .left()
-        if (reg.declaredSizeBytes != null && reg.declaredSizeBytes > props.intake.maxAssetSizeBytes)
+        if (
+            reg.declaredSizeBytes != null &&
+                reg.declaredSizeBytes > config.intake().maxAssetSizeBytes
+        )
             return DomainError.Invalid(
                     "Declared size ${reg.declaredSizeBytes} exceeds the " +
-                        "${props.intake.maxAssetSizeBytes}-byte limit"
+                        "${config.intake().maxAssetSizeBytes}-byte limit"
                 )
                 .left()
 
@@ -194,14 +196,14 @@ class IntakeService(
                         "storage; retry the upload."
                 )
                 .left()
-        if (size > props.intake.maxAssetSizeBytes) {
+        if (size > config.intake().maxAssetSizeBytes) {
             storage.deleteObject(path)
             val failed =
                 asset.copy(uploadStatus = AssetUploadStatus.FAILED, updatedAt = Instant.now())
             assets.save(failed)
             recomputeManifest(asset.subjectId)
             return DomainError.Invalid(
-                    "Asset $id exceeds max size of ${props.intake.maxAssetSizeBytes} bytes " +
+                    "Asset $id exceeds max size of ${config.intake().maxAssetSizeBytes} bytes " +
                         "($size uploaded); rejected"
                 )
                 .left()
@@ -289,7 +291,7 @@ class IntakeService(
         val size = storage.objectSize(path)
         val now = Instant.now()
         return when {
-            size != null && size > props.intake.maxAssetSizeBytes -> {
+            size != null && size > config.intake().maxAssetSizeBytes -> {
                 storage.deleteObject(path)
                 val updated = asset.copy(uploadStatus = AssetUploadStatus.FAILED, updatedAt = now)
                 assets.save(updated)
@@ -319,7 +321,7 @@ class IntakeService(
 
     private fun isStale(asset: Asset, now: Instant): Boolean {
         val created = asset.createdAt ?: return false
-        return created.isBefore(now.minus(Duration.ofHours(props.intake.staleUploadHours)))
+        return created.isBefore(now.minus(Duration.ofHours(config.intake().staleUploadHours)))
     }
 
     /** Register an external link (PUBLIC_PROFILE) — no bytes, immediately `REGISTERED`. */

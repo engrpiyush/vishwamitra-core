@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.Stage3EntityJournalEntry
 import ai.vishwakarma.labelling.persistence.Stage3EntityJournalRepository
 import ai.vishwakarma.labelling.stage3.EmbeddingService
@@ -28,7 +29,7 @@ private fun <A, B> Either<A, B>.errorOrNull(): A? = fold({ it }, { null })
 
 /** In-memory canon + MENTIONS edges implementing exactly the VA-12 repo surface. */
 private class AdminFakeGraph(props: AppProperties) :
-    Stage3GraphRepository(mock(Driver::class.java), props) {
+    Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
 
     data class Edge(
         val claimId: String,
@@ -186,7 +187,7 @@ class EntityAdminServiceTest {
     private val journal = FakeJournal()
 
     private fun service(vectors: Map<String, List<Double>> = emptyMap()) =
-        EntityAdminService(graph, SurfaceEmbeddings(vectors), journal, props)
+        EntityAdminService(graph, SurfaceEmbeddings(vectors), journal, liveConfig(props))
 
     private fun entity(
         id: String,

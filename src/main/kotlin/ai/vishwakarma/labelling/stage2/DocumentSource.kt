@@ -1,7 +1,7 @@
 package ai.vishwakarma.labelling.stage2
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Asset
+import ai.vishwakarma.labelling.service.StageConfigService
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.StorageOptions
 import java.net.URI
@@ -21,7 +21,7 @@ class DocumentPayload(val bytes: ByteArray, val mimeType: String)
  * Document AI, if extraction quality ever demands it, swaps in behind this seam.
  */
 @Component
-class DocumentSource(private val props: AppProperties) {
+class DocumentSource(private val config: StageConfigService) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -36,8 +36,8 @@ class DocumentSource(private val props: AppProperties) {
             return "Unsupported document type for Gemini extraction: " +
                 "${mime.ifBlank { "unknown" }} (supported: pdf, png, jpeg, webp, heic, heif)"
         val size = asset.sizeBytes
-        if (size != null && size > props.stage2.maxDocumentBytes)
-            return "Document is $size bytes — over the ${props.stage2.maxDocumentBytes}-byte " +
+        if (size != null && size > config.stage2().maxDocumentBytes)
+            return "Document is $size bytes — over the ${config.stage2().maxDocumentBytes}-byte " +
                 "inline limit for Gemini extraction"
         return null
     }
@@ -48,7 +48,7 @@ class DocumentSource(private val props: AppProperties) {
      * message on the job.
      */
     fun read(asset: Asset): DocumentPayload {
-        if (props.stage2.dryRun) {
+        if (config.stage2().dryRun) {
             log.info(
                 "Stage 2 dry-run: substituting the bundled certificate PDF for asset {}",
                 asset.id,
@@ -66,8 +66,8 @@ class DocumentSource(private val props: AppProperties) {
                 uri.startsWith("file://") -> Files.readAllBytes(Path.of(URI(uri)))
                 else -> error("unsupported stored-bytes uri scheme: $uri")
             }
-        check(bytes.size <= props.stage2.maxDocumentBytes) {
-            "Document is ${bytes.size} bytes — over the ${props.stage2.maxDocumentBytes}-byte " +
+        check(bytes.size <= config.stage2().maxDocumentBytes) {
+            "Document is ${bytes.size} bytes — over the ${config.stage2().maxDocumentBytes}-byte " +
                 "inline limit for Gemini extraction"
         }
         return DocumentPayload(bytes, normalize(asset.mimeType))
@@ -77,7 +77,8 @@ class DocumentSource(private val props: AppProperties) {
         val path = uri.removePrefix("gs://")
         val slash = path.indexOf('/')
         require(slash > 0) { "not a gs:// object uri: $uri" }
-        val storage = StorageOptions.newBuilder().setProjectId(props.gcp.projectId).build().service
+        val storage =
+            StorageOptions.newBuilder().setProjectId(config.boot.gcp.projectId).build().service
         return storage
             .get(BlobId.of(path.substring(0, slash), path.substring(slash + 1)))
             ?.getContent() ?: error("stored document not found: $uri")

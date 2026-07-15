@@ -11,6 +11,7 @@ import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.Stage2Job
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
@@ -78,7 +79,8 @@ class ClaimReviewServiceTest {
     private val jobs = RFakeJobRepo()
     private val claims = RFakeClaimRepo()
     private val reviews = RFakeReviewRepo()
-    private val service = ClaimReviewService(manifests, jobs, claims, reviews, AppProperties())
+    private val service =
+        ClaimReviewService(manifests, jobs, claims, reviews, liveConfig(AppProperties()))
 
     private val actor = "reviewer@vishwakarma.ai"
 

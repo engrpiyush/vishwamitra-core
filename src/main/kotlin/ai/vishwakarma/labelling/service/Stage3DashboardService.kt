@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
@@ -97,7 +96,7 @@ class Stage3DashboardService(
     private val runs: Stage3RunRepository,
     private val graph: Stage3GraphRepository,
     private val subjectScores: SubjectScoreRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     fun dashboard(subjectId: String): Either<DomainError, DashboardData> {
@@ -105,13 +104,13 @@ class Stage3DashboardService(
             subjects.findById(subjectId)
                 ?: return DomainError.NotFound("Subject $subjectId not found").left()
         val rows = graph.scoresReadback(subjectId)
-        val aggregate = SubjectScorer.score(rows, props.stage3)
+        val aggregate = SubjectScorer.score(rows, config.stage3())
         val facts = SubjectScorer.factAggregates(rows)
         val edges = SubjectScorer.edgeAggregates(rows)
         val run: Stage3Run? = runs.findBySubject(subjectId).firstOrNull()
         val published = subjectScores.find(subjectId)
 
-        val s3 = props.stage3
+        val s3 = config.stage3()
         fun tierOf(belief: Double): String =
             when {
                 belief >= s3.tierHigh -> "HIGH"

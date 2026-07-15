@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('notebook-templates')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Notebook templates</h1>
+    <p class="muted">Pre-defined conversation formats for Stage 4 notebook generation, tagged to an
+        evaluation-trait category (LLD §14A.6). Categories double as behavioural-eval axes.
+        Stage 4 planning consumes this library once VA-88 lands.</p>
+
+    <!-- Library, grouped by category group -->
+    <table class="grid">
+        <thead><tr><th>Category</th><th>Title</th><th>Turn shape</th><th>Persona lens</th><th>Coverage</th><th>v</th><th></th></tr></thead>
+        <tbody th:each="group : ${groups}" th:if="${!grouped.get(group).isEmpty()}" th:with="cats=${grouped.get(group)}">
+            <tr><th colspan="7" th:text="${group.label}">Group</th></tr>
+            <th:block th:each="cat : ${cats}">
+                <tr th:each="t : ${templatesByCategory.get(cat.slug)}">
+                    <td th:text="${cat.name}">category</td>
+                    <td>
+                        <strong th:text="${t.title}">title</strong>
+                        <span class="badge badge--muted" th:if="${t.migratedFrom != null}" title="Migrated from a legacy scenario row">migrated</span>
+                    </td>
+                    <td class="truncate" th:text="${t.formatSpec.turnShape}">shape</td>
+                    <td class="truncate" th:text="${t.formatSpec.personaLens}">lens</td>
+                    <td th:text="${t.coverageTarget}">1</td>
+                    <td th:text="${'v' + t.version}">v1</td>
+                    <td>
+                        <div class="row-actions">
+                            <a class="btn btn--ghost btn--sm" th:href="@{/admin/notebook-templates(edit=${t.id})} + '#editor'">Edit</a>
+                            <form method="post" th:action="@{'/admin/notebook-templates/' + ${t.id} + '/delete'}"
+                                  data-confirm="This permanently removes the template."
+                                  data-confirm-title="Delete this template?" data-confirm-ok="Delete" data-confirm-danger>
+                                <button class="btn--danger btn--sm" type="submit">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                <tr th:if="${templatesByCategory.get(cat.slug) == null}">
+                    <td th:text="${cat.name}">category</td>
+                    <td colspan="6" class="muted">No templates yet.</td>
+                </tr>
+            </th:block>
+        </tbody>
+        <tbody th:if="${taxonomy.categories.isEmpty()}">
+            <tr><td colspan="7"><div class="empty-state">No categories yet — add one below, then create templates.</div></td></tr>
+        </tbody>
+    </table>
+
+    <!-- Editor -->
+    <h2 id="editor" th:text="${editing != null} ? |Edit template (v${editing.version})| : 'Add template'">Add template</h2>
+    <form method="post"
+          th:action="${editing != null} ? @{'/admin/notebook-templates/' + ${editing.id}} : @{/admin/notebook-templates}"
+          class="form form--wide">
+        <div class="form-row">
+            <label>Category
+                <select name="category" required>
+                    <optgroup th:each="group : ${groups}" th:label="${group.label}"
+                              th:if="${!grouped.get(group).isEmpty()}">
+                        <option th:each="cat : ${grouped.get(group)}" th:value="${cat.slug}" th:text="${cat.name}"
+                                th:selected="${editing != null and editing.category == cat.slug}">cat</option>
+                    </optgroup>
+                </select>
+            </label>
+            <label>Title <input type="text" name="title" required th:value="${editing?.title}"/></label>
+            <label>Coverage target
+                <input type="number" name="coverageTarget" min="1" th:value="${editing != null ? editing.coverageTarget : 1}"
+                       title="How many notebooks per subject the planner should aim to draw from this template"/>
+            </label>
+        </div>
+        <div class="form-row">
+            <label>Turn shape
+                <input type="text" name="turnShape" placeholder="e.g. 4–6 turn probing exchange" th:value="${editing?.formatSpec?.turnShape}"/>
+            </label>
+            <label>Persona lens
+                <input type="text" name="personaLens" placeholder="who is asking — peer, recruiter, client…" th:value="${editing?.formatSpec?.personaLens}"/>
+            </label>
+        </div>
+        <label>Intent <textarea name="intent" rows="2" placeholder="what the conversation is testing or eliciting" th:text="${editing?.formatSpec?.intent}"></textarea></label>
+        <label>Expected behaviours <span class="muted">(one per line, incl. refusals / boundary handling)</span>
+            <textarea name="expectedBehaviours" rows="4"
+                      placeholder="answers assertively from corroborated facts&#10;refuses to speculate about unknown information"
+                      th:text="${editing != null ? #strings.listJoin(editing.formatSpec.expectedBehaviours, '&#10;') : ''}"></textarea>
+        </label>
+        <label>Prompt template <span class="muted">({{subject}} placeholders allowed)</span>
+            <textarea name="promptTemplate" rows="4" th:text="${editing?.promptTemplate}"></textarea>
+        </label>
+        <div class="row-actions">
+            <button type="submit" th:text="${editing != null} ? 'Save template' : 'Create template'">Create template</button>
+            <a th:if="${editing != null}" class="btn btn--ghost" th:href="@{/admin/notebook-templates}">Cancel</a>
+        </div>
+    </form>
+
+    <!-- Category taxonomy -->
+    <h2>Category taxonomy</h2>
+    <p class="muted">The ~30 evaluation-trait categories (VA-60 eval axes). Groups are fixed; categories
+        are editable. A category in use by a template cannot be removed.</p>
+    <div class="tax-grid">
+        <section th:each="group : ${groups}">
+            <h3 th:text="${group.label}">Group</h3>
+            <div class="chips">
+                <span class="chip" th:each="cat : ${grouped.get(group)}">
+                    <span th:text="${cat.name}" th:title="${cat.slug}">cat</span>
+                    <form method="post" th:action="@{/admin/notebook-templates/taxonomy/remove}" class="inline-form">
+                        <input type="hidden" name="slug" th:value="${cat.slug}"/>
+                        <button class="x" type="submit" title="remove">&times;</button>
+                    </form>
+                </span>
+                <span class="muted" th:if="${grouped.get(group).isEmpty()}">none</span>
+            </div>
+        </section>
+    </div>
+    <form method="post" th:action="@{/admin/notebook-templates/taxonomy/add}" class="add-term">
+        <input type="text" name="name" placeholder="add category"/>
+        <select name="group">
+            <option th:each="group : ${groups}" th:value="${group.name()}" th:text="${group.label}">group</option>
+        </select>
+        <button type="submit">Add</button>
+    </form>
+</main>
+</body>
+</html>

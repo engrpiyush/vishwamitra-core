@@ -4,7 +4,8 @@
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
 
-<main class="container">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('home')}"></nav>
     <div class="page-head">
         <h1>Labelling &amp; Training Console</h1>
         <p class="muted">Author SFT/DPO data and drive Vertex managed tuning for Vishwakarma AI.</p>

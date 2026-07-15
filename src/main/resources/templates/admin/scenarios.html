@@ -3,12 +3,14 @@
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
-<main class="container">
-    <nav th:replace="~{fragments/common :: adminnav('scenarios')}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('scenarios')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
-    <h1>Scenarios</h1>
-    <p class="muted">Seed templates for LLM-assisted SFT generation.</p>
+    <h1>Scenarios <span class="badge badge--muted">legacy</span></h1>
+    <p class="muted">Seed templates for LLM-assisted SFT generation. Superseded by
+        <a th:href="@{/admin/notebook-templates}">notebook templates</a> (VA-87) — existing rows were
+        migrated there; this page keeps the SFT drafting path working until VA-88 retires it.</p>
 
     <table class="grid">
         <thead><tr><th>Title</th><th>Claim type</th><th>Labels</th><th>Prompt template</th><th></th></tr></thead>

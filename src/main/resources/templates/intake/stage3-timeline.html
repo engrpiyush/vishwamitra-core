@@ -14,7 +14,8 @@
         box-shadow: var(--shadow-lg); font-size: 0.88rem;
     }
 </style>
-<main class="container wide">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <div class="row-between">

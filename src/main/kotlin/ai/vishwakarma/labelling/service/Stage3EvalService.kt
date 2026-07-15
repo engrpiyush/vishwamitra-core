@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.persistence.EvalBlockingRecall
 import ai.vishwakarma.labelling.persistence.EvalCalibrationBucket
 import ai.vishwakarma.labelling.persistence.EvalConfusionCell
@@ -60,7 +59,7 @@ class Stage3EvalService(
     private val graph: Stage3GraphRepository,
     private val runs: Stage3RunRepository,
     private val judgeSampler: JudgeSampler,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(Stage3EvalService::class.java)
@@ -191,7 +190,7 @@ class Stage3EvalService(
                 )
                 .left()
         val promptStamp = judgeSampler.versionStamp
-        val paramsHash = sha12(Json.writeLine(props.stage3))
+        val paramsHash = sha12(Json.writeLine(config.stage3()))
 
         // Cached bare verdicts under the CURRENT prompt stamp; overridden rows never count.
         val verdictById =
@@ -270,7 +269,7 @@ class Stage3EvalService(
                 verdictOf(g)?.let { v ->
                     val agreement =
                         (v.votes.values.maxOrNull() ?: 0L).toDouble() /
-                            props.stage3.ensembleK.coerceAtLeast(1)
+                            config.stage3().ensembleK.coerceAtLeast(1)
                     agreement.coerceIn(0.0, 1.0) to
                         (v.relation == expectedRelation(g.humanRelation))
                 }
@@ -329,7 +328,7 @@ class Stage3EvalService(
     /** The §13 sanity ranks: documents > endorsed > self-only praise; explanations recover. */
     private fun sanityFlags(subjectId: String): EvalScoreSanity {
         val rows = graph.factSanityRows(subjectId).filter { it.belief != null }
-        val favorabilityThreshold = props.stage2.favorabilityThreshold
+        val favorabilityThreshold = config.stage2().favorabilityThreshold
         fun mean(list: List<ai.vishwakarma.labelling.stage3.FactSanityRow>): Double? =
             list.mapNotNull { it.belief }.takeIf { it.isNotEmpty() }?.average()
         val meanAnchored = mean(rows.filter { it.anchored })

@@ -1,7 +1,7 @@
 package ai.vishwakarma.labelling.stage3
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.StageConfigService
 import org.neo4j.driver.Driver
 import org.neo4j.driver.SessionConfig
 import org.slf4j.LoggerFactory
@@ -71,12 +71,12 @@ data class EntityCandidate(
  * 3. **Idempotency**: everything is MERGE by natural key; re-running any phase is a no-op.
  */
 @Repository
-class Stage3GraphRepository(private val driver: Driver, private val props: AppProperties) {
+class Stage3GraphRepository(private val driver: Driver, private val config: StageConfigService) {
 
     private val log = LoggerFactory.getLogger(Stage3GraphRepository::class.java)
 
     private fun sessionConfig(): SessionConfig =
-        SessionConfig.forDatabase(props.stage3.neo4jDatabase)
+        SessionConfig.forDatabase(config.stage3().neo4jDatabase)
 
     // ---- connectivity --------------------------------------------------------
 
@@ -104,12 +104,12 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                 reachable = true,
                 latencyMs = latency,
                 server = server,
-                database = props.stage3.neo4jDatabase,
+                database = config.stage3().neo4jDatabase,
             )
         } catch (e: Exception) {
             GraphPing(
                 reachable = false,
-                database = props.stage3.neo4jDatabase,
+                database = config.stage3().neo4jDatabase,
                 error = "${e.message}"
             )
         }
@@ -170,7 +170,7 @@ class Stage3GraphRepository(private val driver: Driver, private val props: AppPr
                     "COMMUNITY"
                 }
 
-            val dims = props.stage3.embeddingDimensions
+            val dims = config.stage3().embeddingDimensions
             var rebuilt = false
             listOf("claim_embedding" to "Claim", "entity_embedding" to "Entity").forEach {
                 (name, label) ->

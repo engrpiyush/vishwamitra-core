@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.report
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.gcs.IntakeStorage
 import ai.vishwakarma.labelling.persistence.Stage3RunRepository
@@ -9,6 +8,7 @@ import ai.vishwakarma.labelling.persistence.SubjectReportRepository
 import ai.vishwakarma.labelling.service.DashboardData
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.Stage3DashboardService
+import ai.vishwakarma.labelling.service.StageConfigService
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
@@ -42,7 +42,7 @@ class PdfReportService(
     private val reports: SubjectReportRepository,
     private val runs: Stage3RunRepository,
     private val templates: ITemplateEngine,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -134,7 +134,7 @@ class PdfReportService(
     }
 
     private fun render(data: DashboardData): ByteArray {
-        val charts = DashboardCharts.build(data, props.stage3, VizPalette.PRINT)
+        val charts = DashboardCharts.build(data, config.stage3(), VizPalette.PRINT)
         val ctx = Context(Locale.ROOT)
         ctx.setVariable("data", data)
         ctx.setVariable("charts", charts)
@@ -146,7 +146,7 @@ class PdfReportService(
         ctx.setVariable(
             "flaggedFacts",
             data.factPoints
-                .filter { it.belief < props.stage3.tierMedium || it.selfOnly }
+                .filter { it.belief < config.stage3().tierMedium || it.selfOnly }
                 .sortedBy { it.belief }
                 .take(10),
         )

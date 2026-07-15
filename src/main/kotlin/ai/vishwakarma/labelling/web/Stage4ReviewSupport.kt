@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.web
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.JudgeAxis
 import ai.vishwakarma.labelling.domain.Stage4Stamp
 import ai.vishwakarma.labelling.domain.Turn
@@ -9,6 +8,7 @@ import ai.vishwakarma.labelling.persistence.Stage4JudgmentRepository
 import ai.vishwakarma.labelling.persistence.Stage4PlanRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.service.PersonaService
+import ai.vishwakarma.labelling.service.StageConfigService
 import ai.vishwakarma.labelling.stage4.Stage4Judging
 import java.time.Instant
 import java.util.Locale
@@ -97,7 +97,7 @@ class Stage4ReviewPanels(
     private val claims: ClaimRepository,
     private val subjectScores: SubjectScoreRepository,
     private val personaService: PersonaService,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     /**
@@ -185,8 +185,8 @@ class Stage4ReviewPanels(
         val tier =
             score?.let {
                 when {
-                    it >= props.stage3.tierHigh -> "HIGH"
-                    it >= props.stage3.tierMedium -> "MEDIUM"
+                    it >= config.stage3().tierHigh -> "HIGH"
+                    it >= config.stage3().tierMedium -> "MEDIUM"
                     else -> "LOW"
                 }
             }

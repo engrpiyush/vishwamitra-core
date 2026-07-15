@@ -15,15 +15,7 @@
     }
     document.addEventListener("click", function (e) {
         var toggle = e.target.closest("[data-theme-toggle]");
-        if (toggle) {
-            setTheme(currentTheme() === "dark" ? "light" : "dark");
-            return;
-        }
-        var burger = e.target.closest("[data-nav-toggle]");
-        if (burger) {
-            var links = document.getElementById("navLinks");
-            if (links) links.classList.toggle("open");
-        }
+        if (toggle) setTheme(currentTheme() === "dark" ? "light" : "dark");
     });
 
     /* ---- Clickable table rows (data-href) -------------------------------- */

@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.StageConfigService
 import ai.vishwakarma.labelling.vertex.VertexBackoff
 import com.google.auth.oauth2.GoogleCredentials
 import kotlin.math.abs
@@ -45,35 +46,38 @@ interface EmbeddingService {
  * Native 3072-dim output is unit-normalized by the service; MRL-truncated outputs (dims < 3072) are
  * NOT, so those are re-normalized client-side before storage (LLD §8.2).
  */
-class VertexEmbeddingService(private val props: AppProperties) : EmbeddingService {
+class VertexEmbeddingService(private val config: StageConfigService) : EmbeddingService {
 
     private val rest = RestClient.create()
 
     override val dimensions: Int
-        get() = props.stage3.embeddingDimensions
+        get() = config.stage3().embeddingDimensions
 
     override val versionStamp: String
-        get() = "${props.stage3.embeddingModel}:$dimensions"
+        get() = "${config.stage3().embeddingModel}:$dimensions"
 
     override fun embed(text: String, taskType: EmbeddingTaskType): List<Double> =
         // LLD §15 #1, hardened 2026-07-11: gemini-embedding takes ONE text per request, so a
         // phase burst hits the per-minute RPM quota fast — 429/5xx back off into the next quota
         // window (ladder from app.gcp.vertex-backoff-ms; empty = fail fast). A still-failing
         // call propagates verbatim and fails the run (Retry resumes from the cursor).
-        VertexBackoff.retrying(props.gcp.vertexBackoffMs, "embed ${props.stage3.embeddingModel}") {
+        VertexBackoff.retrying(
+            config.boot.gcp.vertexBackoffMs,
+            "embed ${config.stage3().embeddingModel}"
+        ) {
             predict(text, taskType)
         }
 
     private fun predict(text: String, taskType: EmbeddingTaskType): List<Double> {
-        val s3 = props.stage3
+        val s3 = config.stage3()
         // Embedding models are served regionally (unlike generateContent's "global" alias) —
         // blank falls back to the app region; override via app.stage3.embedding-location.
-        val location = s3.embeddingLocation.ifBlank { props.gcp.region }
+        val location = s3.embeddingLocation.ifBlank { config.boot.gcp.region }
         val host =
             if (location == "global") "aiplatform.googleapis.com"
             else "$location-aiplatform.googleapis.com"
         val url =
-            "https://$host/v1/projects/${props.gcp.projectId}" +
+            "https://$host/v1/projects/${config.boot.gcp.projectId}" +
                 "/locations/$location/publishers/google/models/${s3.embeddingModel}:predict"
         val token =
             GoogleCredentials.getApplicationDefault()
@@ -129,26 +133,26 @@ class VertexEmbeddingService(private val props: AppProperties) : EmbeddingServic
  * flipping transports never marks anything stale. Trade-offs: key-based auth (env `GEMINI_API_KEY`;
  * never logged/serialized) and global processing (no in-region residency).
  */
-class GeminiApiEmbeddingService(private val props: AppProperties) : EmbeddingService {
+class GeminiApiEmbeddingService(private val config: StageConfigService) : EmbeddingService {
 
     private val rest = RestClient.create()
 
     override val dimensions: Int
-        get() = props.stage3.embeddingDimensions
+        get() = config.stage3().embeddingDimensions
 
     override val versionStamp: String
-        get() = "${props.stage3.embeddingModel}:$dimensions"
+        get() = "${config.stage3().embeddingModel}:$dimensions"
 
     override fun embed(text: String, taskType: EmbeddingTaskType): List<Double> =
         VertexBackoff.retrying(
-            props.gcp.vertexBackoffMs,
-            "embedContent ${props.stage3.embeddingModel}",
+            config.boot.gcp.vertexBackoffMs,
+            "embedContent ${config.stage3().embeddingModel}",
         ) {
             embedContent(text, taskType)
         }
 
     private fun embedContent(text: String, taskType: EmbeddingTaskType): List<Double> {
-        val model = props.stage3.embeddingModel
+        val model = config.stage3().embeddingModel
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:embedContent"
         val body =
             mapOf(
@@ -161,7 +165,7 @@ class GeminiApiEmbeddingService(private val props: AppProperties) : EmbeddingSer
             rest
                 .post()
                 .uri(url)
-                .header("x-goog-api-key", props.stage3.geminiApiKey)
+                .header("x-goog-api-key", config.stage3().geminiApiKey)
                 .body(body)
                 .retrieve()
                 .body(String::class.java) ?: error("empty embedContent response")
@@ -243,8 +247,10 @@ class EmbeddingConfig {
 
     private val log = LoggerFactory.getLogger(EmbeddingConfig::class.java)
 
+    // Selection reads the BOOTSTRAP props: transport/dry-run posture is bean-wired at startup
+    // (read-only in the admin console); the constructed services read live knobs via config.
     @Bean
-    fun embeddingService(props: AppProperties): EmbeddingService =
+    fun embeddingService(props: AppProperties, config: StageConfigService): EmbeddingService =
         when {
             props.stage3.embeddingsDryRun -> {
                 log.info(
@@ -262,8 +268,8 @@ class EmbeddingConfig {
                     "Stage 3 embeddings: {} via the Gemini Developer API (quota workaround)",
                     props.stage3.embeddingModel,
                 )
-                GeminiApiEmbeddingService(props)
+                GeminiApiEmbeddingService(config)
             }
-            else -> VertexEmbeddingService(props)
+            else -> VertexEmbeddingService(config)
         }
 }

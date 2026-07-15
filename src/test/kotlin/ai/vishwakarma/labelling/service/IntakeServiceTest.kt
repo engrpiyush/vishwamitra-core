@@ -13,6 +13,7 @@ import ai.vishwakarma.labelling.domain.SealAction
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.gcs.IntakeStorage
 import ai.vishwakarma.labelling.gcs.SignedUpload
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -118,7 +119,7 @@ class IntakeServiceTest {
             intake = AppProperties.Intake(maxAssetSizeBytes = 1000, staleUploadHours = 24)
         )
     private val storage = FakeStorage(props)
-    private val service = IntakeService(assets, subjects, manifests, storage, props)
+    private val service = IntakeService(assets, subjects, manifests, storage, liveConfig(props))
 
     private val path = "intake/s1/resume_cv/2026-07-01/a1-resume.pdf"
 

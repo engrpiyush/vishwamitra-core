@@ -17,6 +17,7 @@ import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.domain.Subject
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
@@ -203,7 +204,7 @@ private class FakeS3ReviewRepo : ClaimReviewRepository(mock(Firestore::class.jav
 
 /** In-memory graph: captures projections and mimics the two stamp-cursor phases (§11.3/§11.4). */
 private class FakeGraphRepo(props: AppProperties) :
-    Stage3GraphRepository(mock(Driver::class.java), props) {
+    Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
     var pingResult = GraphPing(reachable = true, latencyMs = 1, database = "neo4j")
     var schemaEnsured = 0
     var wipes = 0
@@ -1016,7 +1017,8 @@ class Stage3ServiceTest {
     private val claims = FakeS3ClaimRepo()
     private val reviews = FakeS3ReviewRepo()
     private val graph = FakeGraphRepo(props)
-    private val reviewService = ClaimReviewService(manifests, jobs, claims, reviews, props)
+    private val reviewService =
+        ClaimReviewService(manifests, jobs, claims, reviews, liveConfig(props))
     private val extractor = ScriptedExtractor()
     private val judgeSampler = ScriptedJudgeSampler()
     private val judgeEdges = FakeJudgeEdgeRepo()
@@ -1035,13 +1037,13 @@ class Stage3ServiceTest {
             graph,
             embeddings,
             extractor,
-            EntityResolver(graph, embeddings, props),
-            ClaimJudgeService(judgeSampler, judgeEdges, props),
+            EntityResolver(graph, embeddings, liveConfig(props)),
+            ClaimJudgeService(judgeSampler, judgeEdges, liveConfig(props)),
             judgeEdges,
             claims,
             subjectScores,
             subjectFacts,
-            props,
+            liveConfig(props),
         )
 
     private fun seedSubject(reviewSubmitted: Boolean = true, claimCount: Int = 2) {

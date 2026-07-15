@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Run
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.persistence.Stage3EvalMetricsRecord
@@ -94,7 +95,7 @@ private class FakeVerdictRepo : Stage3EdgeRepository(mock(Firestore::class.java)
 }
 
 private class FakeEvalGraph(props: AppProperties) :
-    Stage3GraphRepository(mock(Driver::class.java), props) {
+    Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
     var queue = listOf<ClaimPair>()
     var autoRepeats = listOf<ClaimPair>()
     var claims = listOf<String>()
@@ -157,7 +158,15 @@ class Stage3EvalServiceTest {
     private val sampler = StampedSampler("test:1:hashA")
 
     private fun service() =
-        Stage3EvalService(goldens, metricsRepo, verdicts, graph, EvalRunRepo(), sampler, props)
+        Stage3EvalService(
+            goldens,
+            metricsRepo,
+            verdicts,
+            graph,
+            EvalRunRepo(),
+            sampler,
+            liveConfig(props)
+        )
 
     private fun label(
         a: String,

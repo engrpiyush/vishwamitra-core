@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimReview
@@ -74,7 +73,7 @@ class ClaimReviewService(
     private val jobs: Stage2JobRepository,
     private val claims: ClaimRepository,
     private val reviews: ClaimReviewRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     // ---- lifecycle -----------------------------------------------------------
@@ -259,7 +258,7 @@ class ClaimReviewService(
     private fun Claim.needsDecision(): Boolean =
         claimBasis == ClaimBasis.INFERRED ||
             favorability == null ||
-            favorability < props.stage2.favorabilityThreshold
+            favorability < config.stage2().favorabilityThreshold
 
     private fun Stage2JobStatus.isTerminal(): Boolean =
         this == Stage2JobStatus.COMPLETED || this == Stage2JobStatus.FAILED

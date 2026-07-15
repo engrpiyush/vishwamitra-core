@@ -111,7 +111,7 @@ class Stage4Service(
     private val plans: Stage4PlanRepository,
     private val sftExamples: SftExampleRepository,
     private val dpoPairs: DpoPairRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(Stage4Service::class.java)
@@ -135,7 +135,7 @@ class Stage4Service(
         request: Stage4SubmitRequest,
         actor: String?,
     ): Either<DomainError, Stage4Run> {
-        if (!props.stage4.enabled)
+        if (!config.stage4().enabled)
             return DomainError.Conflict("Stage 4 is disabled (app.stage4.enabled)").left()
         subjects.findById(subjectId)
             ?: return DomainError.NotFound("Subject $subjectId not found").left()
@@ -978,7 +978,7 @@ class Stage4Service(
     private fun effectiveStage4(
         overrides: Stage4SubmitRequest.MixOverrides?
     ): AppProperties.Stage4 {
-        val base = props.stage4
+        val base = config.stage4()
         if (overrides == null) return base
         return base.copy(
             mix =
@@ -1048,7 +1048,7 @@ class Stage4Service(
         @Suppress("UNCHECKED_CAST") val mixRaw = raw["mix"] as? Map<String, Any?> ?: emptyMap()
         fun mixOf(key: String, fallback: Double): Double =
             (mixRaw[key] as? Number)?.toDouble() ?: fallback
-        val base = props.stage4
+        val base = config.stage4()
         return FrozenParams(
             mix =
                 AppProperties.Stage4.Mix(
@@ -1125,7 +1125,7 @@ class Stage4Service(
     private fun reclaimIfStuck(run: Stage4Run): Stage4Run? {
         if (run.status == Stage4RunStatus.PENDING) return null
         val since = run.phaseSince ?: return null
-        val timeout = props.stage4.phaseTimeout
+        val timeout = config.stage4().phaseTimeout
         if (Instant.now().isBefore(since.plus(timeout))) return null
         log.warn("Run {}: {} stuck since {} — reclaiming to FAILED", run.id, run.status, since)
         return fail(

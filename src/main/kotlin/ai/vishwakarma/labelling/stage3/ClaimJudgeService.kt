@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.StageConfigService
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.Callable
@@ -88,7 +89,7 @@ data class JudgeProgress(val judgedSoFar: Long, val totalQueued: Long)
 class ClaimJudgeService(
     private val sampler: JudgeSampler,
     private val edges: Stage3EdgeRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(ClaimJudgeService::class.java)
@@ -99,7 +100,7 @@ class ClaimJudgeService(
         progress: JudgeProgress? = null,
     ): JudgeTickOutcome {
         if (pairs.isEmpty()) return JudgeTickOutcome(emptyList(), 0, 0, 0)
-        val s3 = props.stage3
+        val s3 = config.stage3()
         val stamp = sampler.versionStamp
         val cached =
             edges.findAll(
@@ -286,7 +287,7 @@ internal fun sha12(text: String): String =
 class GeminiJudgeSampler(
     private val gemini: GeminiDrafting,
     private val prompts: ExtractionPromptService,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) : JudgeSampler {
 
     private val log = LoggerFactory.getLogger(GeminiJudgeSampler::class.java)
@@ -308,7 +309,7 @@ class GeminiJudgeSampler(
         }
         val resolved = prompts.resolveKey(PROMPT_KEY)
         val flip =
-            props.stage3.ensembleOrderings.equals("ALTERNATE", ignoreCase = true) &&
+            config.stage3().ensembleOrderings.equals("ALTERNATE", ignoreCase = true) &&
                 sampleIndex % 2 == 1
         val shuffled = pairs.shuffled(Random(sampleIndex))
         val raw =
@@ -316,7 +317,7 @@ class GeminiJudgeSampler(
                 judgePrompt(shuffled, resolved.instructions, withContext, flip),
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
-                temperature = props.stage3.ensembleTemperature,
+                temperature = config.stage3().ensembleTemperature,
             )
         // The stated posture ("a dropped pair casts no vote"), applied to the whole sample: a
         // response that defeats the fence/truncation tolerances (e.g. a temperature-0.7
@@ -393,12 +394,15 @@ class DryRunJudgeSampler : JudgeSampler {
 @Configuration
 class ClaimJudgeConfig {
 
+    // Sampler selection reads the BOOTSTRAP props (dry-run posture is bean-wired at startup,
+    // read-only in the admin console); the live sampler reads its knobs via config.
     @Bean
     fun judgeSampler(
         props: AppProperties,
+        config: StageConfigService,
         gemini: GeminiDrafting,
         prompts: ExtractionPromptService,
     ): JudgeSampler =
         if (props.stage3.judgeDryRun) DryRunJudgeSampler()
-        else GeminiJudgeSampler(gemini, prompts, props)
+        else GeminiJudgeSampler(gemini, prompts, config)
 }

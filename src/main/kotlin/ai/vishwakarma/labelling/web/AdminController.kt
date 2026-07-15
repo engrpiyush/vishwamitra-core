@@ -4,18 +4,24 @@ import ai.vishwakarma.labelling.domain.AdvocateName
 import ai.vishwakarma.labelling.domain.AdvocateRegion
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.ContentType
+import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.Role
+import ai.vishwakarma.labelling.domain.StageKey
+import ai.vishwakarma.labelling.domain.TemplateCategoryGroup
 import ai.vishwakarma.labelling.domain.ToolParam
 import ai.vishwakarma.labelling.domain.ToolStatus
 import ai.vishwakarma.labelling.domain.splitLabels
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
+import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.CatalogService
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.NotebookTemplateService
 import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ScenarioService
+import ai.vishwakarma.labelling.service.StageConfigService
 import ai.vishwakarma.labelling.service.TaxonomyService
 import ai.vishwakarma.labelling.service.UserService
 import java.time.Instant
@@ -42,6 +48,9 @@ class AdminController(
     private val providers: ProviderService,
     private val extractionPrompts: ExtractionPromptService,
     private val advocateNames: AdvocateNameRepository,
+    private val notebookTemplates: NotebookTemplateService,
+    private val subjects: SubjectRepository,
+    private val stageConfig: StageConfigService,
 ) {
 
     private fun actor() = CurrentUser.email()
@@ -53,7 +62,37 @@ class AdminController(
         }
     }
 
-    @GetMapping fun index() = "redirect:/admin/tools"
+    /** VA-82: `/admin` lands on the console dashboard (section cards), not a redirect. */
+    @GetMapping
+    fun index(model: Model): String {
+        val providerList = providers.list()
+        val baseModelList = baseModels.list()
+        val templateList = notebookTemplates.list()
+        val promptOverrides =
+            extractionPrompts.list().values.flatten().count { it.prompt != null } +
+                extractionPrompts.listStage3().count { it.prompt != null } +
+                extractionPrompts.listStage4().let { s4 ->
+                    (s4.presets + s4.generators + s4.judge).count { it.prompt != null }
+                }
+        model.addAttribute("pageTitle", "Admin Console")
+        model.addAttribute("section", "dashboard")
+        model.addAttribute("providersEnabled", providerList.count { it.enabled })
+        model.addAttribute("providersTotal", providerList.size)
+        model.addAttribute("toolsCount", catalog.list().size)
+        model.addAttribute("promptOverrides", promptOverrides)
+        model.addAttribute(
+            "configOverrides",
+            StageKey.entries.sumOf { stageConfig.doc(it).overrides.size },
+        )
+        model.addAttribute("membersCount", subjects.findAll().size)
+        model.addAttribute("baseModelsTotal", baseModelList.size)
+        model.addAttribute("baseModelsActive", baseModelList.count { it.active })
+        model.addAttribute("baseModelsTunable", baseModelList.count { it.tunable })
+        model.addAttribute("templatesCount", templateList.size)
+        model.addAttribute("categoriesCount", notebookTemplates.taxonomy().categories.size)
+        model.addAttribute("operatorsCount", users.list().size)
+        return "admin/index"
+    }
 
     // ---- Tools -------------------------------------------------------------
     @GetMapping("/tools")
@@ -296,20 +335,28 @@ class AdminController(
     }
 
     // ---- Extraction prompts --------------------------------------------------
+    // VA-84: editing moved into the per-stage Prompts tabs; this URL stays as the stage picker.
+    // The POST endpoints below remain the single editing path — the tabs post here and bounce
+    // back via `returnTo` (validated to stay under /admin).
+
     @GetMapping("/extraction-prompts")
     fun extractionPrompts(model: Model): String {
-        model.addAttribute("pageTitle", "Extraction prompts")
+        model.addAttribute("pageTitle", "Prompts by stage")
         model.addAttribute("section", "extraction-prompts")
-        model.addAttribute("groups", extractionPrompts.list())
-        model.addAttribute("stage3Rows", extractionPrompts.listStage3())
-        model.addAttribute("stage4", extractionPrompts.listStage4())
         return "admin/extraction-prompts"
+    }
+
+    /** Bounce target for the prompt POSTs: the stage tab that sent the form, or the picker. */
+    private fun promptRedirect(returnTo: String?): String {
+        val safe = returnTo?.takeIf { it.startsWith("/admin/") }
+        return "redirect:${safe ?: "/admin/extraction-prompts"}"
     }
 
     @PostMapping("/extraction-prompts/{id}")
     fun updateExtractionPrompt(
         @PathVariable id: String,
         @RequestParam(required = false, defaultValue = "") instructions: String,
+        @RequestParam(required = false) returnTo: String?,
         ra: RedirectAttributes,
     ): String {
         val known =
@@ -328,11 +375,15 @@ class AdminController(
                 ra.addFlashAttribute("ok", "$id prompt saved (v${saved.version})")
             }
         }
-        return "redirect:/admin/extraction-prompts"
+        return promptRedirect(returnTo)
     }
 
     @PostMapping("/extraction-prompts/{id}/reset")
-    fun resetExtractionPrompt(@PathVariable id: String, ra: RedirectAttributes): String {
+    fun resetExtractionPrompt(
+        @PathVariable id: String,
+        @RequestParam(required = false) returnTo: String?,
+        ra: RedirectAttributes,
+    ): String {
         if (
             !extractionPrompts.isStage3Key(id) &&
                 !extractionPrompts.isStage4Key(id) &&
@@ -343,12 +394,16 @@ class AdminController(
             extractionPrompts.resetKey(id)
             ra.addFlashAttribute("ok", "$id reverted to the code default")
         }
-        return "redirect:/admin/extraction-prompts"
+        return promptRedirect(returnTo)
     }
 
     /** VA-66: the admin-designated default preset — the `stage4:preset-default` pointer row. */
     @PostMapping("/extraction-prompts/stage4-preset-default")
-    fun setStage4DefaultPreset(@RequestParam presetId: String, ra: RedirectAttributes): String {
+    fun setStage4DefaultPreset(
+        @RequestParam presetId: String,
+        @RequestParam(required = false) returnTo: String?,
+        ra: RedirectAttributes,
+    ): String {
         val ids = extractionPrompts.listStage4().presetIds
         if (presetId !in ids) {
             ra.addFlashAttribute("error", "Unknown preset '$presetId'")
@@ -360,7 +415,7 @@ class AdminController(
             )
             ra.addFlashAttribute("ok", "Default preset is now '$presetId'")
         }
-        return "redirect:/admin/extraction-prompts"
+        return promptRedirect(returnTo)
     }
 
     /** VA-66: register a new admin preset (`stage4:preset:<slug>`). */
@@ -368,6 +423,7 @@ class AdminController(
     fun createStage4Preset(
         @RequestParam name: String,
         @RequestParam(required = false, defaultValue = "") instructions: String,
+        @RequestParam(required = false) returnTo: String?,
         ra: RedirectAttributes,
     ): String {
         runCatching { extractionPrompts.createStage4Preset(name, instructions, actor()) }
@@ -375,7 +431,7 @@ class AdminController(
                 { saved -> ra.addFlashAttribute("ok", "Preset '${saved.id}' created") },
                 { ra.addFlashAttribute("error", it.message ?: "Could not create the preset") },
             )
-        return "redirect:/admin/extraction-prompts"
+        return promptRedirect(returnTo)
     }
 
     // ---- Advocate names (VA-66, QA on A2) -------------------------------------
@@ -432,5 +488,123 @@ class AdminController(
             ra.addFlashAttribute("ok", "'${existing.name}' removed from the pool")
         }
         return "redirect:/admin/advocate-names"
+    }
+
+    // ---- Notebook templates (VA-87, LLD §14A.6) --------------------------------
+    @GetMapping("/notebook-templates")
+    fun notebookTemplatesPage(
+        @RequestParam(required = false) edit: String?,
+        model: Model,
+    ): String {
+        val taxonomy = notebookTemplates.taxonomy()
+        val all = notebookTemplates.list()
+        model.addAttribute("pageTitle", "Notebook templates")
+        model.addAttribute("section", "notebook-templates")
+        model.addAttribute("templates", all)
+        model.addAttribute("templatesByCategory", all.groupBy { it.category })
+        model.addAttribute("taxonomy", taxonomy)
+        model.addAttribute("grouped", taxonomy.grouped())
+        model.addAttribute("groups", TemplateCategoryGroup.entries)
+        model.addAttribute("editing", edit?.let { notebookTemplates.get(it) })
+        return "admin/notebook-templates"
+    }
+
+    /** One `expectedBehaviours` item per non-blank textarea line. */
+    private fun parseBehaviours(raw: String): List<String> =
+        raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    @PostMapping("/notebook-templates")
+    fun createNotebookTemplate(
+        @RequestParam category: String,
+        @RequestParam title: String,
+        @RequestParam(required = false, defaultValue = "") turnShape: String,
+        @RequestParam(required = false, defaultValue = "") intent: String,
+        @RequestParam(required = false, defaultValue = "") personaLens: String,
+        @RequestParam(required = false, defaultValue = "") expectedBehaviours: String,
+        @RequestParam(required = false, defaultValue = "") promptTemplate: String,
+        @RequestParam(required = false, defaultValue = "1") coverageTarget: Int,
+        ra: RedirectAttributes,
+    ): String {
+        notebookTemplates
+            .create(
+                category = category,
+                title = title,
+                formatSpec =
+                    FormatSpec(turnShape, intent, personaLens, parseBehaviours(expectedBehaviours)),
+                promptTemplate = promptTemplate,
+                coverageTarget = coverageTarget,
+                actor = actor(),
+            )
+            .fold(
+                { ra.notify(it) },
+                { ra.addFlashAttribute("ok", "Template '${it.title}' created") },
+            )
+        return "redirect:/admin/notebook-templates"
+    }
+
+    @PostMapping("/notebook-templates/{id}")
+    fun updateNotebookTemplate(
+        @PathVariable id: String,
+        @RequestParam category: String,
+        @RequestParam title: String,
+        @RequestParam(required = false, defaultValue = "") turnShape: String,
+        @RequestParam(required = false, defaultValue = "") intent: String,
+        @RequestParam(required = false, defaultValue = "") personaLens: String,
+        @RequestParam(required = false, defaultValue = "") expectedBehaviours: String,
+        @RequestParam(required = false, defaultValue = "") promptTemplate: String,
+        @RequestParam(required = false, defaultValue = "1") coverageTarget: Int,
+        ra: RedirectAttributes,
+    ): String {
+        notebookTemplates
+            .update(
+                id = id,
+                category = category,
+                title = title,
+                formatSpec =
+                    FormatSpec(turnShape, intent, personaLens, parseBehaviours(expectedBehaviours)),
+                promptTemplate = promptTemplate,
+                coverageTarget = coverageTarget,
+                actor = actor(),
+            )
+            .fold(
+                { ra.notify(it) },
+                { ra.addFlashAttribute("ok", "Template '${it.title}' saved (v${it.version})") },
+            )
+        return "redirect:/admin/notebook-templates"
+    }
+
+    @PostMapping("/notebook-templates/{id}/delete")
+    fun deleteNotebookTemplate(@PathVariable id: String, ra: RedirectAttributes): String {
+        notebookTemplates.delete(id)
+        ra.addFlashAttribute("ok", "Template deleted")
+        return "redirect:/admin/notebook-templates"
+    }
+
+    @PostMapping("/notebook-templates/taxonomy/add")
+    fun addTemplateCategory(
+        @RequestParam name: String,
+        @RequestParam group: String,
+        ra: RedirectAttributes,
+    ): String {
+        val parsedGroup = TemplateCategoryGroup.fromOrNull(group)
+        if (parsedGroup == null) {
+            ra.addFlashAttribute("error", "Unknown group '$group'")
+        } else {
+            notebookTemplates
+                .addCategory(name, parsedGroup)
+                .fold(
+                    { ra.notify(it) },
+                    { ra.addFlashAttribute("ok", "Category '${it.name}' added") },
+                )
+        }
+        return "redirect:/admin/notebook-templates"
+    }
+
+    @PostMapping("/notebook-templates/taxonomy/remove")
+    fun removeTemplateCategory(@RequestParam slug: String, ra: RedirectAttributes): String {
+        notebookTemplates
+            .removeCategory(slug)
+            .fold({ ra.notify(it) }, { ra.addFlashAttribute("ok", "Category removed") })
+        return "redirect:/admin/notebook-templates"
     }
 }

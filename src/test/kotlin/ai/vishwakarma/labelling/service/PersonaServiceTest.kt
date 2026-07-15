@@ -7,6 +7,7 @@ import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.PersonaPosture
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectPersona
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
@@ -76,7 +77,13 @@ class PersonaServiceTest {
     private val prompts = FakePersonaPromptRepo()
 
     private fun service(props: AppProperties = AppProperties()): PersonaService =
-        PersonaService(props, personas, subjects, names, ExtractionPromptService(prompts))
+        PersonaService(
+            liveConfig(props),
+            personas,
+            subjects,
+            names,
+            ExtractionPromptService(prompts)
+        )
 
     private fun seedSubject(id: String = "s1") {
         subjects.store[id] = Subject(id = id, displayName = "Asha")

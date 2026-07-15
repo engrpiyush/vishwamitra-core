@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.CompensationPolicy
 import ai.vishwakarma.labelling.domain.ContactSharing
 import ai.vishwakarma.labelling.domain.CriticismResponse
@@ -70,7 +69,7 @@ data class PersonaView(
  */
 @Service
 class PersonaService(
-    private val props: AppProperties,
+    private val config: StageConfigService,
     private val personas: SubjectPersonaRepository,
     private val subjects: SubjectRepository,
     private val names: AdvocateNameRepository,
@@ -88,7 +87,7 @@ class PersonaService(
         request: PersonaUpdateRequest,
         actor: String?,
     ): Either<DomainError, PersonaView> {
-        if (!props.stage4.enabled) {
+        if (!config.stage4().enabled) {
             return DomainError.Conflict("Stage 4 is disabled (app.stage4.enabled)").left()
         }
         subjects.findById(subjectId)

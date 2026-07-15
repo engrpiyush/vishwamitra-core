@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage3
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import com.google.cloud.firestore.Firestore
@@ -44,7 +45,7 @@ class DryRunStage3CorpusTest {
     }
 
     private class CorpusEntityGraph(props: AppProperties) :
-        Stage3GraphRepository(mock(Driver::class.java), props) {
+        Stage3GraphRepository(mock(Driver::class.java), liveConfig(props)) {
 
         data class Stored(
             val ref: EntityRef,
@@ -166,7 +167,7 @@ class DryRunStage3CorpusTest {
 
         // RESOLVE_ENTITIES: the real resolver over the real canned extractor, one batch.
         val graph = CorpusEntityGraph(props)
-        val resolver = EntityResolver(graph, embeddings, props)
+        val resolver = EntityResolver(graph, embeddings, liveConfig(props))
         val toResolve =
             claims.map {
                 ClaimToResolve(it.claimId, it.type, it.text, sourceClassOf(it), assetIdOf(it))
@@ -225,7 +226,7 @@ class DryRunStage3CorpusTest {
         val match = ClaimMatcher.cascade(toMatch, candidates, sims, s3)
 
         // JUDGE: the real cache-first ensemble over the scripted dry-run sampler.
-        val judge = ClaimJudgeService(DryRunJudgeSampler(), InMemoryEdgeRepo(), props)
+        val judge = ClaimJudgeService(DryRunJudgeSampler(), InMemoryEdgeRepo(), liveConfig(props))
         val pairsToJudge =
             match.queue.map { entry ->
                 PairToJudge(

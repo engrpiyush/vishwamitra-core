@@ -28,6 +28,7 @@ import ai.vishwakarma.labelling.domain.SubjectPersona
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.gcs.Exporter
+import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
@@ -361,9 +362,21 @@ class Stage4ServiceTest {
             claimLedger = claims,
             claimReviews = reviews,
             reviewService =
-                ClaimReviewService(FakeS4ManifestRepo(), FakeS4JobRepo(), claims, reviews, props),
+                ClaimReviewService(
+                    FakeS4ManifestRepo(),
+                    FakeS4JobRepo(),
+                    claims,
+                    reviews,
+                    liveConfig(props)
+                ),
             personaService =
-                PersonaService(props, personas, subjects, FakeS4NameRepo(), promptService),
+                PersonaService(
+                    liveConfig(props),
+                    personas,
+                    subjects,
+                    FakeS4NameRepo(),
+                    promptService
+                ),
             prompts = promptService,
             drafter = drafter,
             judge = judge,
@@ -373,7 +386,7 @@ class Stage4ServiceTest {
             plans = plans,
             sftExamples = sfts,
             dpoPairs = dpos,
-            props = props,
+            config = liveConfig(props),
         )
     }
 

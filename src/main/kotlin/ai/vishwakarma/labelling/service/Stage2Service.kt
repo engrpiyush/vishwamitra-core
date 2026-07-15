@@ -53,7 +53,7 @@ class Stage2Service(
     private val extractor: ClaimExtractor,
     private val speakerAttribution: SpeakerAttribution,
     private val documents: DocumentSource,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -470,12 +470,12 @@ class Stage2Service(
      */
     private fun maybeReclaimStuck(job: Stage2Job): Stage2Job {
         val since = job.extractingSince ?: job.startedAt ?: job.createdAt ?: return job
-        if (Duration.between(since, Instant.now()) <= props.stage2.extractingTimeout) return job
+        if (Duration.between(since, Instant.now()) <= config.stage2().extractingTimeout) return job
         log.warn("Reclaiming job {} stranded in EXTRACTING since {}", job.id, since)
         return job.copy(
                 status = Stage2JobStatus.FAILED,
                 error =
-                    "Extraction stranded in EXTRACTING for over ${props.stage2.extractingTimeout} " +
+                    "Extraction stranded in EXTRACTING for over ${config.stage2().extractingTimeout} " +
                         "(likely a crash mid-extraction); Retry to re-extract.",
                 finishedAt = Instant.now(),
             )
@@ -509,7 +509,7 @@ class Stage2Service(
         // and
         // the post-completion Speakers editor can show "who said what" while re-assigning roles.
         val withSamples = claimed.copy(speakerSamples = speakerSamples(done.transcript))
-        return if (resolution.confidence >= props.stage2.attributionConfidenceThreshold) {
+        return if (resolution.confidence >= config.stage2().attributionConfidenceThreshold) {
             log.info(
                 "Job {}: attribution confident ({}) — auto-extracting",
                 job.id,

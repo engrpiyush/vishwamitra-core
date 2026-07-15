@@ -131,8 +131,8 @@ app:
   auth:
     dev-bypass: true
     dev-user:
-      email: dev@vishwakarma.ai
-      role: ADMIN
+      email: reviewer@vishwakarma.ai
+      role: REVIEWER
   gcp:
     # Blank locally so intake uploads use IntakeStorage's local-disk fallback (var/intake/)
     # instead of minting GCS signed URLs, which need real credentials.

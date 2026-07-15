@@ -1,6 +1,6 @@
 package ai.vishwakarma.labelling.stage2
 
-import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.service.StageConfigService
 import com.google.cloud.ReadChannel
 import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.Storage
@@ -34,13 +34,13 @@ data class AudioParams(val sampleRateHertz: Int, val channelCount: Int)
  * `app.stage2.probe-audio-params` flag disables it entirely.
  */
 @Component
-class Mp4AudioProbe(private val props: AppProperties) {
+class Mp4AudioProbe(private val config: StageConfigService) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
     /** Probe [gcsUri] (`gs://` in real envs, `file://` locally), or null to fall back to config. */
     fun probe(gcsUri: String): AudioParams? {
-        if (!props.stage2.probeAudioParams) return null
+        if (!config.stage2().probeAudioParams) return null
         return try {
             openSource(gcsUri).use { source -> locateMoov(source)?.let { parseMoov(it) } }
         } catch (e: Exception) {
@@ -175,7 +175,10 @@ class Mp4AudioProbe(private val props: AppProperties) {
                 val slash = path.indexOf('/')
                 require(slash > 0) { "not a gs:// object uri: $uri" }
                 val storage =
-                    StorageOptions.newBuilder().setProjectId(props.gcp.projectId).build().service
+                    StorageOptions.newBuilder()
+                        .setProjectId(config.boot.gcp.projectId)
+                        .build()
+                        .service
                 val blobId = BlobId.of(path.substring(0, slash), path.substring(slash + 1))
                 val blob = storage.get(blobId) ?: error("object not found: $uri")
                 GcsByteSource(storage, blobId, blob.size)

@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
+import ai.vishwakarma.labelling.liveConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -208,12 +209,14 @@ class Stage4JudgingTest {
     fun `dry-run judge honors the configured distribution deterministically`() {
         fun judge(fail: Double, borderline: Double) =
             DryRunStage4Judge(
-                AppProperties(
-                    stage4 =
-                        AppProperties.Stage4(
-                            dryRunJudgeFailRate = fail,
-                            dryRunJudgeBorderlineRate = borderline,
-                        )
+                liveConfig(
+                    AppProperties(
+                        stage4 =
+                            AppProperties.Stage4(
+                                dryRunJudgeFailRate = fail,
+                                dryRunJudgeBorderlineRate = borderline,
+                            )
+                    )
                 )
             )
 

@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.web
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
@@ -13,6 +12,7 @@ import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.Stage3DashboardService
 import ai.vishwakarma.labelling.service.Stage3EvalService
 import ai.vishwakarma.labelling.service.Stage3Service
+import ai.vishwakarma.labelling.service.StageConfigService
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.stage3.ContradictionView
 import ai.vishwakarma.labelling.stage3.ScoredClaimView
@@ -49,7 +49,7 @@ class Stage3Controller(
     private val eval: Stage3EvalService,
     private val dashboards: Stage3DashboardService,
     private val pdfReports: PdfReportService,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     /** The §9.7 phase rail in order — the template renders one chip per entry. */
@@ -99,9 +99,9 @@ class Stage3Controller(
         model.addAttribute(
             "dryLegs",
             listOfNotNull(
-                "embeddings".takeIf { props.stage3.embeddingsDryRun },
-                "extraction".takeIf { props.stage3.extractionDryRun },
-                "judge".takeIf { props.stage3.judgeDryRun },
+                "embeddings".takeIf { config.stage3().embeddingsDryRun },
+                "extraction".takeIf { config.stage3().extractionDryRun },
+                "judge".takeIf { config.stage3().judgeDryRun },
             ),
         )
         return "intake/stage3"
@@ -137,8 +137,8 @@ class Stage3Controller(
             views.map {
                 it.toRowView(
                     factSize = factSizes[it.factId] ?: 1,
-                    tierHigh = props.stage3.tierHigh,
-                    tierMedium = props.stage3.tierMedium,
+                    tierHigh = config.stage3().tierHigh,
+                    tierMedium = config.stage3().tierMedium,
                 )
             },
         )
@@ -260,8 +260,8 @@ class Stage3Controller(
         model.addAttribute("subject", subject)
         model.addAttribute("timeline", view)
         model.addAttribute("timelineJson", Json.writeLine(view))
-        model.addAttribute("tierHigh", props.stage3.tierHigh)
-        model.addAttribute("tierMedium", props.stage3.tierMedium)
+        model.addAttribute("tierHigh", config.stage3().tierHigh)
+        model.addAttribute("tierMedium", config.stage3().tierMedium)
         model.addAttribute("hasDated", view.state.isNotEmpty() || view.events.isNotEmpty())
         return "intake/stage3-timeline"
     }
@@ -292,7 +292,7 @@ class Stage3Controller(
         model.addAttribute("run", stage3.latestForSubject(id))
         // The shared chart set (report/DashboardCharts — the PDF renders the same builders with
         // the PRINT palette); web paints ride CSS tokens so the theme toggle recolors live.
-        model.addAttribute("charts", DashboardCharts.build(data, props.stage3, VizPalette.WEB))
+        model.addAttribute("charts", DashboardCharts.build(data, config.stage3(), VizPalette.WEB))
         model.addAttribute("report", pdfReports.metadata(id))
         model.addAttribute("staleReport", pdfReports.isStale(id))
         // Fact details for the popover layer, keyed by factId.

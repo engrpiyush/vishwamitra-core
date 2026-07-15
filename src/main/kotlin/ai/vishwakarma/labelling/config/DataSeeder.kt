@@ -8,6 +8,7 @@ import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
 import ai.vishwakarma.labelling.service.BaseModelService
+import ai.vishwakarma.labelling.service.NotebookTemplateService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.UserService
 import org.slf4j.LoggerFactory
@@ -33,6 +34,7 @@ class DataSeeder {
         taxonomyRepo: TaxonomyRepository,
         users: UserService,
         advocateNames: AdvocateNameRepository,
+        notebookTemplates: NotebookTemplateService,
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
@@ -40,6 +42,7 @@ class DataSeeder {
                 seedTaxonomy(taxonomyRepo)
                 seedScenarios(scenarios)
                 seedAdvocateNames(advocateNames)
+                seedNotebookTemplates(notebookTemplates, scenarios)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
     }
@@ -189,6 +192,21 @@ class DataSeeder {
             )
         }
         log.info("Seeded advocate-name pool ({} names)", pool.size)
+    }
+
+    /**
+     * VA-87: seed the §14A.6 category taxonomy, then one-shot-migrate the legacy `scenarios` rows
+     * into `notebook_templates` (only while that collection is empty). Scenario rows stay in place
+     * so the SFT drafting path keeps working until VA-88 supersedes it.
+     */
+    private fun seedNotebookTemplates(
+        notebookTemplates: NotebookTemplateService,
+        scenarios: ScenarioService,
+    ) {
+        if (notebookTemplates.seedTaxonomyIfEmpty()) {
+            log.info("Seeded notebook-template category taxonomy")
+        }
+        notebookTemplates.migrateScenariosIfEmpty(scenarios.list())
     }
 
     private fun seedScenarios(scenarios: ScenarioService) {

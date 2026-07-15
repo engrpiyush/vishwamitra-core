@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav(${stage.id})}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1 th:text="|Stage ${stage.num} · ${stage.title}|">Stage</h1>
+    <p class="muted" th:text="${stage.blurb}">blurb</p>
+
+    <nav class="subnav">
+        <a th:href="@{'/admin/stages/' + ${stage.num}}" th:classappend="${tab == 'config'} ? 'active'">Configuration</a>
+        <a th:href="@{'/admin/stages/' + ${stage.num} + '/prompts'}" th:classappend="${tab == 'prompts'} ? 'active'">Prompts</a>
+    </nav>
+
+    <!-- ============================== Configuration tab ============================== -->
+    <th:block th:if="${tab == 'config'}">
+        <div class="row-between">
+            <p class="muted">
+                Effective values resolve <strong>override → yml/env → code default</strong> and apply on
+                the next run — no deploy. <span class="badge badge--info" th:text="${overrideCount} + ' override(s) live'">0 overrides</span>
+                <span class="muted" th:if="${configDoc.version > 0}"
+                      th:text="|v${configDoc.version} · ${configDoc.updatedBy}|">v0</span>
+            </p>
+            <form method="post" th:action="@{'/admin/stages/' + ${stage.num} + '/config/reset'}"
+                  data-confirm="This clears every stored override for this stage; bootstrap defaults apply from the next run."
+                  data-confirm-title="Reset all overrides?" data-confirm-ok="Reset all" data-confirm-danger>
+                <button type="submit" class="btn--danger btn--sm" th:disabled="${overrideCount == 0}">Reset all overrides</button>
+            </form>
+        </div>
+
+        <form method="post" th:action="@{'/admin/stages/' + ${stage.num} + '/config'}" class="config-form">
+            <section th:each="group : ${groupedViews}">
+                <h3 th:text="${group.key}">Group</h3>
+                <div class="config-grid">
+                    <label class="config-field" th:each="v : ${group.value}"
+                           th:with="f=${v.field}" th:classappend="${!f.editable} ? 'locked'">
+                        <span class="config-label">
+                            <span th:text="${f.label}">label</span>
+                            <span class="badge badge--info" th:if="${v.overridden}" title="A stored override is in effect">override</span>
+                            <span class="lock" th:if="${!f.editable}" th:title="${f.readOnlyReason}">🔒</span>
+                        </span>
+                        <th:block th:switch="${f.kind.name()}">
+                            <select th:case="'BOOLEAN'" th:name="${f.name}" th:disabled="${!f.editable}"
+                                    th:title="${f.editable ? f.help : f.readOnlyReason}">
+                                <option value="true" th:selected="${v.effective == 'true'}">true</option>
+                                <option value="false" th:selected="${v.effective == 'false'}">false</option>
+                            </select>
+                            <input th:case="*" type="text" th:name="${f.name}" th:value="${v.effective}"
+                                   th:disabled="${!f.editable}"
+                                   th:title="${f.editable ? f.help : f.readOnlyReason}"/>
+                        </th:block>
+                        <span class="config-help">
+                            <span th:text="${f.help}">help</span>
+                            <span th:if="${f.editable and v.default != v.effective}" class="config-default"
+                                  th:text="|· default: ${v.default}|">default</span>
+                        </span>
+                    </label>
+                </div>
+            </section>
+            <div class="row-actions config-save">
+                <button type="submit" class="btn--primary">Save configuration</button>
+                <span class="muted">Only values that differ from the bootstrap default are stored; typing a default back removes its override.</span>
+            </div>
+        </form>
+    </th:block>
+
+    <!-- ============================== Prompts tab ============================== -->
+    <th:block th:if="${tab == 'prompts'}" th:with="returnTo=|/admin/stages/${stage.num}/prompts|">
+
+        <!-- Stage 1: no LLM prompts -->
+        <div th:if="${stage.num == 1}" class="empty-state">
+            Collection has no LLM prompts — intake is deterministic (uploads, validation, sealing).
+            Extraction prompts start at Stage 2.
+        </div>
+
+        <!-- Stage 2: per-content-type extraction blocks -->
+        <th:block th:if="${stage.num == 2 and groups != null}">
+            <p class="muted">Per-content-type instruction block appended to the extraction prompt, read fresh
+                on every run — edits apply to the next run (or a job Re-run) with no deploy. Save stores an
+                override; Reset returns to the code default.</p>
+            <section th:each="group : ${groups}">
+                <h2 th:text="${group.key}">SELF</h2>
+                <div th:each="r : ${group.value}" class="provider-card">
+                    <form th:id="'reset-' + ${r.contentType.name}" method="post"
+                          th:action="@{'/admin/extraction-prompts/' + ${r.contentType.name} + '/reset'}"
+                          data-confirm="This deletes the saved override; the code default applies from the next run."
+                          data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                        <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    </form>
+                    <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.contentType.name}}">
+                        <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                        <div class="form-row">
+                            <span class="provider-name" th:text="${r.contentType.name}">CONTENT_TYPE</span>
+                            <span class="muted" th:if="${r.prompt == null}">code default</span>
+                            <span class="muted" th:if="${r.prompt != null}"
+                                  th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                        </div>
+                        <div class="prompt-editor">
+                            <textarea name="instructions" rows="5"
+                                      th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                            <div class="prompt-actions">
+                                <button type="submit">Save</button>
+                                <button type="submit" class="btn--danger"
+                                        th:attr="form='reset-' + ${r.contentType.name}">Reset to default</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
+        </th:block>
+
+        <!-- Stage 3: the reserved graph-prompt rows -->
+        <th:block th:if="${stage.num == 3 and stage3Rows != null}">
+            <p class="muted">STAGE3_ENTITY is the typed-mention extraction block, STAGE3_JUDGE the
+                pairwise-relation rubric. Their version+hash stamp keys what re-resolves / re-judges —
+                saving an edit re-runs exactly the affected work on the next run.</p>
+            <div th:each="r : ${stage3Rows}" class="provider-card">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next run."
+                      data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">STAGE3_JUDGE</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="5"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </th:block>
+
+        <!-- Stage 4: presets + default pointer + generators + judge -->
+        <th:block th:if="${stage.num == 4 and stage4 != null}">
+            <p class="muted">The advocate-generation prompts (LLD §6/§9.3/§11). Saving bumps the row's
+                version — generation-cache keys include the prompt version+hash, so affected conversations
+                regenerate on the next run; <strong>editing the judge rubric re-judges everything</strong>.
+                Exported datasets keep the version they were generated under.</p>
+
+            <div class="provider-card">
+                <form method="post" class="form form--wide" th:action="@{/admin/extraction-prompts/stage4-preset-default}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name">default preset</span>
+                        <span class="muted">what a skipped B3 wizard answer resolves to</span>
+                    </div>
+                    <div class="row-actions">
+                        <select name="presetId">
+                            <option th:each="pid : ${stage4.presetIds}" th:value="${pid}" th:text="${pid}"
+                                    th:selected="${pid == stage4.defaultPresetId}">preset</option>
+                        </select>
+                        <button type="submit">Set default</button>
+                    </div>
+                </form>
+            </div>
+
+            <div th:each="r : ${stage4.presets}" class="provider-card">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      th:attr="data-confirm=${r.builtin != ''} ? 'This deletes the saved override; the code default applies from the next run.' : 'This preset has no code default — resetting DELETES it. Personas pinned to it keep the id but resolve an empty style block until it is re-created.'"
+                      data-confirm-title="Reset this preset?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:preset:…</span>
+                        <span class="badge badge--info" th:if="${#strings.substringAfter(r.key, 'stage4:preset:') == stage4.defaultPresetId}">default</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="4"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}"
+                                    th:text="${r.builtin != ''} ? 'Reset to default' : 'Delete preset'">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="provider-card">
+                <form method="post" class="form form--wide" th:action="@{/admin/extraction-prompts/stage4-preset}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name">+ new preset</span>
+                        <span class="muted">appears in the wizard's B3 list immediately (3–5 total is the target)</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <input type="text" name="name" required placeholder="preset name, e.g. quiet-analyst" style="margin-bottom:0.5rem;"/>
+                        <textarea name="instructions" rows="3" required
+                                  placeholder="Style block the generation prompt embeds verbatim: tone, formality, humor, emoji policy."></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Create preset</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div th:each="r : ${stage4.generators}" class="provider-card">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next run."
+                      data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:gen:qa</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="5"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="provider-card" th:with="r=${stage4.judge}">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next run — and every example re-judges under the new stamp."
+                      data-confirm-title="Reset the judge rubric?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:judge</span>
+                        <span class="badge badge--warning" title="A rubric edit changes the judge stamp — every example re-judges on the next run">re-judges all on edit</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="6"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </th:block>
+    </th:block>
+</main>
+</body>
+</html>

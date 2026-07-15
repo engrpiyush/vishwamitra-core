@@ -21,7 +21,8 @@
     .js-save-note--ok { color: var(--ok-fg); }
     .js-save-note--err { color: var(--err-fg); }
 </style>
-<main class="container wide">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <div class="row-between">

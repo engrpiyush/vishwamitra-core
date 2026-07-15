@@ -125,14 +125,6 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; f
     display: inline-block; flex: none;
     box-shadow: 0 0 0 1px var(--border) inset;
 }
-.topnav .links { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-.topnav .links a {
-    color: var(--muted); font-size: 0.92rem; padding: 0.4rem 0.7rem;
-    border-radius: var(--radius-sm); transition: color 0.15s var(--ease), background 0.15s var(--ease);
-}
-.topnav .links a:hover { color: var(--text); background: var(--surface-2); }
-.topnav .links a.active { color: var(--text); background: var(--accent-soft); }
-
 .topnav .nav-tools { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
 .topnav .user { display: flex; align-items: center; gap: 0.55rem; }
 .user-email { color: var(--muted); font-size: 0.88rem; }
@@ -143,7 +135,7 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; f
     background: linear-gradient(135deg, var(--accent), var(--accent-strong));
 }
 
-/* theme toggle + mobile menu buttons */
+/* theme toggle button */
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center;
     width: 34px; height: 34px; border-radius: var(--radius-sm);
@@ -155,7 +147,6 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; f
 .theme-toggle .moon { display: none; }
 :root[data-theme="light"] .theme-toggle .sun { display: none; }
 :root[data-theme="light"] .theme-toggle .moon { display: block; }
-.nav-burger { display: none; }
 
 /* ---- Layout -------------------------------------------------------------- */
 .container { max-width: 1000px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
@@ -509,18 +500,73 @@ textarea { resize: vertical; min-height: 64px; }
 .landing-feature svg { width: 18px; height: 18px; color: var(--accent); flex: none; }
 .landing-foot { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 1.5rem; }
 
+/* ---- Admin console (VA-82) ------------------------------------------------ */
+/* The page's <main> is the grid: the consolenav aside takes the left column, every other child
+   flows into the right column — no per-page content wrapper needed. */
+.console { display: grid; grid-template-columns: 220px minmax(0, 1fr); column-gap: 2rem; align-items: start; }
+.console > * { grid-column: 2; min-width: 0; }
+.console > .console-nav { grid-column: 1; grid-row: 1 / span 200; }
+.console-nav {
+    position: sticky; top: 70px; max-height: calc(100vh - 90px); overflow-y: auto;
+    display: flex; flex-direction: column; gap: 1.15rem;
+    padding-right: 1.1rem; border-right: 1px solid var(--border); font-size: 0.88rem;
+}
+.console-nav .console-group { display: flex; flex-direction: column; gap: 0.1rem; }
+.console-nav .console-group-label {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 0.3rem;
+}
+.console-nav a { display: block; padding: 0.32rem 0.55rem; border-radius: var(--radius-sm); color: var(--muted); }
+.console-nav a:hover { color: var(--text); background: var(--surface-2); }
+.console-nav a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.console-nav a.sub { padding-left: 1.4rem; font-size: 0.82rem; }
+
+/* Per-stage Configuration tab (VA-83) */
+.config-form section { margin-bottom: 1.75rem; }
+.config-form h3 { margin: 0 0 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+.config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.9rem 1.5rem; }
+.config-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
+.config-field .config-label { display: flex; align-items: center; gap: 0.4rem; color: var(--text); font-weight: 600; }
+.config-field .lock { font-size: 0.75rem; cursor: help; }
+.config-field input[type=text], .config-field select {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-sm); padding: 0.45rem 0.55rem; font: inherit;
+}
+.config-field input[disabled], .config-field select[disabled] { opacity: 0.55; cursor: not-allowed; }
+.config-field .config-help { color: var(--muted); font-size: 0.76rem; line-height: 1.35; }
+.config-field .config-default { color: var(--accent); }
+.config-save { margin-top: 0.5rem; align-items: center; }
+
+/* Stage picker (the /admin/extraction-prompts index) */
+.stage-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.stage-card {
+    display: flex; flex-direction: column; gap: 0.5rem; padding: 1.25rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow-sm); color: var(--text);
+    transition: transform 0.1s var(--ease), border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.stage-card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-md); color: var(--text); }
+.stage-card svg { width: 28px; height: 28px; color: var(--accent); }
+.stage-card .stage-card-title { font-weight: 650; }
+.console-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.console-card h3 { margin: 0 0 0.35rem; }
+.console-card .card-stat { font-size: 1.6rem; font-weight: 750; letter-spacing: -0.02em; display: block; margin-bottom: 0.25rem; }
+.console-card .card-links { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.7rem; font-size: 0.88rem; }
+
 /* ---- Responsive ---------------------------------------------------------- */
 @media (max-width: 860px) {
     .editor-grid { grid-template-columns: 1fr; }
     .editor-side { position: static; }
+    .console { display: block; }
+    .console-nav {
+        position: static; max-height: none; flex-direction: row; flex-wrap: wrap; gap: 1.25rem;
+        border-right: none; border-bottom: 1px solid var(--border);
+        padding: 0 0 1rem; margin-bottom: 1.5rem;
+    }
 }
 @media (max-width: 720px) {
     .dash-grid { grid-template-columns: 1fr; }
     .topnav { flex-wrap: wrap; gap: 0.75rem; }
-    .topnav .links { order: 3; width: 100%; display: none; }
-    .topnav .links.open { display: flex; flex-direction: column; }
-    .topnav .links a { width: 100%; }
-    .nav-burger { display: inline-flex; }
     .nav-tools { margin-left: auto; }
     .landing-hero h1 { font-size: 1.9rem; }
 }

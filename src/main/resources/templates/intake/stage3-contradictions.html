@@ -14,7 +14,8 @@
     .queue-claim { margin: 0.5rem 0 0; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
     .queue-claim:first-of-type { border-top: none; padding-top: 0; }
 </style>
-<main class="container wide">
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <div class="row-between">

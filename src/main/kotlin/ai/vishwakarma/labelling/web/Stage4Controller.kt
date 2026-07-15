@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.web
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.Stage4Run
 import ai.vishwakarma.labelling.domain.Stage4RunStatus
@@ -13,6 +12,7 @@ import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.PersonaService
 import ai.vishwakarma.labelling.service.Stage4Service
 import ai.vishwakarma.labelling.service.Stage4SubmitRequest
+import ai.vishwakarma.labelling.service.StageConfigService
 import ai.vishwakarma.labelling.service.SubjectService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -43,7 +43,7 @@ class Stage4Controller(
     private val subjectScores: SubjectScoreRepository,
     private val sftExamples: SftExampleRepository,
     private val exports: ExportRepository,
-    private val props: AppProperties,
+    private val config: StageConfigService,
 ) {
 
     /** The §9 phase rail in order — the template renders one chip per entry. */
@@ -71,7 +71,7 @@ class Stage4Controller(
         val run = stage4.latestForSubject(id)
         model.addAttribute("pageTitle", "Stage 4 · ${subject.displayName}")
         model.addAttribute("subject", subject)
-        model.addAttribute("enabled", props.stage4.enabled)
+        model.addAttribute("enabled", config.stage4().enabled)
         // Gate 1: Stage 4 consumes only a published, contract-current ledger (§4). SELECT would
         // fail with the same verbatim reason — saying it before Run beats an instant FAILED run.
         model.addAttribute("published", scores != null)
@@ -96,7 +96,7 @@ class Stage4Controller(
         )
         // Live server posture (props, NOT a run's frozen snapshot) — the Stage 3 lesson: a
         // stubbed engine makes a run useless on a real subject, so say so before Run.
-        model.addAttribute("dryRunServer", props.stage4.dryRun)
+        model.addAttribute("dryRunServer", config.stage4().dryRun)
         // The run's own frozen posture (paramsSnapshot) — dry-run runs stay badged forever.
         model.addAttribute("runDryRun", run?.let { snapshotFlag(it, "dryRun") } ?: false)
         // QD-6: a run submitted with the judge off is badged too (unsorted, unverdicted queue).
@@ -104,7 +104,7 @@ class Stage4Controller(
             "runJudgeDisabled",
             run?.let { !snapshotFlag(it, "judgeEnabled", default = true) } ?: false,
         )
-        model.addAttribute("mixDefaults", props.stage4.mix)
+        model.addAttribute("mixDefaults", config.stage4().mix)
         // The QA-4 gate's dashboard: current-stamp examples by status. Export is a filter, not a
         // gate — unreviewed examples are silently left behind — so the counts sit beside the
         // button and the operator decides when the queue is done.
