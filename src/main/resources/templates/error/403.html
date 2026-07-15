@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head('Access denied')}"></head>
+<body>
+
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero">
+            <span class="brand-mark"></span>
+            <h1>Access denied</h1>
+            <p class="lede">You don't have access to this page. If this is someone's advocate
+                space, it isn't your advocate — sign in with the account it belongs to.</p>
+            <a class="landing-cta" th:href="@{/}">Back to the start</a>
+        </section>
+    </main>
+</div>
+
+</body>
+</html>

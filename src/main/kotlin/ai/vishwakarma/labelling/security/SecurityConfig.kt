@@ -2,9 +2,15 @@ package ai.vishwakarma.labelling.security
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Role
+import ai.vishwakarma.labelling.service.SubjectDirectory
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties
+import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Profile
+import org.springframework.core.annotation.Order
+import org.springframework.http.HttpStatus
 import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl
@@ -12,18 +18,26 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.invoke
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.access.AccessDeniedHandler
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
+import org.springframework.security.web.authentication.HttpStatusEntryPoint
+import org.springframework.security.web.util.matcher.RequestMatcher
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.CorsConfigurationSource
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
- * Two mutually-exclusive filter chains by profile:
- * - `dev` : OAuth bypassed; [DevAuthFilter] injects a fixed user so roles are exercisable locally.
- * - others : Google OAuth2 login gated by [AllowlistOidcUserService]; admin area requires ADMIN.
+ * Host-split security (VA-30, LLD §4.4): [SubjectHostFilter] runs ahead of every chain and stamps
+ * subject-host requests with [SubjectCtx]; the chains then split:
+ * - subject chain (order 1) — claims any request carrying the ctx attribute, on BOTH profiles, so
+ *   dev exercises the real subject authorization table (`<handle>.localhost:8080`).
+ * - operator chains (order 2) — exactly the pre-VA-30 posture: `dev` = OAuth bypassed via
+ *   [DevAuthFilter]; others = Google OAuth2 login gated by [AllowlistOidcUserService].
  *
- * Role hierarchy ADMIN ⊃ REVIEWER ⊃ AUTHOR applies to both web and method security.
+ * Role hierarchy ADMIN ⊃ REVIEWER ⊃ AUTHOR applies to both web and method security; SUBJECT sits
+ * outside it (VA-29).
  */
 @Configuration
 @EnableMethodSecurity
@@ -62,14 +76,109 @@ class SecurityConfig {
         }
     }
 
+    /**
+     * Host-first routing must run before the Spring Security proxy so the chains' securityMatcher
+     * can read the [SubjectCtx] attribute it attaches.
+     */
     @Bean
+    fun subjectHostFilter(
+        props: AppProperties,
+        directory: SubjectDirectory,
+    ): FilterRegistrationBean<SubjectHostFilter> =
+        FilterRegistrationBean(SubjectHostFilter(props, directory)).apply {
+            order = SecurityFilterProperties.DEFAULT_FILTER_ORDER - 10
+        }
+
+    /**
+     * The `/internal` endpoints (VA-41, LLD §3.4): Cloud Scheduler's OIDC identity only — verified
+     * by [InternalOidcFilter], not by session auth, so the chain itself permits and the filter
+     * gates. CSRF off (machine-to-machine POSTs carry no session or token). NB: never put a glob
+     * pattern inside a block comment — Kotlin block comments NEST, so a literal slash-star inside
+     * one unbalances the file; globs belong in code strings or line comments.
+     */
+    @Bean
+    @Order(0)
+    fun internalSecurityFilterChain(http: HttpSecurity, props: AppProperties): SecurityFilterChain {
+        http.securityMatcher("/internal/**")
+        http {
+            authorizeHttpRequests { authorize(anyRequest, permitAll) }
+            csrf { disable() }
+        }
+        http.addFilterBefore(InternalOidcFilter(props), AnonymousAuthenticationFilter::class.java)
+        return http.build()
+    }
+
+    /**
+     * The subject world (LLD §4.4 authorization table). Paths arrive rewritten under `/s` (see
+     * [SubjectHostFilter]); routes outside the table were already 404'd by the filter, so the
+     * denyAll tail is belt-and-braces. Active on both profiles — in dev, [DevAuthFilter] supplies
+     * the principal (`?devRole=SUBJECT` etc.) and the same rules apply.
+     */
+    @Bean
+    @Order(1)
+    fun subjectSecurityFilterChain(
+        http: HttpSecurity,
+        props: AppProperties,
+        clientRegistrations: ObjectProvider<ClientRegistrationRepository>,
+        allowlistOidcUserService: ObjectProvider<OidcUserService>,
+    ): SecurityFilterChain {
+        http.securityMatcher(RequestMatcher { it.getAttribute(SubjectCtx.ATTR) != null })
+        val subjectOfHost = SubjectAccess.subjectOfHost()
+        // LLD §4.4: authenticated-but-wrong-subject → 403 "This isn't your advocate."
+        // (templates/error/403.html carries the friendly copy); anonymous → login entry point.
+        val denied = AccessDeniedHandler { _, response, _ ->
+            if (!response.isCommitted) response.sendError(403, "This isn't your advocate.")
+        }
+        val oauthAvailable = clientRegistrations.ifAvailable != null
+        http {
+            authorizeHttpRequests {
+                authorize("/css/**", permitAll)
+                authorize("/js/**", permitAll)
+                authorize("/webjars/**", permitAll)
+                authorize("/favicon.svg", permitAll)
+                authorize("/error", permitAll)
+                authorize("/logout", permitAll)
+                authorize("/login/**", permitAll)
+                authorize("/oauth2/**", permitAll)
+                // Root renders chat / split landing by state (§8.3); the wall is its own
+                // rate-limited gate (§6.3).
+                authorize("/s", permitAll)
+                authorize("/s/wall/**", permitAll)
+                authorize("/s/terms/**", authenticated)
+                // Guest-session access joins this rule with VA-36/37 (§6.4).
+                authorize("/s/chat/**", subjectOfHost)
+                authorize("/s/training/**", subjectOfHost)
+                authorize("/s/tokens/**", subjectOfHost)
+                authorize("/s/provisioning/**", subjectOfHost)
+                authorize("/s/questions/**", subjectOfHost)
+                authorize(anyRequest, denyAll)
+            }
+            exceptionHandling {
+                accessDeniedHandler = denied
+                if (!oauthAvailable) {
+                    authenticationEntryPoint = HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
+                }
+            }
+            if (oauthAvailable) {
+                oauth2Login {
+                    defaultSuccessUrl("/", false)
+                    allowlistOidcUserService.ifAvailable?.let { svc ->
+                        userInfoEndpoint { oidcUserService = svc }
+                    }
+                }
+            }
+            logout { logoutSuccessUrl = "/" }
+        }
+        if (props.auth.devBypass) {
+            http.addFilterBefore(devAuthFilter(props), AnonymousAuthenticationFilter::class.java)
+        }
+        return http.build()
+    }
+
+    @Bean
+    @Order(2)
     @Profile("dev")
     fun devSecurityFilterChain(http: HttpSecurity, props: AppProperties): SecurityFilterChain {
-        val devUser =
-            DevAuthFilter(
-                email = props.auth.devUser.email,
-                role = Role.fromOrNull(props.auth.devUser.role) ?: Role.ADMIN,
-            )
         http {
             authorizeHttpRequests { authorize(anyRequest, permitAll) }
             csrf { disable() }
@@ -81,11 +190,12 @@ class SecurityConfig {
             logout { logoutSuccessUrl = "/" }
         }
         // Must run before the anonymous filter, otherwise an authenticated anonymous token wins.
-        http.addFilterBefore(devUser, AnonymousAuthenticationFilter::class.java)
+        http.addFilterBefore(devAuthFilter(props), AnonymousAuthenticationFilter::class.java)
         return http.build()
     }
 
     @Bean
+    @Order(2)
     @Profile("!dev")
     fun securityFilterChain(
         http: HttpSecurity,
@@ -120,6 +230,9 @@ class SecurityConfig {
                 authorize("/api/stage2/**", hasRole("REVIEWER"))
                 // Stage 3 (Claims → Authenticity scores) JSON API: same conventions.
                 authorize("/api/stage3/**", hasRole("REVIEWER"))
+                // VA-69: the models registry (and the future Advocates panel, VA-40) is
+                // REVIEWER+ — URL rule pairing the class-level @PreAuthorize on ModelsController.
+                authorize("/models/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }
             // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).
@@ -139,4 +252,10 @@ class SecurityConfig {
         }
         return http.build()
     }
+
+    private fun devAuthFilter(props: AppProperties): DevAuthFilter =
+        DevAuthFilter(
+            email = props.auth.devUser.email,
+            role = Role.fromOrNull(props.auth.devUser.role) ?: Role.ADMIN,
+        )
 }

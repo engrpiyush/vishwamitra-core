@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-30 placeholder: the subject training UI (uploads, score, questions) ships with VA-32. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero">
+            <span class="brand-mark"></span>
+            <h1>Training console</h1>
+            <p class="lede">You're signed in to <strong th:text="${ctx.displayName}">your</strong>
+                advocate's training space.</p>
+            <p class="lede">Coming here next: evidence uploads, your authenticity score, questions
+                your advocate wants answered, and guest access codes.</p>
+        </section>
+    </main>
+    <footer class="landing-foot">
+        <a th:href="@{/terms}">Terms &amp; policies</a> ·
+        <form th:action="@{/logout}" method="post" style="display:inline">
+            <button type="submit" class="linklike">Sign out</button>
+        </form>
+    </footer>
+</div>
+
+</body>
+</html>

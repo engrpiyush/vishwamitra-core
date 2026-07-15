@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 @ConfigurationProperties(prefix = "app")
 data class AppProperties(
     val hostedDomain: String = "vishwakarma.ai",
+    val product: Product = Product(),
     val gcp: Gcp = Gcp(),
     val tuning: Tuning = Tuning(),
     val serving: Serving = Serving(),
@@ -21,6 +22,36 @@ data class AppProperties(
     val stage3: Stage3 = Stage3(),
     val stage4: Stage4 = Stage4(),
 ) {
+    /**
+     * The vishwakarma.ai product face (LLD §17.1): subject hosts live at `<handle>.{baseDomain}`
+     * while the operator app stays on [operatorDomain]; host-first routing splits the two worlds
+     * (VA-30). Product mail rides the same block (VA-41).
+     */
+    data class Product(
+        /** Subject hosts are `<handle>.{base-domain}` (dev: `localhost` → `dev.localhost:8080`). */
+        val baseDomain: String = "vishwakarma.ai",
+        /** The operator app's own host — never treated as a subject host. */
+        val operatorDomain: String = "labelling.vishwakarma.ai",
+        /**
+         * App-level daily ceiling across ALL outbound product mail (LLD §11.1). At the ceiling
+         * sends are skipped loudly (WARN + per-feature mark) — email never blocks a flow.
+         */
+        val mailDailyCap: Int = 200,
+        /** From-address for product mail (D1: plain Gmail SMTP with an app password). */
+        val mailFrom: String = "no-reply@vishwakarma.ai",
+        /**
+         * Expected OIDC audience on `/internal` calls (LLD §3.4 — Cloud Scheduler jobs run as a
+         * dedicated SA; the app verifies the bearer token itself). Blank outside dev = the
+         * endpoints fail closed.
+         */
+        val internalAudience: String = "",
+        /**
+         * Service-account email allowed on `/internal` (the scheduler SA). Blank = any
+         * Google-signed identity with the right audience.
+         */
+        val internalInvoker: String = "",
+    )
+
     data class ComingSoon(
         /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
         val corsOrigins: List<String> =

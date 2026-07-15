@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 <nav th:replace="~{fragments/common :: nav}"></nav>
@@ -25,8 +26,9 @@
             <div th:if="${currentVersion}">
                 <p><code th:text="${currentVersion.displayName}">model</code>
                     <span class="badge badge--current">current</span></p>
-                <p class="muted">Family <span th:text="${currentVersion.family}">fam</span> ·
-                    <a th:href="@{'/models/' + ${currentVersion.id} + '/serve'}">serve</a></p>
+                <p class="muted">Family <span th:text="${currentVersion.family}">fam</span><th:block
+                        sec:authorize="hasRole('REVIEWER')"> ·
+                    <a th:href="@{'/models/' + ${currentVersion.id} + '/serve'}">serve</a></th:block></p>
             </div>
             <p th:unless="${currentVersion}" class="muted">No model promoted to current yet.</p>
         </section>

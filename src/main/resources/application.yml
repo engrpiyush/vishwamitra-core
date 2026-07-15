@@ -7,6 +7,21 @@ spring:
   threads:
     virtual:
       enabled: true
+  # VA-41 (LLD §11.1): Gmail SMTP with an app password (owner one-time: 2FA on the account,
+  # SPF include:_spf.google.com, Workspace DKIM). Dev never sends — the dev profile wires the
+  # logger transport regardless of this block.
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:info@vishx.com}
+    password: ${SMTP_APP_PASSWORD:}
+    properties:
+      "[mail.smtp.auth]": true
+      "[mail.smtp.starttls.enable]": true
+      "[mail.smtp.starttls.required]": true
+      "[mail.smtp.connectiontimeout]": 10000
+      "[mail.smtp.timeout]": 10000
+      "[mail.smtp.writetimeout]": 10000
   servlet:
     multipart:
       # Imported tuning datasets can exceed the 1MB default.
@@ -119,6 +134,17 @@ app:
   # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
   coming-soon:
     cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}
+  # vishwakarma.ai product face (LLD §17.1): subject hosts <handle>.{base-domain} split from the
+  # operator app by host-first routing (VA-30); product mail + internal-endpoint auth (VA-41).
+  product:
+    base-domain: ${PRODUCT_BASE_DOMAIN:vishwakarma.ai}
+    operator-domain: ${PRODUCT_OPERATOR_DOMAIN:labelling.vishwakarma.ai}
+    mail-daily-cap: ${PRODUCT_MAIL_DAILY_CAP:200}
+    mail-from: ${PRODUCT_MAIL_FROM:info@vishx}
+    # OIDC audience the /internal/** sweep endpoints require (the Cloud Run URL); blank outside
+    # dev = those endpoints fail closed. The invoker pin is the scheduler SA email (optional).
+    internal-audience: ${INTERNAL_AUDIENCE:}
+    internal-invoker: ${INTERNAL_INVOKER:}
 
 ---
 # Local development: OAuth bypassed, Firestore emulator expected on localhost:8081.
@@ -131,8 +157,8 @@ app:
   auth:
     dev-bypass: true
     dev-user:
-      email: reviewer@vishwakarma.ai
-      role: REVIEWER
+      email: admin@vishwakarma.ai
+      role: ADMIN
   gcp:
     # Blank locally so intake uploads use IntakeStorage's local-disk fallback (var/intake/)
     # instead of minting GCS signed URLs, which need real credentials.
@@ -153,6 +179,11 @@ app:
     dry-run: true
   stage4:
     dry-run: true   # offline generator/judge doubles — never calls Gemini in dev
+  product:
+    # Subject world on <handle>.localhost:8080 (Chrome/Firefox resolve *.localhost natively);
+    # plain localhost:8080 stays the operator app.
+    base-domain: localhost
+    operator-domain: localhost
 
 ---
 # Cloud Run production.

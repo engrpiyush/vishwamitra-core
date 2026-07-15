@@ -7,6 +7,7 @@ import ai.vishwakarma.labelling.domain.ContentType
 import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.StageKey
+import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.TemplateCategoryGroup
 import ai.vishwakarma.labelling.domain.ToolParam
 import ai.vishwakarma.labelling.domain.ToolStatus
@@ -90,7 +91,8 @@ class AdminController(
         model.addAttribute("baseModelsTunable", baseModelList.count { it.tunable })
         model.addAttribute("templatesCount", templateList.size)
         model.addAttribute("categoriesCount", notebookTemplates.taxonomy().categories.size)
-        model.addAttribute("operatorsCount", users.list().size)
+        // Operators only — member (SUBJECT) logins are counted with Members, not Team (VA-31).
+        model.addAttribute("operatorsCount", users.list().count { it.role != Role.SUBJECT })
         return "admin/index"
     }
 
@@ -269,14 +271,14 @@ class AdminController(
         return "redirect:/admin/scenarios"
     }
 
-    // ---- Users -------------------------------------------------------------
+    // ---- Users (Operators / Team) -------------------------------------------
     @GetMapping("/users")
     fun users(model: Model): String {
         model.addAttribute("pageTitle", "Users")
         model.addAttribute("section", "users")
-        model.addAttribute("users", users.list())
-        // Operator roles only: SUBJECT rows carry a binding and are provisioned via the
-        // Users/Members flow (VA-31), not this Operators/Team page.
+        // Operator rows only: member (SUBJECT) logins carry a binding and live on the Members
+        // page (VA-31) — mixing them here invites accidental role flips.
+        model.addAttribute("users", users.list().filter { it.role != Role.SUBJECT })
         model.addAttribute("roles", Role.entries.filter { it != Role.SUBJECT })
         return "admin/users"
     }
@@ -288,11 +290,19 @@ class AdminController(
         ra: RedirectAttributes
     ): String {
         val parsedRole = Role.fromOrNull(role)
-        if (email.isBlank() || parsedRole == null) {
-            ra.addFlashAttribute("error", "Valid email and role are required")
-        } else {
-            users.upsert(email.trim().lowercase(), parsedRole, actor())
-            ra.addFlashAttribute("ok", "User saved")
+        val normalized = email.trim().lowercase()
+        when {
+            normalized.isBlank() || parsedRole == null || parsedRole == Role.SUBJECT ->
+                ra.addFlashAttribute("error", "Valid email and operator role are required")
+            users.get(normalized)?.role == Role.SUBJECT ->
+                ra.addFlashAttribute(
+                    "error",
+                    "$normalized is a member login — manage it on the Members page",
+                )
+            else -> {
+                users.upsert(normalized, parsedRole, actor())
+                ra.addFlashAttribute("ok", "User saved")
+            }
         }
         return "redirect:/admin/users"
     }
@@ -313,6 +323,74 @@ class AdminController(
         users.remove(email)
         ra.addFlashAttribute("ok", "User removed")
         return "redirect:/admin/users"
+    }
+
+    // ---- Members (subjects + their SUBJECT logins — VA-31, LLD §4.5) ----------
+    @GetMapping("/members")
+    fun members(model: Model): String {
+        val allSubjects = subjects.findAll()
+        val memberLogins = users.list().filter { it.role == Role.SUBJECT }
+        model.addAttribute("pageTitle", "Members")
+        model.addAttribute("section", "members")
+        model.addAttribute("subjects", allSubjects)
+        model.addAttribute("loginsBySubject", memberLogins.groupBy { it.subjectId ?: "" })
+        model.addAttribute(
+            "bindableSubjects",
+            allSubjects.filter { it.status == SubjectStatus.ACTIVE && !it.handle.isNullOrBlank() },
+        )
+        return "admin/members"
+    }
+
+    @PostMapping("/members")
+    fun createMemberLogin(
+        @RequestParam email: String,
+        @RequestParam subjectId: String,
+        ra: RedirectAttributes,
+    ): String {
+        val subject = subjects.findById(subjectId)
+        if (subject == null) {
+            ra.addFlashAttribute("error", "Subject not found")
+        } else {
+            users
+                .createSubjectLogin(email, subject, actor())
+                .fold(
+                    { ra.notify(it) },
+                    {
+                        ra.addFlashAttribute(
+                            "ok",
+                            "Member login ${it.email} → ${subject.displayName} created",
+                        )
+                    },
+                )
+        }
+        return "redirect:/admin/members"
+    }
+
+    /** Member-login lifecycle actions live here, guarded to SUBJECT rows only. */
+    @PostMapping("/members/{email}/active")
+    fun toggleMemberLogin(
+        @PathVariable email: String,
+        @RequestParam active: Boolean,
+        ra: RedirectAttributes,
+    ): String {
+        if (users.get(email)?.role != Role.SUBJECT) {
+            ra.addFlashAttribute("error", "$email is not a member login")
+        } else {
+            users.setActive(email, active)
+            ra.addFlashAttribute("ok", "Member login updated")
+        }
+        return "redirect:/admin/members"
+    }
+
+    @PostMapping("/members/{email}/delete")
+    fun deleteMemberLogin(@PathVariable email: String, ra: RedirectAttributes): String {
+        if (users.get(email)?.role != Role.SUBJECT) {
+            ra.addFlashAttribute("error", "$email is not a member login")
+        } else {
+            users.remove(email)
+            ra.addFlashAttribute("ok", "Member login removed")
+        }
+        return "redirect:/admin/members"
     }
 
     // ---- Providers ---------------------------------------------------------

@@ -14,8 +14,14 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.servlet.mvc.support.RedirectAttributes
 
+/**
+ * Model registry + serving controls. Class-level REVIEWER guard (VA-69): the registry leaks serving
+ * posture and becomes the operator Advocates panel home (VA-40, LLD §14.2), so AUTHOR stays out;
+ * the URL rule in SecurityConfig pairs this for defense in depth.
+ */
 @Controller
 @RequestMapping("/models")
+@PreAuthorize("hasRole('REVIEWER')")
 class ModelsController(
     private val training: TrainingService,
     private val serving: AdvocateServingService,

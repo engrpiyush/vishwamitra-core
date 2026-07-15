@@ -499,6 +499,10 @@ textarea { resize: vertical; min-height: 64px; }
 .landing-feature { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.9rem; }
 .landing-feature svg { width: 18px; height: 18px; color: var(--accent); flex: none; }
 .landing-foot { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 1.5rem; }
+/* Subject-face placeholders (VA-30): footer links + button-styled-as-link. */
+.landing-foot a { color: var(--muted); }
+.linklike { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit;
+    padding: 0; text-decoration: underline; }
 
 /* ---- Admin console (VA-82) ------------------------------------------------ */
 /* The page's <main> is the grid: the consolenav aside takes the left column, every other child

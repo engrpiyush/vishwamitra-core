@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-30 placeholder: the split landing (guest code ⟂ subject sign-in) ships with VA-42/43. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero">
+            <span class="brand-mark"></span>
+            <h1 th:text="${ctx.displayName}">Subject</h1>
+            <p class="lede">This is <span th:text="${ctx.displayName}">the subject</span>'s
+                personal advocate — an AI that speaks for them, grounded in verified evidence.</p>
+            <p class="lede">Guest access opens soon. If this is your advocate, sign in to keep
+                training it.</p>
+            <a class="landing-cta" th:href="@{/training}">Subject sign-in</a>
+        </section>
+    </main>
+    <footer class="landing-foot">
+        <a th:href="@{/terms}">Terms &amp; policies</a>
+    </footer>
+</div>
+
+</body>
+</html>

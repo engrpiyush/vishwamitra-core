@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('members')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <h1>Members</h1>
+    <p class="muted">Subjects and their product logins. A member signs in with any Google account
+        pre-created here (no self-registration) and lands on
+        <code>&lt;handle&gt;.vishwakarma.ai</code>. Subjects themselves are created on the
+        <a th:href="@{/intake}">intake</a> page; handles are immutable once set.</p>
+
+    <table class="grid">
+        <thead><tr><th>Subject</th><th>Handle</th><th>Status</th><th>Logins</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="s : ${subjects}">
+            <td th:text="${s.displayName}">name</td>
+            <td>
+                <code th:if="${s.handle != null}" th:text="${s.handle}">handle</code>
+                <span class="muted" th:if="${s.handle == null}">— (pipeline-only)</span>
+            </td>
+            <td><span class="badge" th:classappend="${s.status.name() == 'ACTIVE'} ? 'badge--success' : 'badge--muted'" th:text="${s.status}">ACTIVE</span></td>
+            <td>
+                <div th:with="logins=${loginsBySubject[s.id]}">
+                    <span class="muted" th:if="${logins == null}">none</span>
+                    <div th:each="u : ${logins}">
+                        <span th:text="${u.email}">email</span>
+                        <span class="badge" th:classappend="${u.active} ? 'badge--success' : 'badge--muted'" th:text="${u.active} ? 'active' : 'inactive'">active</span>
+                    </div>
+                </div>
+            </td>
+            <td>
+                <div class="row-actions" th:with="logins=${loginsBySubject[s.id]}">
+                    <th:block th:each="u : ${logins}">
+                        <form method="post" th:action="@{'/admin/members/' + ${u.email} + '/active'}">
+                            <input type="hidden" name="active" th:value="${!u.active}"/>
+                            <button class="btn--ghost btn--sm" type="submit" th:text="${u.active} ? 'Deactivate' : 'Activate'">toggle</button>
+                        </form>
+                        <form method="post" th:action="@{'/admin/members/' + ${u.email} + '/delete'}"
+                              data-confirm="This removes the member's login; they will no longer be able to sign in to their advocate space. The subject and its data are untouched."
+                              data-confirm-title="Remove this member login?" data-confirm-ok="Remove" data-confirm-danger>
+                            <button class="btn--danger btn--sm" type="submit">Remove login</button>
+                        </form>
+                    </th:block>
+                </div>
+            </td>
+        </tr>
+        <tr th:if="${subjects.isEmpty()}"><td colspan="5"><div class="empty-state">No subjects yet — create one on the intake page first.</div></td></tr>
+        </tbody>
+    </table>
+
+    <h2>Create member login</h2>
+    <p class="muted">Binds a Google account to a handled, active subject
+        (<code>users/{email} = {role: SUBJECT, subjectId}</code>). The binding is immutable —
+        remove and re-create to change it.</p>
+    <form method="post" th:action="@{/admin/members}" class="form">
+        <label>Email <input type="email" name="email" required placeholder="person@gmail.com"/></label>
+        <label>Subject
+            <select name="subjectId" required>
+                <option th:each="s : ${bindableSubjects}" th:value="${s.id}"
+                        th:text="${s.displayName + ' (' + s.handle + ')'}">subject</option>
+            </select>
+        </label>
+        <button type="submit">Create login</button>
+    </form>
+    <p class="muted" th:if="${bindableSubjects.isEmpty()}">No bindable subjects: a subject needs
+        <strong>ACTIVE</strong> status and a <strong>handle</strong> before a member login can be
+        bound to it.</p>
+</main>
+</body>
+</html>

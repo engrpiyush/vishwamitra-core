@@ -52,3 +52,24 @@ application-local.properties
 
 # Local export output (dev fallback when no training bucket configured)
 var/
+
+# Local working docs — session bookkeeping, wiki mirrors, research/planning notes.
+# Confluence is the source of truth for every *-wiki.md; the session queue + handoffs are
+# workflow state, not deliverables. The committed docs (README, RUNBOOK-local,
+# labelling-tool-plan, the-nebuchadnezzar) stay tracked and are unaffected by these rules.
+execution-plan/
+handoff-archive/
+HANDOFF.md
+HANDOFF-*.md
+*-wiki.md
+*-lld-draft.md
+ADMIN-gaps.md
+DEPRECATION-catalog.md
+INVESTOR-*.md
+PLAN-*.md
+RESEARCH-*.md
+TUNING-operations.md
+
+# OS / editor noise
+.DS_Store
+~$*

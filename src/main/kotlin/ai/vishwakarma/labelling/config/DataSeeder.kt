@@ -47,6 +47,7 @@ class DataSeeder {
                 seedScenarios(scenarios)
                 seedAdvocateNames(advocateNames)
                 seedNotebookTemplates(notebookTemplates, scenarios)
+                reconcileHandleSentinels(subjects)
                 seedDevSubject(props, subjects, users)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
@@ -215,6 +216,35 @@ class DataSeeder {
     }
 
     /**
+     * VA-31 follow-up (all profiles): handles created before the sentinel machinery have no
+     * `handles/{handle}` doc, so nothing stops a second subject from claiming them. Backfill the
+     * missing sentinels on startup; a conflict (two pre-existing subjects, one handle) is logged
+     * loudly for manual resolution — first writer keeps the handle.
+     */
+    private fun reconcileHandleSentinels(subjects: SubjectRepository) {
+        subjects
+            .findAll()
+            .filter { !it.handle.isNullOrBlank() }
+            .forEach { subject ->
+                val handle = subject.handle!!
+                when (subjects.sentinelFor(handle)) {
+                    subject.id -> Unit
+                    null -> {
+                        subjects.claimHandle(subject.id, handle)
+                        log.info("Backfilled handle sentinel '{}' → {}", handle, subject.id)
+                    }
+                    else ->
+                        log.error(
+                            "Handle sentinel conflict: '{}' is claimed by another subject — " +
+                                "{} keeps no sentinel; resolve manually",
+                            handle,
+                            subject.id,
+                        )
+                }
+            }
+    }
+
+    /**
      * VA-29 (LLD §4.6): dev profile only — one handled subject + its bound SUBJECT login so
      * `?devRole=SUBJECT` (DevAuthFilter) exercises the subject world against the emulator with zero
      * OAuth. Gated on the dev-bypass flag; never seeds in prod.
@@ -226,7 +256,10 @@ class DataSeeder {
     ) {
         if (!props.auth.devBypass) return
         if (subjects.findById(DevAuthFilter.DEV_SUBJECT_ID) == null) {
-            subjects.save(
+            // Written with its handle sentinel in one transaction (VA-31). The handle `dev` is on
+            // the §17.2 reserved list — this direct write is the sanctioned exception so
+            // dev.localhost:8080 exercises the subject world (validation would refuse it).
+            subjects.createWithHandle(
                 Subject(
                     id = DevAuthFilter.DEV_SUBJECT_ID,
                     displayName = "Dev Subject",
@@ -236,6 +269,9 @@ class DataSeeder {
                 )
             )
             log.info("Seeded dev subject '{}'", DevAuthFilter.DEV_SUBJECT_ID)
+        } else {
+            // Pre-VA-31 dev datastores have the subject but not the sentinel — idempotent repair.
+            subjects.claimHandle(DevAuthFilter.DEV_SUBJECT_ID, DevAuthFilter.DEV_SUBJECT_HANDLE)
         }
         if (users.roleFor(DevAuthFilter.DEV_SUBJECT_EMAIL) == null) {
             users.upsert(

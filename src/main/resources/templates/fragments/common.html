@@ -88,6 +88,7 @@
     <div class="console-group" sec:authorize="hasRole('REVIEWER')">
         <span class="console-group-label">Users / Members</span>
         <a th:href="@{/intake}" th:classappend="${active == 'intake'} ? 'active'">Members · intake</a>
+        <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin/members}" th:classappend="${active == 'members'} ? 'active'">Members · access</a>
     </div>
     <div class="console-group" sec:authorize="hasRole('ADMIN')">
         <span class="console-group-label">Base models</span>
@@ -106,9 +107,10 @@
         <a sec:authorize="hasRole('REVIEWER')" th:href="@{/export}" th:classappend="${active == 'export'} ? 'active'">Export</a>
         <a sec:authorize="hasRole('REVIEWER')" th:href="@{/import}" th:classappend="${active == 'import'} ? 'active'">Import</a>
     </div>
-    <div class="console-group">
+    <!-- VA-69: the whole group is REVIEWER+ now that /models carries the class-level guard. -->
+    <div class="console-group" sec:authorize="hasRole('REVIEWER')">
         <span class="console-group-label">Models &amp; serving</span>
-        <a sec:authorize="hasRole('REVIEWER')" th:href="@{/training}" th:classappend="${active == 'training'} ? 'active'">Training</a>
+        <a th:href="@{/training}" th:classappend="${active == 'training'} ? 'active'">Training</a>
         <a th:href="@{/models}" th:classappend="${active == 'models'} ? 'active'">Models</a>
     </div>
     <div class="console-group" sec:authorize="hasRole('ADMIN')">

@@ -1,8 +1,13 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.domain.Role
+import ai.vishwakarma.labelling.domain.Subject
+import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.User
 import ai.vishwakarma.labelling.persistence.UserRepository
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import java.time.Instant
 import org.springframework.stereotype.Service
 
@@ -19,7 +24,50 @@ class UserService(private val users: UserRepository) {
     /** The full allowlist row for an active user (VA-29: login needs role + subject binding). */
     fun activeUser(email: String): User? = users.findByEmail(email)?.takeIf { it.active }
 
+    /** The allowlist row regardless of active flag (admin surfaces). */
+    fun get(email: String): User? = users.findByEmail(email)
+
     fun list(): List<User> = users.findAll()
+
+    /**
+     * VA-31 (LLD §4.5 step 2): provision a member (SUBJECT) login bound to a subject. Fails when
+     * the email is already allowlisted (an email is one `users` doc — one person cannot be both
+     * operator and subject on the same address), when the subject is ARCHIVED, or when it has no
+     * handle yet (the handle IS the member's host — a binding without one is unreachable).
+     */
+    fun createSubjectLogin(
+        email: String,
+        subject: Subject,
+        addedBy: String?,
+    ): Either<DomainError, User> {
+        val normalized = email.trim().lowercase()
+        if (!EMAIL_REGEX.matches(normalized))
+            return DomainError.Invalid("A valid email is required").left()
+        users.findByEmail(normalized)?.let {
+            return DomainError.Invalid("$normalized is already allowlisted (${it.role})").left()
+        }
+        if (subject.status == SubjectStatus.ARCHIVED)
+            return DomainError.Invalid(
+                    "${subject.displayName} is archived — reactivate before binding a login"
+                )
+                .left()
+        if (subject.handle.isNullOrBlank())
+            return DomainError.Invalid(
+                    "${subject.displayName} needs a handle first — the handle is the member's host"
+                )
+                .left()
+        val user =
+            User(
+                email = normalized,
+                role = Role.SUBJECT,
+                active = true,
+                subjectId = subject.id,
+                addedBy = addedBy,
+                addedAt = Instant.now(),
+            )
+        users.upsert(user)
+        return user.right()
+    }
 
     fun upsert(
         email: String,
@@ -49,4 +97,8 @@ class UserService(private val users: UserRepository) {
     }
 
     fun remove(email: String) = users.delete(email)
+
+    companion object {
+        private val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+    }
 }
