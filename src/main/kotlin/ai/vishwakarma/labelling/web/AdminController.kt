@@ -275,7 +275,9 @@ class AdminController(
         model.addAttribute("pageTitle", "Users")
         model.addAttribute("section", "users")
         model.addAttribute("users", users.list())
-        model.addAttribute("roles", Role.entries)
+        // Operator roles only: SUBJECT rows carry a binding and are provisioned via the
+        // Users/Members flow (VA-31), not this Operators/Team page.
+        model.addAttribute("roles", Role.entries.filter { it != Role.SUBJECT })
         return "admin/users"
     }
 

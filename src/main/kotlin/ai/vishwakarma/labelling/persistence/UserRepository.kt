@@ -33,6 +33,7 @@ class UserRepository(private val db: Firestore) {
             "email" to email,
             "role" to role.name,
             "active" to active,
+            "subjectId" to subjectId,
             "addedBy" to addedBy,
             "addedAt" to (addedAt ?: Instant.now()).toTimestamp(),
         )
@@ -42,6 +43,7 @@ class UserRepository(private val db: Firestore) {
             email = getString("email") ?: id,
             role = Role.fromOrNull(getString("role")) ?: Role.AUTHOR,
             active = getBoolean("active") ?: true,
+            subjectId = getString("subjectId"),
             addedBy = getString("addedBy"),
             addedAt = instant("addedAt"),
         )

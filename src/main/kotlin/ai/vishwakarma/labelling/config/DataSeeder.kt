@@ -4,9 +4,12 @@ import ai.vishwakarma.labelling.domain.AdvocateName
 import ai.vishwakarma.labelling.domain.AdvocateRegion
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Role
+import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
+import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
+import ai.vishwakarma.labelling.security.DevAuthFilter
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.NotebookTemplateService
 import ai.vishwakarma.labelling.service.ScenarioService
@@ -35,6 +38,7 @@ class DataSeeder {
         users: UserService,
         advocateNames: AdvocateNameRepository,
         notebookTemplates: NotebookTemplateService,
+        subjects: SubjectRepository,
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
@@ -43,6 +47,7 @@ class DataSeeder {
                 seedScenarios(scenarios)
                 seedAdvocateNames(advocateNames)
                 seedNotebookTemplates(notebookTemplates, scenarios)
+                seedDevSubject(props, subjects, users)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
     }
@@ -207,6 +212,40 @@ class DataSeeder {
             log.info("Seeded notebook-template category taxonomy")
         }
         notebookTemplates.migrateScenariosIfEmpty(scenarios.list())
+    }
+
+    /**
+     * VA-29 (LLD §4.6): dev profile only — one handled subject + its bound SUBJECT login so
+     * `?devRole=SUBJECT` (DevAuthFilter) exercises the subject world against the emulator with zero
+     * OAuth. Gated on the dev-bypass flag; never seeds in prod.
+     */
+    private fun seedDevSubject(
+        props: AppProperties,
+        subjects: SubjectRepository,
+        users: UserService
+    ) {
+        if (!props.auth.devBypass) return
+        if (subjects.findById(DevAuthFilter.DEV_SUBJECT_ID) == null) {
+            subjects.save(
+                Subject(
+                    id = DevAuthFilter.DEV_SUBJECT_ID,
+                    displayName = "Dev Subject",
+                    handle = DevAuthFilter.DEV_SUBJECT_HANDLE,
+                    notes = "Seeded dev-profile subject for ?devRole=SUBJECT (VA-29).",
+                    createdBy = "seed",
+                )
+            )
+            log.info("Seeded dev subject '{}'", DevAuthFilter.DEV_SUBJECT_ID)
+        }
+        if (users.roleFor(DevAuthFilter.DEV_SUBJECT_EMAIL) == null) {
+            users.upsert(
+                email = DevAuthFilter.DEV_SUBJECT_EMAIL,
+                role = Role.SUBJECT,
+                addedBy = "seed",
+                subjectId = DevAuthFilter.DEV_SUBJECT_ID,
+            )
+            log.info("Seeded dev SUBJECT login {}", DevAuthFilter.DEV_SUBJECT_EMAIL)
+        }
     }
 
     private fun seedScenarios(scenarios: ScenarioService) {
