@@ -114,7 +114,16 @@ class SubjectHostFilter(
     companion object {
         /** First path segments that exist in the subject world (LLD §4.4 + §8.1). */
         val SUBJECT_SEGMENTS =
-            setOf("wall", "chat", "training", "tokens", "provisioning", "questions", "terms")
+            setOf(
+                "wall",
+                "chat",
+                "training",
+                "tokens",
+                "provisioning",
+                "questions",
+                "terms",
+                "signin"
+            )
 
         private val SHARED_EXACT = setOf("/favicon.svg", "/error", "/logout")
         private val SHARED_PREFIXES = listOf("/css/", "/js/", "/webjars/", "/login", "/oauth2/")

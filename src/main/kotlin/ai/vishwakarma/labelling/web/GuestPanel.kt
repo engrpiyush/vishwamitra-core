@@ -10,10 +10,12 @@ import org.springframework.ui.Model
  */
 object GuestPanel {
 
-    /** The panel's state-adaptive variant (LLD §8.3): which copy/form the guest sees. */
+    /**
+     * The panel's state-adaptive variant (LLD §8.3): which copy/form the guest sees. A guest with a
+     * valid capability session never reaches the landing anymore — the §8.3 v1.1 decision tree
+     * ([SubjectRoot], VA-43) sends them straight to chat.
+     */
     enum class State {
-        /** Valid guest capability session on the request — chat surface (VA-43) goes here. */
-        CONNECTED,
         /** Advocate LIVE — the access-code form. */
         LIVE,
         /** Window being provisioned — "getting ready" + page-driven poll. */
@@ -24,20 +26,19 @@ object GuestPanel {
         BUILDING,
     }
 
-    fun populate(model: Model, ctx: SubjectCtx, state: AdvocateState, connected: Boolean) {
+    fun populate(model: Model, ctx: SubjectCtx, state: AdvocateState) {
         model.addAttribute("ctx", ctx)
         model.addAttribute("pageTitle", ctx.displayName)
-        model.addAttribute("guestPanelState", stateFor(state, connected).name)
+        model.addAttribute("guestPanelState", stateFor(state).name)
     }
 
-    private fun stateFor(state: AdvocateState, connected: Boolean): State =
-        when {
-            connected -> State.CONNECTED
-            state == AdvocateState.LIVE -> State.LIVE
-            state == AdvocateState.PROVISIONING -> State.PROVISIONING
-            state == AdvocateState.UNPROVISIONED ||
-                state == AdvocateState.DEPROVISIONING ||
-                state == AdvocateState.DEPLOY_FAILED -> State.OFFLINE
+    private fun stateFor(state: AdvocateState): State =
+        when (state) {
+            AdvocateState.LIVE -> State.LIVE
+            AdvocateState.PROVISIONING -> State.PROVISIONING
+            AdvocateState.UNPROVISIONED,
+            AdvocateState.DEPROVISIONING,
+            AdvocateState.DEPLOY_FAILED -> State.OFFLINE
             else -> State.BUILDING
         }
 }

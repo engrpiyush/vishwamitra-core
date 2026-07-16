@@ -5,15 +5,9 @@
 <!--
   VA-37: the §8.3 guest access panel — the wall IS this fragment now (the standalone /wall page
   is gone). State-adaptive on ${guestPanelState} (see web/GuestPanel.kt); the landing composes it.
+  A guest with a valid session never sees this — the root decision tree (VA-43) renders chat.
 -->
 <div th:fragment="panel" class="landing-panel guest-panel">
-
-    <!-- Valid capability session: chat lands here with VA-43. -->
-    <div th:if="${guestPanelState == 'CONNECTED'}">
-        <h2>You're connected</h2>
-        <p class="panel-lede">Your access code worked. The conversation opens right here as soon
-            as chat goes live — check back shortly.</p>
-    </div>
 
     <!-- LIVE: the access-code form (POST /wall/redeem, §6.3). -->
     <div th:if="${guestPanelState == 'LIVE'}">

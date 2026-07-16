@@ -603,7 +603,8 @@ textarea { resize: vertical; min-height: 64px; }
 .tokens-panel table.grid { width: 100%; }
 @media (max-width: 720px) {
     .landing-panels { grid-template-columns: 1fr; }
-    .landing-divider { display: none; }
+    /* VA-43 AC: panels stack and the divider turns horizontal at mobile width. */
+    .landing-divider { width: 100%; height: 1px; }
 }
 
 /* ── VA-32: subject training surfaces (S2–S5, LLD §8) ── */
@@ -653,3 +654,35 @@ label.attest input { margin-top: 0.2rem; flex: none; }
 /* The hidden attribute must beat any display rule here (the .modal[hidden] idiom) — the JS
    toggles suError / suFromWrap / suProgress via [hidden], and .flash/.card label set display. */
 .subject-panel [hidden] { display: none !important; }
+
+/* ── VA-43: advocate chat (S10, LLD §8.3) + VA-44 evidence-strength card ── */
+.chat-panel { display: flex; flex-direction: column; }
+.chat-ribbon {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    padding: 0.55rem 0.9rem; font-size: 0.85rem; margin-bottom: 1rem;
+}
+.chat-disclosure { color: var(--muted); font-size: 0.8rem; margin-bottom: 1rem; }
+.chat-log {
+    display: flex; flex-direction: column; gap: 0.6rem;
+    min-height: 260px; max-height: 55vh; overflow-y: auto;
+    padding: 1rem; margin-bottom: 0.75rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.chat-msg { display: flex; }
+.chat-msg--you { justify-content: flex-end; }
+.chat-msg--advocate { justify-content: flex-start; }
+.chat-bubble {
+    max-width: 78%; padding: 0.55rem 0.85rem; border-radius: 14px;
+    font-size: 0.93rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}
+.chat-msg--you .chat-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg--advocate .chat-bubble {
+    background: color-mix(in srgb, var(--border) 40%, var(--surface));
+    border: 1px solid var(--border); border-bottom-left-radius: 4px;
+}
+.chat-msg--pending .chat-bubble { color: var(--muted); font-style: italic; }
+.chat-form { display: flex; gap: 0.6rem; align-items: flex-end; }
+.chat-form textarea { flex: 1; resize: none; }
+.score-card .score-dial { font-size: 2rem; font-weight: 750; letter-spacing: -0.02em; margin-bottom: 0.3rem; }
+.score-card .score-dial span { font-size: 1rem; font-weight: 500; color: var(--muted); }

@@ -45,10 +45,18 @@
                 </form>
             </div>
 
-            <!-- Aggregate-score slot (filled by the W7 score ticket). -->
-            <div class="card" th:if="${score != null}">
-                <p class="panel-lede">Authenticity score:
-                    <strong th:text="${#numbers.formatDecimal(score, 1, 2)}">0.00</strong></p>
+            <!-- VA-44: the §10 evidence-strength card — the ONE number subjects see (D4). -->
+            <div class="card score-card">
+                <h2>Evidence strength</h2>
+                <div th:if="${score != null}">
+                    <p class="score-dial"><strong th:text="${score}">86</strong><span>/100</span></p>
+                    <p class="panel-lede"
+                       th:text="|Based on ${scoredClaims} pieces of reviewed evidence.|">count</p>
+                </div>
+                <p class="panel-lede" th:if="${score == null}">Your advocate's evidence is still
+                    being scored.</p>
+                <p class="panel-fineprint">This measures how well your advocate's picture of you
+                    is backed up by reviewed evidence — not how flattering it is.</p>
             </div>
 
             <div class="panel-links" style="margin-top:1.2rem;">

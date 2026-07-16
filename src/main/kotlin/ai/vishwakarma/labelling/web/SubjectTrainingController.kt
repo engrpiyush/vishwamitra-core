@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.domain.AssetModality
 import ai.vishwakarma.labelling.domain.AssetUploadStatus
 import ai.vishwakarma.labelling.domain.ConsentStatus
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
+import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.service.IntakeService
@@ -36,6 +37,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes
 class SubjectTrainingController(
     private val intake: IntakeService,
     private val stage2: Stage2Service,
+    private val advocates: AdvocateRepository,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -64,9 +66,13 @@ class SubjectTrainingController(
             "needsYou",
             jobs.count { it.status == Stage2JobStatus.AWAITING_SPEAKER_SELECTION },
         )
-        // Post-submit S2 (read-only): the uploads list + tool links (§8.1).
+        // Post-submit S2 (read-only): the uploads list + tool links (§8.1), and the §10
+        // evidence-strength card (VA-44) — scoring only means anything once training is in.
         if (phase == TrainingPhase.SUBMITTED) {
             model.addAttribute("uploads", assets.map { it.title })
+            val advocate = advocates.find(ctx.subjectId)
+            model.addAttribute("score", advocate?.evidenceStrength)
+            model.addAttribute("scoredClaims", advocate?.scoredClaimCount ?: 0)
         }
         return "subject/training/home"
     }

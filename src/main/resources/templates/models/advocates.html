@@ -77,10 +77,14 @@
                 <span class="muted" th:unless="${row.advocate?.windowEndsAt != null}">—</span>
             </td>
             <td>
-                <!-- Recompute lands with the W7 score ticket; the denormalized value renders now. -->
-                <span th:if="${row.advocate?.aggregateScore != null}"
-                      th:text="${#numbers.formatDecimal(row.advocate.aggregateScore, 1, 2)}">0.00</span>
-                <span class="muted" th:unless="${row.advocate?.aggregateScore != null}">—</span>
+                <!-- VA-44: the §10 evidence strength (round(100·A)) + the recompute action. -->
+                <span th:if="${row.advocate?.evidenceStrength != null}"
+                      th:text="|${row.advocate.evidenceStrength}/100 (${row.advocate.scoredClaimCount})|">86/100 (5)</span>
+                <span class="muted" th:unless="${row.advocate?.evidenceStrength != null}">—</span>
+                <form method="post" th:action="@{/models/advocates/recompute-score}">
+                    <input type="hidden" name="subjectId" th:value="${row.subject.id}"/>
+                    <button type="submit" class="link">recompute</button>
+                </form>
             </td>
             <td><span th:text="|${row.tokenActive}/${row.tokenTotal} active|">0/0</span></td>
             <td class="actions">
@@ -106,6 +110,8 @@
                     <input type="hidden" name="subjectId" th:value="${row.subject.id}"/>
                     <button type="submit" class="link">refresh</button>
                 </form>
+                <!-- VA-42: the F9 record, operator rendering. -->
+                <a class="link" th:href="@{/models/advocates/{id}/transcripts(id=${row.subject.id})}">transcripts</a>
             </td>
         </tr>
         </tbody>

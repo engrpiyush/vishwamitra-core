@@ -4,8 +4,8 @@
 <body>
 
 <!--
-  VA-37: split landing (LLD §8.3 — S11): guest access panel ⟂ subject sign-in around a divider.
-  VA-42/43 finish the decision tree (chat for signed-in/connected visitors).
+  VA-37/VA-43: split landing (LLD §8.3 — S11): guest access panel ⟂ subject sign-in around a
+  divider. Rendered only when no gate has passed (web/SubjectRoot.kt) — chat lives on the root.
 -->
 <div class="landing">
     <main class="landing-main">
@@ -20,12 +20,12 @@
                 <div th:replace="~{subject/guest-panel :: panel}"></div>
                 <div class="landing-divider" role="separator"></div>
                 <div class="landing-panel">
-                    <h2>Is this your advocate?</h2>
-                    <p class="panel-lede" th:unless="${signedIn}">Sign in to train it, review
-                        your evidence and manage guest access codes.</p>
+                    <h2 th:text="|Are you ${ctx.displayName}?|">Is this your advocate?</h2>
+                    <p class="panel-lede" th:unless="${signedIn}">Sign in with Google to talk to
+                        your advocate, train it, and manage guest access codes.</p>
                     <p class="panel-lede" th:if="${signedIn}">You're signed in — head to your
                         training space or manage access codes.</p>
-                    <a class="btn btn--primary" th:unless="${signedIn}" th:href="@{/training}"
+                    <a class="btn btn--primary" th:unless="${signedIn}" th:href="@{/signin}"
                        th:text="|I'm ${ctx.displayName} — sign in|">Sign in</a>
                     <div class="panel-links" th:if="${signedIn}">
                         <a class="btn btn--primary" th:href="@{/training}">Training space</a>

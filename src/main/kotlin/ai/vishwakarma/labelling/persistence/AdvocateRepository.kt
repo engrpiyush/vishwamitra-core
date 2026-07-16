@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.WindowPreset
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.SetOptions
 import java.time.Instant
 import org.springframework.stereotype.Repository
 
@@ -26,6 +27,24 @@ class AdvocateRepository(private val db: Firestore) {
 
     fun delete(subjectId: String) {
         col.document(subjectId).delete().await()
+    }
+
+    /**
+     * The §10.3 denormalized-score write (VA-44) — a field merge, never a whole-doc set, so a
+     * concurrent provisioning transition can't be clobbered; creates the doc when the subject has
+     * published scores but no advocate yet (it reads back state NOT_BUILT, which is the truth).
+     */
+    fun updateScore(subjectId: String, score: Double?, scoredClaimCount: Int, computedAt: Instant) {
+        col.document(subjectId)
+            .set(
+                mapOf(
+                    "aggregateScore" to score,
+                    "scoredClaimCount" to scoredClaimCount,
+                    "scoreComputedAt" to computedAt.toTimestamp(),
+                ),
+                SetOptions.merge(),
+            )
+            .await()
     }
 
     private fun Advocate.toMap(): Map<String, Any?> =

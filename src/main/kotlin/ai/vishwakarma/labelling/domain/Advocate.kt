@@ -74,4 +74,8 @@ data class Advocate(
             state == AdvocateState.PROVISIONING ||
                 state == AdvocateState.LIVE ||
                 state == AdvocateState.DEPROVISIONING
+
+    /** §10.1 presentation: round(100·A) — "Evidence strength: NN/100"; null while unscored. */
+    val evidenceStrength: Int?
+        get() = aggregateScore?.let { Math.round(it * 100).toInt() }
 }

@@ -75,7 +75,7 @@ class TokenWallController(
             // One generic message for unknown/foreign/used codes — no oracle (§6.3).
             RedeemOutcome.Invalid -> model.addAttribute("wallError", "That code isn't valid.")
         }
-        GuestPanel.populate(model, ctx, tokens.advocateState(ctx.subjectId), connected = false)
+        GuestPanel.populate(model, ctx, tokens.advocateState(ctx.subjectId))
         model.addAttribute("signedIn", CurrentUser.email() != null)
         return "subject/landing"
     }

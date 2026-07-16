@@ -45,7 +45,9 @@ class SubjectProvisioningController(private val provisioning: ProvisioningServic
         model.addAttribute("view", view)
         model.addAttribute("presets", SubjectProvisioning.presets())
         model.addAttribute("endsAt", advocate?.takeIf { view == SwitchView.ONLINE }?.windowEndsAt)
-        model.addAttribute("score", advocate?.aggregateScore)
+        // The §10 evidence-strength card (VA-44): display number + count, or "still being scored".
+        model.addAttribute("score", advocate?.evidenceStrength)
+        model.addAttribute("scoredClaims", advocate?.scoredClaimCount ?: 0)
         return "subject/provisioning"
     }
 

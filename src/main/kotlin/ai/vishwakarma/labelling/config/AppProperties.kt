@@ -47,6 +47,13 @@ data class AppProperties(
          */
         @get:JsonIgnore val tokenPepper: String = "",
         /**
+         * Transcript-row cap per chat session (LLD §7.5) — user AND advocate rows both count (each
+         * exchange adds 2), so the default allows 15 exchanges per session.
+         */
+        val maxMessagesPerSession: Int = 30,
+        /** Minimum gap between sends within one session (LLD §7.5 pace guard; 429 under it). */
+        val chatMinInterval: Duration = Duration.ofSeconds(3),
+        /**
          * App-level daily ceiling across ALL outbound product mail (LLD §11.1). At the ceiling
          * sends are skipped loudly (WARN + per-feature mark) — email never blocks a flow.
          */

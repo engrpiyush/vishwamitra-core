@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-43: S10 — the advocate chat surface, rendered on the root once a gate has passed
+  (web/SubjectRoot.kt). mode=GUEST carries the F9 disclosure banner; mode=SELF carries the
+  "testing your own advocate" ribbon (chat) or the S9 status card (not LIVE). Friendly
+  vocabulary only (§12.3) — every error string comes from the server's chat JSON.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel chat-panel">
+            <h1 th:text="${ctx.displayName}">Subject</h1>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <!-- SELF, not LIVE: the friendly state card + the switch link — no chat surface. -->
+            <div th:if="${status != null}">
+                <div class="card">
+                    <h2 th:text="${status.headline}">Not available right now</h2>
+                    <p class="panel-lede" th:text="${status.blurb}">state copy</p>
+                    <a class="btn btn--primary" th:href="@{/provisioning}">Manage availability</a>
+                </div>
+                <div class="panel-links" style="margin-top:1.2rem;">
+                    <a class="btn btn--secondary" th:href="@{/training}">Training space</a>
+                    <a class="btn btn--secondary" th:href="@{/tokens}">Access codes</a>
+                </div>
+            </div>
+
+            <!-- The chat surface (guest, or self while LIVE). -->
+            <div th:if="${status == null}">
+                <p class="chat-ribbon" th:if="${mode == 'SELF'}">You're testing your own
+                    advocate — this conversation is saved like any other.</p>
+                <p class="chat-disclosure" th:if="${mode == 'GUEST'}">You're chatting with an AI
+                    advocate, not with <span th:text="${ctx.displayName}">the subject</span>
+                    directly. The conversation is recorded and visible to them. One functional
+                    cookie keeps your session — nothing else.</p>
+
+                <div id="chatLog" class="chat-log" aria-live="polite"
+                     th:attr="data-advocate=${ctx.displayName}"></div>
+                <p id="chatNotice" class="flash error" hidden></p>
+                <form id="chatForm" class="chat-form" autocomplete="off">
+                    <textarea id="chatInput" rows="2" maxlength="2000" required
+                              th:attr="placeholder=|Ask about ${ctx.displayName}…|"></textarea>
+                    <button type="submit" class="btn btn--primary" id="chatSend">Send</button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- Guests get the public footer; the subject/operator keeps their tools nav.
+         (th:replace outranks th:if, so the conditional include needs the th:block wrapper.) -->
+    <footer class="landing-foot" th:if="${mode == 'GUEST'}">
+        <a th:href="@{/terms}">Terms &amp; policies</a>
+    </footer>
+    <th:block th:if="${mode == 'SELF'}">
+        <footer th:replace="~{subject/layout :: foot}"></footer>
+    </th:block>
+</div>
+
+<script th:if="${status == null}" th:src="@{/js/advocate-chat.js}" defer></script>
+</body>
+</html>

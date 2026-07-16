@@ -442,6 +442,7 @@ class AdminController(
         val known =
             extractionPrompts.isStage3Key(id) ||
                 extractionPrompts.isStage4Key(id) ||
+                extractionPrompts.isProductKey(id) ||
                 ContentType.fromOrNull(id) != null
         when {
             !known -> ra.addFlashAttribute("error", "Unknown prompt '$id'")
@@ -467,6 +468,7 @@ class AdminController(
         if (
             !extractionPrompts.isStage3Key(id) &&
                 !extractionPrompts.isStage4Key(id) &&
+                !extractionPrompts.isProductKey(id) &&
                 ContentType.fromOrNull(id) == null
         ) {
             ra.addFlashAttribute("error", "Unknown prompt '$id'")

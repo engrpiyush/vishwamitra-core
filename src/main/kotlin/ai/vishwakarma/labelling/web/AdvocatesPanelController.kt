@@ -7,26 +7,31 @@ import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.VersionStatus
 import ai.vishwakarma.labelling.domain.WindowPreset
 import ai.vishwakarma.labelling.security.CurrentUser
+import ai.vishwakarma.labelling.service.AdvocateChatService
+import ai.vishwakarma.labelling.service.AggregateScoreService
 import ai.vishwakarma.labelling.service.ProvisioningService
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
 import ai.vishwakarma.labelling.service.TokenService
 import ai.vishwakarma.labelling.service.TrainingService
+import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.mvc.support.RedirectAttributes
 
 /**
  * The operator Advocates panel (VA-40, LLD §14.2) — the full-vocabulary view of the §7.3 state
  * machine, in the /models area (REVIEWER+, VA-69: the URL rule in SecurityConfig pairs the class
  * guard). Everything the subject switch hides lives here: raw states, `lastError` verbatim, the
- * runbook actions (register → window → retry → manual sweep, §14.3). The score recompute action
- * arrives with the W7 score ticket.
+ * runbook actions (register → window → retry → manual sweep, §14.3), the §10 score recompute
+ * (VA-44) and per-subject chat transcripts (VA-42 — the operator rendering of the F9 record).
  */
 @Controller
 @RequestMapping("/models/advocates")
@@ -36,6 +41,8 @@ class AdvocatesPanelController(
     private val subjects: SubjectService,
     private val tokens: TokenService,
     private val training: TrainingService,
+    private val aggregateScores: AggregateScoreService,
+    private val chat: AdvocateChatService,
 ) {
 
     /** One panel row per ACTIVE subject — advocate state + token posture side by side. */
@@ -157,6 +164,33 @@ class AdvocatesPanelController(
     fun sweep(ra: RedirectAttributes): String {
         ra.addFlashAttribute("ok", "Sweep: ${provisioning.sweep()}")
         return "redirect:/models/advocates"
+    }
+
+    /** VA-44: re-derive the §10 evidence-strength number from the published ledger. */
+    @PostMapping("/recompute-score")
+    fun recomputeScore(@RequestParam subjectId: String, ra: RedirectAttributes): String {
+        val result = aggregateScores.recompute(subjectId)
+        ra.addFlashAttribute(
+            "ok",
+            if (result.display != null)
+                "Score recomputed: ${result.display}/100 over ${result.scoredClaimCount} published claim(s)"
+            else "No published claim scores yet — the score card shows \"still being scored\"",
+        )
+        return "redirect:/models/advocates"
+    }
+
+    /** VA-42 transcript access, operator rendering: every session + its messages, one page. */
+    @GetMapping("/{subjectId}/transcripts")
+    fun transcripts(@PathVariable subjectId: String, model: Model): String {
+        val subject =
+            subjects.list().firstOrNull { it.id == subjectId }
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        val transcripts =
+            chat.sessions(subjectId).map { session -> session to chat.history(session) }
+        model.addAttribute("pageTitle", "Transcripts — ${subject.displayName}")
+        model.addAttribute("subject", subject)
+        model.addAttribute("transcripts", transcripts)
+        return "models/advocate-transcripts"
     }
 
     private fun actor(): String = CurrentUser.email() ?: "operator"

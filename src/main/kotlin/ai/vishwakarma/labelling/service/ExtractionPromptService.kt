@@ -104,6 +104,9 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** True when [id] is a reserved Stage 3 row the admin page may edit alongside content types. */
     fun isStage3Key(id: String): Boolean = id in STAGE3_KEYS
 
+    /** True when [id] is the reserved product row (the §7.5 advocate chat system prompt). */
+    fun isProductKey(id: String): Boolean = id == ADVOCATE_SYSTEM_KEY
+
     /** True when [id] is a reserved Stage 4 row (presets incl. admin-added, generators, judge). */
     fun isStage4Key(id: String): Boolean =
         id == STAGE4_JUDGE_KEY ||
@@ -204,6 +207,12 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     companion object {
         /** The reserved non-ContentType rows, in admin-page order. */
         val STAGE3_KEYS = listOf("STAGE3_ENTITY", "STAGE3_JUDGE")
+
+        /**
+         * The reserved product row (VA-42, product LLD §7.5): the advocate chat system prompt,
+         * resolved fresh per send by `AdvocateChatService` ({{subject}} substituted at call time).
+         */
+        const val ADVOCATE_SYSTEM_KEY = "advocate_system"
 
         /** The reserved §11 judge-rubric row (VA-57) — resolved by [GeminiStage4Judge]. */
         const val STAGE4_JUDGE_KEY = "stage4:judge"

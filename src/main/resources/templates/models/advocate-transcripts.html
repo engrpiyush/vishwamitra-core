@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('models')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1 th:text="|Transcripts — ${subject.displayName}|">Transcripts</h1>
+        <a th:href="@{/models/advocates}" class="muted">&larr; advocates</a>
+    </div>
+    <p class="muted">Every chat session against this advocate, newest first — the F9
+        accountability record (VA-42, LLD §7.5). Guests are disclosed up front that conversations
+        are recorded and visible.</p>
+
+    <details class="review-row" th:each="t : ${transcripts}" style="margin-bottom:0.5rem;">
+        <summary>
+            <span class="badge" th:text="${t.first.kind}">GUEST</span>
+            <span class="review-text">
+                <span th:text="${t.first.guestEmail ?: 'unknown'}">who</span>
+                <span class="muted" th:text="|· ${t.first.messageCount} message(s)|">count</span>
+            </span>
+            <time class="js-ts muted" th:if="${t.first.createdAt != null}"
+                  th:datetime="${t.first.createdAt}" th:text="${t.first.createdAt}">when</time>
+        </summary>
+        <div class="review-editor">
+            <p class="muted" th:if="${t.second.isEmpty()}">No messages yet.</p>
+            <p th:each="m : ${t.second}" style="margin:0.3rem 0;">
+                <b th:text="${#strings.toLowerCase(m.sender)}">guest</b>:
+                <span th:text="${m.text}">text</span>
+                <span class="muted" th:if="${m.truncated}">(truncated)</span>
+            </p>
+        </div>
+    </details>
+    <p class="muted" th:if="${transcripts.isEmpty()}">No chat sessions yet.</p>
+</main>
+</body>
+</html>

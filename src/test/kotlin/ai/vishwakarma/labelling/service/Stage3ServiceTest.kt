@@ -18,6 +18,7 @@ import ai.vishwakarma.labelling.domain.Stage3Run
 import ai.vishwakarma.labelling.domain.Stage3RunStatus
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.liveConfig
+import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
@@ -152,6 +153,19 @@ private class FakeS3AssetRepo : AssetRepository(mock(Firestore::class.java)) {
 private class FakeS3JobRepo : Stage2JobRepository(mock(Firestore::class.java)) {
     override fun findBySubject(subjectId: String) =
         emptyList<ai.vishwakarma.labelling.domain.Stage2Job>()
+}
+
+private class FakeS3AdvocateRepo : AdvocateRepository(mock(Firestore::class.java)) {
+    val scoreWrites = mutableListOf<Triple<String, Double?, Int>>()
+
+    override fun updateScore(
+        subjectId: String,
+        score: Double?,
+        scoredClaimCount: Int,
+        computedAt: java.time.Instant,
+    ) {
+        scoreWrites += Triple(subjectId, score, scoredClaimCount)
+    }
 }
 
 private class FakeS3ClaimRepo : ClaimRepository(mock(Firestore::class.java)) {
@@ -1024,6 +1038,7 @@ class Stage3ServiceTest {
     private val judgeEdges = FakeJudgeEdgeRepo()
     private val subjectScores = FakeSubjectScoreRepo()
     private val subjectFacts = FakeSubjectFactRepo()
+    private val advocates = FakeS3AdvocateRepo()
 
     private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
         Stage3Service(
@@ -1043,6 +1058,7 @@ class Stage3ServiceTest {
             claims,
             subjectScores,
             subjectFacts,
+            AggregateScoreService(claims, advocates),
             liveConfig(props),
         )
 

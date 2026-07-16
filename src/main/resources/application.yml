@@ -153,6 +153,10 @@ app:
     wall-attempts-per-minute: ${PRODUCT_WALL_ATTEMPTS_PER_MINUTE:5}
     wall-lockout: ${PRODUCT_WALL_LOCKOUT:15m}
     token-pepper: ${ADVOCATE_TOKEN_PEPPER:}
+    # Advocate chat caps (VA-42, LLD §7.5): transcript rows per session (user + advocate rows
+    # both count) and the per-session send pace.
+    max-messages-per-session: ${PRODUCT_MAX_MESSAGES_PER_SESSION:30}
+    chat-min-interval: ${PRODUCT_CHAT_MIN_INTERVAL:3s}
     # OIDC audience the /internal/** sweep endpoints require (the Cloud Run URL); blank outside
     # dev = those endpoints fail closed. The invoker pin is the scheduler SA email (optional).
     internal-audience: ${INTERNAL_AUDIENCE:}

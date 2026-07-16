@@ -78,6 +78,7 @@ class Stage3Service(
     private val claimLedger: ClaimRepository,
     private val subjectScores: SubjectScoreRepository,
     private val subjectFacts: SubjectFactRepository,
+    private val aggregateScores: AggregateScoreService,
     private val config: StageConfigService,
 ) {
 
@@ -887,6 +888,9 @@ class Stage3Service(
                 aggregate.display,
                 aggregate.band,
             )
+            // The product LLD §10 seam (VA-44): the freshly published ledger re-derives the
+            // subject-facing evidence-strength number on `advocates/{subjectId}`.
+            aggregateScores.recompute(run.subjectId)
             val published =
                 run.copy(
                     status = Stage3RunStatus.PUBLISHED,

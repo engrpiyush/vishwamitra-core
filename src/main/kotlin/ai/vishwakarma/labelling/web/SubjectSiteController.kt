@@ -20,9 +20,9 @@ import org.springframework.web.server.ResponseStatusException
  * [ai.vishwakarma.labelling.security.SubjectHostFilter] rewrites subject-host paths onto — the
  * external URLs are `https://<handle>.{base-domain}/…`. Every handler 404s without a [SubjectCtx]
  * (defense in depth: reaching the internal `/s` paths on the operator host is not a thing). Root
- * renders the split landing until VA-42/43 complete the chat decision tree; the training area lives
- * in [SubjectTrainingController] (VA-32); the terms gate + accept POST are the VA-30 deliverable
- * (the real S1 policy texts ship with VA-45).
+ * runs the §8.3 v1.1 decision tree ([SubjectRoot], VA-43): chat once a gate has passed, the split
+ * landing otherwise; the training area lives in [SubjectTrainingController] (VA-32); the terms gate
+ * + accept POST are the VA-30 deliverable (the real S1 policy texts ship with VA-45).
  */
 @Controller
 @RequestMapping("/s")
@@ -37,16 +37,39 @@ class SubjectSiteController(
     @GetMapping
     fun root(request: HttpServletRequest, model: Model): String {
         val ctx = ctx(request)
-        // VA-37: the split landing's guest panel is state-adaptive (§8.3); the full decision
-        // tree (chat for signed-in/connected visitors) arrives with VA-42/43.
-        GuestPanel.populate(
-            model,
-            ctx,
-            tokens.advocateState(ctx.subjectId),
-            connected = GuestCtx.of(request) != null,
+        val state = tokens.advocateState(ctx.subjectId)
+        val view =
+            SubjectRoot.viewFor(
+                operator = CurrentUser.isOperator(),
+                boundSubjectId = CurrentUser.subjectId(),
+                hostSubjectId = ctx.subjectId,
+                guest = GuestCtx.of(request) != null,
+                state = state,
+            )
+        if (view == SubjectRoot.View.LANDING) {
+            GuestPanel.populate(model, ctx, state)
+            model.addAttribute("signedIn", CurrentUser.email() != null)
+            return "subject/landing"
+        }
+        model.addAttribute("pageTitle", ctx.displayName)
+        model.addAttribute("ctx", ctx)
+        model.addAttribute("mode", if (view == SubjectRoot.View.CHAT_GUEST) "GUEST" else "SELF")
+        // STATUS_SELF: no chat surface — the S9 friendly state card + the switch link (§8.3).
+        model.addAttribute(
+            "status",
+            if (view == SubjectRoot.View.STATUS_SELF) SubjectProvisioning.viewFor(state) else null,
         )
-        model.addAttribute("signedIn", CurrentUser.email() != null)
-        return "subject/landing"
+        return "subject/advocate"
+    }
+
+    /**
+     * The landing's subject-panel CTA (VA-43, §8.3): an authenticated-only no-op whose entry-point
+     * bounce runs the OIDC dance and lands back on the root — which now renders chat/status.
+     */
+    @GetMapping("/signin")
+    fun signin(request: HttpServletRequest): String {
+        ctx(request)
+        return "redirect:/"
     }
 
     @GetMapping("/terms")

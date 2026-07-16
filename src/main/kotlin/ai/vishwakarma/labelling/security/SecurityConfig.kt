@@ -202,6 +202,9 @@ class SecurityConfig {
                 // rate-limited gate (§6.3).
                 authorize("/s", permitAll)
                 authorize("/s/wall/**", permitAll)
+                // VA-43 (§8.3): the landing's sign-in CTA — authentication is the whole point;
+                // the handler just bounces back to the root, which now renders chat/status.
+                authorize("/s/signin", authenticated)
                 authorize("/s/terms/**", authenticated)
                 // VA-36 (§6.4): operator ∨ subject-of-host ∨ validated guest capability session.
                 authorize("/s/chat/**", SubjectAccess.subjectOfHostOrGuest())
