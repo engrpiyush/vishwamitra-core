@@ -174,6 +174,13 @@ data class AppProperties(
         /** When true (dev profile), OAuth is bypassed and requests run as [devUser]. */
         val devBypass: Boolean = false,
         val devUser: DevUser = DevUser(),
+        /**
+         * Seed the dev-profile fixtures (dev subject + SUBJECT login + LIVE advocate) on startup.
+         * Requires [devBypass] too. Default FALSE so a restored emulator snapshot stays
+         * authoritative — flip `DEV_SEED=true` for a one-time fresh seed, snapshot it with
+         * `scripts/firestore-emulator-backup.sh`, then run with it off again.
+         */
+        val devSeed: Boolean = false,
         /** Emails seeded as ADMIN on startup so the first real users can sign in. */
         val bootstrapAdmins: List<String> = emptyList(),
     )

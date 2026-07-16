@@ -259,7 +259,9 @@ class DataSeeder {
         subjects: SubjectRepository,
         users: UserService
     ) {
-        if (!props.auth.devBypass) return
+        // Opt-in (app.auth.dev-seed): a restored emulator snapshot is the usual dev datastore;
+        // seeding only runs on an explicit DEV_SEED=true boot (then snapshot and switch it off).
+        if (!props.auth.devBypass || !props.auth.devSeed) return
         if (subjects.findById(DevAuthFilter.DEV_SUBJECT_ID) == null) {
             // Written with its handle sentinel in one transaction (VA-31). The handle `dev` is on
             // the §17.2 reserved list — this direct write is the sanctioned exception so
@@ -267,7 +269,7 @@ class DataSeeder {
             subjects.createWithHandle(
                 Subject(
                     id = DevAuthFilter.DEV_SUBJECT_ID,
-                    displayName = "Dev Subject",
+                    displayName = "Piyush Vishwakarma",
                     handle = DevAuthFilter.DEV_SUBJECT_HANDLE,
                     notes = "Seeded dev-profile subject for ?devRole=SUBJECT (VA-29).",
                     createdBy = "seed",
@@ -296,7 +298,7 @@ class DataSeeder {
      * exercise the not-LIVE panel variants; the edit survives restarts.
      */
     private fun seedDevAdvocate(props: AppProperties, advocates: AdvocateRepository) {
-        if (!props.auth.devBypass) return
+        if (!props.auth.devBypass || !props.auth.devSeed) return
         if (advocates.find(DevAuthFilter.DEV_SUBJECT_ID) == null) {
             advocates.save(
                 Advocate(subjectId = DevAuthFilter.DEV_SUBJECT_ID, state = AdvocateState.LIVE)

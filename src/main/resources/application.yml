@@ -168,6 +168,9 @@ spring:
 app:
   auth:
     dev-bypass: true
+    # Dev fixtures (dev subject + SUBJECT login + LIVE advocate) seed only on an explicit
+    # DEV_SEED=true boot — the usual dev datastore is a restored emulator snapshot.
+    dev-seed: ${DEV_SEED:false}
     dev-user:
       email: admin@vishwakarma.ai
       role: ADMIN
