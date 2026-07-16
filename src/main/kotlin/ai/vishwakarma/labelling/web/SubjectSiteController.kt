@@ -1,9 +1,11 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.security.CurrentUser
+import ai.vishwakarma.labelling.security.GuestCtx
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.security.TermsGateInterceptor
 import ai.vishwakarma.labelling.service.TermsService
+import ai.vishwakarma.labelling.service.TokenService
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Controller
@@ -23,7 +25,10 @@ import org.springframework.web.server.ResponseStatusException
  */
 @Controller
 @RequestMapping("/s")
-class SubjectSiteController(private val terms: TermsService) {
+class SubjectSiteController(
+    private val terms: TermsService,
+    private val tokens: TokenService,
+) {
 
     private fun ctx(request: HttpServletRequest): SubjectCtx =
         SubjectCtx.of(request) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
@@ -31,8 +36,15 @@ class SubjectSiteController(private val terms: TermsService) {
     @GetMapping
     fun root(request: HttpServletRequest, model: Model): String {
         val ctx = ctx(request)
-        model.addAttribute("pageTitle", ctx.displayName)
-        model.addAttribute("ctx", ctx)
+        // VA-37: the split landing's guest panel is state-adaptive (§8.3); the full decision
+        // tree (chat for signed-in/connected visitors) arrives with VA-42/43.
+        GuestPanel.populate(
+            model,
+            ctx,
+            tokens.advocateState(ctx.subjectId),
+            connected = GuestCtx.of(request) != null,
+        )
+        model.addAttribute("signedIn", CurrentUser.email() != null)
         return "subject/landing"
     }
 

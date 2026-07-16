@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-37: the token dashboard (LLD §6.5 — S8): generate + list + revoke, cap 10. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="tokens-panel">
+            <h1>Guest access codes</h1>
+            <p class="lede">Each code is emailed straight to your guest and works once, while your
+                advocate is live. You never see the code itself.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="card" th:if="${advocateBuilt}">
+                <form class="form" th:action="@{/tokens/generate}" method="post">
+                    <label>Guest email
+                        <input type="email" name="guestEmail" placeholder="guest@example.com"
+                               th:disabled="${capReached}" required/>
+                    </label>
+                    <button type="submit" class="btn btn--primary" th:disabled="${capReached}">
+                        Send an access code</button>
+                    <p class="panel-fineprint" th:if="${capReached}">You've reached the limit of
+                        unused codes — revoke an unused code to free a slot.</p>
+                </form>
+            </div>
+            <div class="card" th:unless="${advocateBuilt}">
+                <p class="panel-lede">Your advocate hasn't been built yet — access codes unlock
+                    once training produces one.</p>
+            </div>
+
+            <table class="grid" th:if="${!rows.isEmpty()}">
+                <thead>
+                <tr>
+                    <th>Guest</th>
+                    <th>Created</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="row : ${rows}">
+                    <td th:text="${row.guestEmail}">guest@example.com</td>
+                    <td th:text="${row.createdLabel}">—</td>
+                    <td>
+                        <span class="badge" th:classappend="|badge--${row.chip.badge}|"
+                              th:text="${row.chip.label}">Unredeemed</span>
+                        <span class="panel-fineprint" th:if="${row.chip.name() == 'EMAIL_FAILED'}">
+                            delivery failed — revoke &amp; regenerate</span>
+                    </td>
+                    <td class="actions">
+                        <form th:if="${row.revocable}" th:action="@{/tokens/revoke}" method="post"
+                              class="inline-form"
+                              onsubmit="return confirm('Revoke this access code? The guest will no longer be able to use it.');">
+                            <input type="hidden" name="tokenHash" th:value="${row.tokenHash}"/>
+                            <button type="submit" class="btn btn--danger btn--sm">Revoke</button>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+            <p class="empty-state" th:if="${rows.isEmpty()}">No access codes yet — send one to a
+                guest above.</p>
+        </section>
+    </main>
+    <footer class="landing-foot">
+        <a th:href="@{/}">Home</a> ·
+        <a th:href="@{/training}">Training space</a> ·
+        <a th:href="@{/terms}">Terms &amp; policies</a>
+    </footer>
+</div>
+
+</body>
+</html>

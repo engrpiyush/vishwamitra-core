@@ -3,17 +3,36 @@
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 
-<!-- VA-30 placeholder: the split landing (guest code ⟂ subject sign-in) ships with VA-42/43. -->
+<!--
+  VA-37: split landing (LLD §8.3 — S11): guest access panel ⟂ subject sign-in around a divider.
+  VA-42/43 finish the decision tree (chat for signed-in/connected visitors).
+-->
 <div class="landing">
     <main class="landing-main">
-        <section class="landing-hero">
+        <section class="landing-hero landing-hero--wide">
             <span class="brand-mark"></span>
             <h1 th:text="${ctx.displayName}">Subject</h1>
             <p class="lede">This is <span th:text="${ctx.displayName}">the subject</span>'s
                 personal advocate — an AI that speaks for them, grounded in verified evidence.</p>
-            <p class="lede">Guest access opens soon. If this is your advocate, sign in to keep
-                training it.</p>
-            <a class="landing-cta" th:href="@{/training}">Subject sign-in</a>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="landing-panels">
+                <div th:replace="~{subject/guest-panel :: panel}"></div>
+                <div class="landing-divider" role="separator"></div>
+                <div class="landing-panel">
+                    <h2>Is this your advocate?</h2>
+                    <p class="panel-lede" th:unless="${signedIn}">Sign in to train it, review
+                        your evidence and manage guest access codes.</p>
+                    <p class="panel-lede" th:if="${signedIn}">You're signed in — head to your
+                        training space or manage access codes.</p>
+                    <a class="btn btn--primary" th:unless="${signedIn}" th:href="@{/training}"
+                       th:text="|I'm ${ctx.displayName} — sign in|">Sign in</a>
+                    <div class="panel-links" th:if="${signedIn}">
+                        <a class="btn btn--primary" th:href="@{/training}">Training space</a>
+                        <a class="btn btn--secondary" th:href="@{/tokens}">Access codes</a>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
     <footer class="landing-foot">

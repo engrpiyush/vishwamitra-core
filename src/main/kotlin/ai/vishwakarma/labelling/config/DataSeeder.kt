@@ -1,12 +1,15 @@
 package ai.vishwakarma.labelling.config
 
+import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateName
 import ai.vishwakarma.labelling.domain.AdvocateRegion
+import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
+import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
 import ai.vishwakarma.labelling.security.DevAuthFilter
@@ -39,6 +42,7 @@ class DataSeeder {
         advocateNames: AdvocateNameRepository,
         notebookTemplates: NotebookTemplateService,
         subjects: SubjectRepository,
+        advocates: AdvocateRepository,
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
@@ -49,6 +53,7 @@ class DataSeeder {
                 seedNotebookTemplates(notebookTemplates, scenarios)
                 reconcileHandleSentinels(subjects)
                 seedDevSubject(props, subjects, users)
+                seedDevAdvocate(props, advocates)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
     }
@@ -281,6 +286,22 @@ class DataSeeder {
                 subjectId = DevAuthFilter.DEV_SUBJECT_ID,
             )
             log.info("Seeded dev SUBJECT login {}", DevAuthFilter.DEV_SUBJECT_EMAIL)
+        }
+    }
+
+    /**
+     * VA-36: dev profile only — a LIVE advocate row for the seeded dev subject, so the guest wall
+     * is walkable end-to-end against the emulator (nothing writes `advocates` before the W3
+     * provisioning tickets). Seed-once: flip `advocates/dev-subject.state` in the emulator UI to
+     * exercise the not-LIVE panel variants; the edit survives restarts.
+     */
+    private fun seedDevAdvocate(props: AppProperties, advocates: AdvocateRepository) {
+        if (!props.auth.devBypass) return
+        if (advocates.find(DevAuthFilter.DEV_SUBJECT_ID) == null) {
+            advocates.save(
+                Advocate(subjectId = DevAuthFilter.DEV_SUBJECT_ID, state = AdvocateState.LIVE)
+            )
+            log.info("Seeded dev advocate '{}' as LIVE", DevAuthFilter.DEV_SUBJECT_ID)
         }
     }
 

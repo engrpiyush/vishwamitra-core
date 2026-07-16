@@ -34,4 +34,20 @@ object SubjectAccess {
                     }
             AuthorizationDecision(granted)
         }
+
+    /**
+     * The `/s/chat/` rule (VA-36, LLD §6.4): everyone [subjectOfHost] grants, plus an anonymous
+     * guest whose validated capability session ([GuestCtx], attached by [GuestSessionFilter]) is on
+     * the request — the guest stays outside the security context entirely.
+     */
+    fun subjectOfHostOrGuest(): AuthorizationManager<RequestAuthorizationContext> {
+        val base = subjectOfHost()
+        return AuthorizationManager { authentication, context ->
+            if (GuestCtx.of(context.request) != null) {
+                AuthorizationDecision(true)
+            } else {
+                base.authorize(authentication, context)
+            }
+        }
+    }
 }

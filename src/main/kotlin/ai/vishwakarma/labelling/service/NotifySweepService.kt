@@ -1,6 +1,5 @@
 package ai.vishwakarma.labelling.service
 
-import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.QuestionStatus
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.Stage2JobStatus
@@ -14,7 +13,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 
 /**
@@ -33,9 +31,7 @@ class NotifySweepService(
     private val questions: SubjectQuestionRepository,
     private val mail: MailService,
     private val bookkeeping: MailBookkeepingRepository,
-    private val props: AppProperties,
-    /** Dev CTA links carry the actual port (PORT env → server.port); prod URLs have none. */
-    @Value("\${server.port:8080}") private val serverPort: Int = 8080,
+    private val links: ProductLinks,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -86,7 +82,8 @@ class NotifySweepService(
         val jobs = stage2Jobs.findBySubject(subjectId)
         val parked = jobs.any { it.status == Stage2JobStatus.AWAITING_SPEAKER_SELECTION }
         if (parked) {
-            return MailTemplate.SPEAKER_HELP to model(displayName, subjectUrl(handle, "/training"))
+            return MailTemplate.SPEAKER_HELP to
+                model(displayName, links.subjectUrl(handle, "/training"))
         }
         val terminal = setOf(Stage2JobStatus.COMPLETED, Stage2JobStatus.FAILED)
         val cutoff = Instant.now().minus(FRESHNESS)
@@ -98,12 +95,13 @@ class NotifySweepService(
                         (it.finishedAt ?: Instant.EPOCH) > cutoff
                 }
         if (claimsReady) {
-            return MailTemplate.CLAIMS_READY to model(displayName, subjectUrl(handle, "/training"))
+            return MailTemplate.CLAIMS_READY to
+                model(displayName, links.subjectUrl(handle, "/training"))
         }
         val open = questions.listBySubject(subjectId, QuestionStatus.OPEN)
         if (open.isNotEmpty()) {
             return MailTemplate.QUESTIONS_NUDGE to
-                model(displayName, subjectUrl(handle, "/questions")) +
+                model(displayName, links.subjectUrl(handle, "/questions")) +
                     mapOf("count" to open.size.toString())
         }
         return null
@@ -111,16 +109,6 @@ class NotifySweepService(
 
     private fun model(displayName: String, link: String): Map<String, String> =
         mapOf("advocate" to displayName, "link" to link)
-
-    /** CTA links point at the subject's own host (VA-30 routing). */
-    private fun subjectUrl(handle: String, path: String): String {
-        val base = props.product.baseDomain
-        return if (base == "localhost") {
-            "http://$handle.localhost:$serverPort$path"
-        } else {
-            "https://$handle.$base$path"
-        }
-    }
 
     companion object {
         /**

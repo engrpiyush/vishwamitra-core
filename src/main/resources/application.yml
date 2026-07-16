@@ -141,6 +141,13 @@ app:
     operator-domain: ${PRODUCT_OPERATOR_DOMAIN:labelling.vishwakarma.ai}
     mail-daily-cap: ${PRODUCT_MAIL_DAILY_CAP:200}
     mail-from: ${PRODUCT_MAIL_FROM:info@vishx}
+    # Guest tokens & wall (VA-36, LLD §6): the pepper comes from Secret Manager (§3.3); blank
+    # outside dev = token generation/redemption fail closed. Dev pins a fixed value below.
+    token-cap: ${PRODUCT_TOKEN_CAP:10}
+    guest-session-ttl: ${PRODUCT_GUEST_SESSION_TTL:60m}
+    wall-attempts-per-minute: ${PRODUCT_WALL_ATTEMPTS_PER_MINUTE:5}
+    wall-lockout: ${PRODUCT_WALL_LOCKOUT:15m}
+    token-pepper: ${ADVOCATE_TOKEN_PEPPER:}
     # OIDC audience the /internal/** sweep endpoints require (the Cloud Run URL); blank outside
     # dev = those endpoints fail closed. The invoker pin is the scheduler SA email (optional).
     internal-audience: ${INTERNAL_AUDIENCE:}
@@ -184,6 +191,9 @@ app:
     # plain localhost:8080 stays the operator app.
     base-domain: localhost
     operator-domain: localhost
+    # Fixed dev pepper (NOT a secret): hashes in the emulator stay stable across restarts so
+    # seeded/manual tokens keep resolving. Real environments must set ADVOCATE_TOKEN_PEPPER.
+    token-pepper: dev-pepper-fixed-for-emulator-hashes
 
 ---
 # Cloud Run production.

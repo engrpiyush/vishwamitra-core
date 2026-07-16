@@ -67,7 +67,7 @@ enum class MailTemplate(val id: String) {
                 """
                 PROVISIONING_REQUEST ->
                     """
-                Someone tried to talk to your advocate, but it isn't online right now.
+                Someone${model["guest"]?.let { " ($it)" } ?: ""} tried to talk to your advocate, but it isn't online right now.
 
                 Start a serving window here: $link
                 """

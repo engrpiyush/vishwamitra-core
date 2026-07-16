@@ -11,8 +11,9 @@
             <h1>Training console</h1>
             <p class="lede">You're signed in to <strong th:text="${ctx.displayName}">your</strong>
                 advocate's training space.</p>
-            <p class="lede">Coming here next: evidence uploads, your authenticity score, questions
-                your advocate wants answered, and guest access codes.</p>
+            <p class="lede">Coming here next: evidence uploads, your authenticity score, and
+                questions your advocate wants answered.</p>
+            <a class="landing-cta" th:href="@{/tokens}">Guest access codes</a>
         </section>
     </main>
     <footer class="landing-foot">

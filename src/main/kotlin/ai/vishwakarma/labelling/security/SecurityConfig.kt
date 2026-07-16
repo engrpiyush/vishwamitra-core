@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.security
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Role
+import ai.vishwakarma.labelling.persistence.AdvocateSessionRepository
 import ai.vishwakarma.labelling.service.SubjectDirectory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties
@@ -19,10 +20,13 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.invoke
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository
+import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.access.AccessDeniedHandler
+import org.springframework.security.web.access.intercept.AuthorizationFilter
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
+import org.springframework.security.web.util.matcher.AnyRequestMatcher
 import org.springframework.security.web.util.matcher.RequestMatcher
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.CorsConfigurationSource
@@ -119,6 +123,7 @@ class SecurityConfig {
     fun subjectSecurityFilterChain(
         http: HttpSecurity,
         props: AppProperties,
+        advocateSessions: AdvocateSessionRepository,
         clientRegistrations: ObjectProvider<ClientRegistrationRepository>,
         allowlistOidcUserService: ObjectProvider<OidcUserService>,
     ): SecurityFilterChain {
@@ -128,6 +133,17 @@ class SecurityConfig {
         // (templates/error/403.html carries the friendly copy); anonymous → login entry point.
         val denied = AccessDeniedHandler { _, response, _ ->
             if (!response.isCommitted) response.sendError(403, "This isn't your advocate.")
+        }
+        // §6.4: an expired guest cookie on chat answers 401 {reason: session_expired} — the chat
+        // JS renders "ask for a new access code" instead of bouncing a guest to operator login.
+        val sessionExpired = AuthenticationEntryPoint { _, response, _ ->
+            response.status = HttpStatus.UNAUTHORIZED.value()
+            response.contentType = "application/json"
+            response.writer.write("""{"reason":"session_expired"}""")
+        }
+        val expiredChatMatcher = RequestMatcher { request ->
+            request.getAttribute(GuestCtx.EXPIRED_ATTR) != null &&
+                (request.requestURI == "/s/chat" || request.requestURI.startsWith("/s/chat/"))
         }
         val oauthAvailable = clientRegistrations.ifAvailable != null
         http {
@@ -145,8 +161,8 @@ class SecurityConfig {
                 authorize("/s", permitAll)
                 authorize("/s/wall/**", permitAll)
                 authorize("/s/terms/**", authenticated)
-                // Guest-session access joins this rule with VA-36/37 (§6.4).
-                authorize("/s/chat/**", subjectOfHost)
+                // VA-36 (§6.4): operator ∨ subject-of-host ∨ validated guest capability session.
+                authorize("/s/chat/**", SubjectAccess.subjectOfHostOrGuest())
                 authorize("/s/training/**", subjectOfHost)
                 authorize("/s/tokens/**", subjectOfHost)
                 authorize("/s/provisioning/**", subjectOfHost)
@@ -155,8 +171,12 @@ class SecurityConfig {
             }
             exceptionHandling {
                 accessDeniedHandler = denied
+                defaultAuthenticationEntryPointFor(sessionExpired, expiredChatMatcher)
                 if (!oauthAvailable) {
-                    authenticationEntryPoint = HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
+                    defaultAuthenticationEntryPointFor(
+                        HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
+                        AnyRequestMatcher.INSTANCE,
+                    )
                 }
             }
             if (oauthAvailable) {
@@ -172,6 +192,8 @@ class SecurityConfig {
         if (props.auth.devBypass) {
             http.addFilterBefore(devAuthFilter(props), AnonymousAuthenticationFilter::class.java)
         }
+        // Guest resolution rides inside the chain, just ahead of authorization (§6.4).
+        http.addFilterBefore(GuestSessionFilter(advocateSessions), AuthorizationFilter::class.java)
         return http.build()
     }
 

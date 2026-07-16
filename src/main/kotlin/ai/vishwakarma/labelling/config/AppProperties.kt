@@ -32,6 +32,20 @@ data class AppProperties(
         val baseDomain: String = "vishwakarma.ai",
         /** The operator app's own host — never treated as a subject host. */
         val operatorDomain: String = "labelling.vishwakarma.ai",
+        /** Max UNREDEEMED guest tokens per subject (F7 — revoke one to free a slot). */
+        val tokenCap: Int = 10,
+        /** Guest capability-session TTL, started at redemption (LLD §6.3). */
+        val guestSessionTtl: Duration = Duration.ofMinutes(60),
+        /** Wall redemption attempts allowed per (subject, IP) per minute (LLD §6.3). */
+        val wallAttemptsPerMinute: Int = 5,
+        /** Lockout applied when the per-minute limit trips (LLD §6.3). */
+        val wallLockout: Duration = Duration.ofMinutes(15),
+        /**
+         * HMAC pepper for token hashing (env `ADVOCATE_TOKEN_PEPPER` ← Secret Manager, LLD §3.3).
+         * Never in Firestore: a leaked export is useless without it (§6.2). Blank outside dev =
+         * token generation/redemption fail closed; the dev profile pins a fixed non-secret value.
+         */
+        @get:JsonIgnore val tokenPepper: String = "",
         /**
          * App-level daily ceiling across ALL outbound product mail (LLD §11.1). At the ceiling
          * sends are skipped loudly (WARN + per-feature mark) — email never blocks a flow.

@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.domain.AdvocateSession
 import ai.vishwakarma.labelling.domain.SessionKind
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import org.springframework.stereotype.Repository
 
 /** `advocate_sessions` collection — doc id = sessionId (the cookie value, LLD §5.1). */
@@ -26,6 +27,11 @@ class AdvocateSessionRepository(private val db: Firestore) {
 
     fun save(session: AdvocateSession) {
         col.document(session.sessionId).set(session.toMap()).await()
+    }
+
+    /** Write inside a caller-owned transaction (§6.3: token flip + session mint are atomic). */
+    fun createIn(tx: Transaction, session: AdvocateSession) {
+        tx.set(col.document(session.sessionId), session.toMap())
     }
 
     private fun AdvocateSession.toMap(): Map<String, Any?> =

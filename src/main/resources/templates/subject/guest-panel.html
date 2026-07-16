@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!--
+  VA-37: the §8.3 guest access panel — the wall IS this fragment now (the standalone /wall page
+  is gone). State-adaptive on ${guestPanelState} (see web/GuestPanel.kt); the landing composes it.
+-->
+<div th:fragment="panel" class="landing-panel guest-panel">
+
+    <!-- Valid capability session: chat lands here with VA-43. -->
+    <div th:if="${guestPanelState == 'CONNECTED'}">
+        <h2>You're connected</h2>
+        <p class="panel-lede">Your access code worked. The conversation opens right here as soon
+            as chat goes live — check back shortly.</p>
+    </div>
+
+    <!-- LIVE: the access-code form (POST /wall/redeem, §6.3). -->
+    <div th:if="${guestPanelState == 'LIVE'}">
+        <h2>Have an access code?</h2>
+        <p class="panel-lede">Enter the access code you received to start a conversation with
+            <span th:text="${ctx.displayName}">the subject</span>'s advocate.</p>
+        <p class="flash error" th:if="${wallError}" th:text="${wallError}">That code isn't valid.</p>
+        <p class="flash error" th:if="${wallLocked}">Too many attempts — try again in a few
+            minutes.</p>
+        <form class="form" th:action="@{/wall/redeem}" method="post">
+            <label>Access code
+                <input class="code-input" type="text" name="token" maxlength="8" minlength="8"
+                       autocomplete="off" autocapitalize="off" spellcheck="false"
+                       placeholder="8 characters" required/>
+            </label>
+            <button type="submit" class="btn btn--primary">Start the conversation</button>
+        </form>
+    </div>
+
+    <!-- PROVISIONING: page-driven poll until the advocate comes up (§8.3). -->
+    <div th:if="${guestPanelState == 'PROVISIONING'}">
+        <h2>Getting the advocate ready&hellip;</h2>
+        <p class="panel-lede">This usually takes a few minutes — this page checks again on its
+            own.</p>
+        <script>setTimeout(function () { window.location.reload(); }, 15000);</script>
+    </div>
+
+    <!-- OFFLINE (unprovisioned / winding down / failed): request-provisioning CTA (§8.3). -->
+    <div th:if="${guestPanelState == 'OFFLINE'}">
+        <h2>Not taking conversations right now</h2>
+        <p class="panel-lede">This advocate isn't online. Leave your email to ask
+            <span th:text="${ctx.displayName}">the subject</span> to switch it on — your access
+            code stays valid.</p>
+        <form class="form" th:action="@{/wall/notify}" method="post">
+            <label>Your email
+                <input type="email" name="email" placeholder="you@example.com" required/>
+            </label>
+            <button type="submit" class="btn btn--secondary">Notify
+                <span th:text="${ctx.displayName}">them</span></button>
+        </form>
+    </div>
+
+    <!-- NOT_BUILT / BUILDING: nothing to talk to yet. -->
+    <div th:if="${guestPanelState == 'BUILDING'}">
+        <h2>Still being built</h2>
+        <p class="panel-lede"><span th:text="${ctx.displayName}">The subject</span>'s advocate is
+            still being trained. Check back soon.</p>
+    </div>
+
+    <!-- F9 disclosure + §13.3 cookie notice — on every panel variant. -->
+    <p class="panel-fineprint">You'll be chatting with an AI advocate, not with
+        <span th:text="${ctx.displayName}">the subject</span> directly; the conversation is
+        recorded and visible to them. Guest access uses one functional cookie to keep your
+        session — nothing else.</p>
+</div>
+
+</body>
+</html>

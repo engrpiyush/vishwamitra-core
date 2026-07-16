@@ -100,6 +100,29 @@ class SubjectServiceTest {
     }
 
     @Test
+    fun `VA-90 curated keywords are rejected — brand, infra, auth-bait, impersonation`() {
+        val representatives =
+            listOf(
+                "vishwakarma", // brand
+                "vishwamitra",
+                "advocate",
+                "webmail", // infra hostnames
+                "autodiscover",
+                "production",
+                "billing", // auth/security bait
+                "security",
+                "password",
+                "official", // impersonation
+                "administrator",
+                "noreply",
+            )
+        for (reserved in representatives) {
+            val result = created(reserved)
+            assertIs<DomainError.Invalid>(result.swap().getOrNull(), "expected reject: $reserved")
+        }
+    }
+
+    @Test
     fun `duplicate handle fails atomically via the sentinel`() {
         assertTrue(created("neosub").isRight())
         val second = created("neosub")

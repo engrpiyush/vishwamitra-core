@@ -89,8 +89,7 @@ class NotifySweepServiceTest {
             questions = questions,
             mail = MailService(transport, bookkeeping, props),
             bookkeeping = bookkeeping,
-            props = props,
-            serverPort = 8090,
+            links = ProductLinks(props, 8090),
         )
 
     private fun subject(id: String = "subj-1", handle: String? = "dev") {

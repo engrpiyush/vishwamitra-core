@@ -42,6 +42,21 @@ class MailBookkeepingRepository(private val db: Firestore) {
             .await()
     }
 
+    /**
+     * The provisioning-request nag cap (LLD §8.3: one email per subject per day, however many
+     * guests hit the request wall). Separate doc id suffix so it never collides with — or
+     * suppresses — the sweep digest mark above.
+     */
+    fun provisioningRequestSent(date: String, subjectId: String): Boolean =
+        db.collection(DIGESTS).document("${date}_${subjectId}_provreq").get().await().exists()
+
+    fun markProvisioningRequest(date: String, subjectId: String) {
+        db.collection(DIGESTS)
+            .document("${date}_${subjectId}_provreq")
+            .set(mapOf("template" to "provisioning-request", "at" to Timestamp.now()))
+            .await()
+    }
+
     companion object {
         const val COUNTERS = "mail_counters"
         const val DIGESTS = "mail_digests"
