@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-32: S2 training home — one screen, phase-aware (LLD §8.1). -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Your training space</h1>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <!-- UPLOAD: collecting evidence. -->
+            <div th:if="${phase == 'UPLOAD'}">
+                <p class="lede">Teach your advocate who you are. Share recordings, documents and
+                    anything that shows what you've done — it learns only from what you give it
+                    and approve.</p>
+                <div class="card">
+                    <p class="panel-lede" th:if="${uploadCount == 0}">Nothing here yet — start
+                        with your story, a résumé, or a certificate.</p>
+                    <p class="panel-lede" th:if="${uploadCount > 0}"
+                       th:text="|${readyCount} of ${uploadCount} file(s) ready.|">0 files.</p>
+                    <a class="btn btn--primary" th:href="@{/training/upload}">Add your evidence</a>
+                </div>
+            </div>
+
+            <!-- PROCESSING: jobs working (or still being set up). -->
+            <div th:if="${phase == 'PROCESSING'}">
+                <p class="lede">We're going through everything you shared. You can close this
+                    page — nothing is lost.</p>
+                <div class="card" th:if="${needsYou > 0}">
+                    <p class="panel-lede"><strong>Help us identify who's speaking</strong> — one
+                        of your recordings has more than one voice.</p>
+                    <a class="btn btn--primary" th:href="@{/training/progress}">Take a look</a>
+                </div>
+                <a class="btn btn--secondary" th:href="@{/training/progress}">See progress</a>
+            </div>
+
+            <!-- REVIEW_READY: everything settled; the review CTA (wizard is VA-33). -->
+            <div th:if="${phase == 'REVIEW_READY'}">
+                <p class="lede">We've been through everything you shared. Before your advocate
+                    learns from it, take a look and decide what it should carry.</p>
+                <form th:action="@{/training/review/start}" method="post">
+                    <button type="submit" class="btn btn--primary">Review what we found</button>
+                </form>
+                <p class="panel-fineprint">You approve, add context, or set anything aside —
+                    nothing is used without this pass.</p>
+            </div>
+
+            <!-- REVIEW_IN_PROGRESS: continue the wizard. -->
+            <div th:if="${phase == 'REVIEW_IN_PROGRESS'}">
+                <p class="lede">You're partway through reviewing. Pick up where you left off.</p>
+                <a class="btn btn--primary" th:href="@{/training/review/decide}">Continue
+                    reviewing</a>
+            </div>
+
+            <!-- SUBMITTED: read-only post-submit S2 (LLD §8.1). -->
+            <div th:if="${phase == 'SUBMITTED'}">
+                <p class="lede">All done — <strong>your advocate is being prepared.</strong>
+                    We'll email you as things move along.</p>
+                <div class="card">
+                    <h2>What it's learning from</h2>
+                    <ul class="upload-list">
+                        <li th:each="u : ${uploads}" th:text="${u}">upload</li>
+                    </ul>
+                </div>
+                <div class="panel-links">
+                    <a class="btn btn--secondary" th:href="@{/questions}">Questions for you</a>
+                    <a class="btn btn--secondary" th:href="@{/tokens}">Access codes</a>
+                    <a class="btn btn--secondary" th:href="@{/provisioning}">Availability</a>
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

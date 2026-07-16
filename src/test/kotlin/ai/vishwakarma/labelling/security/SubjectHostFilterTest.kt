@@ -107,4 +107,38 @@ class SubjectHostFilterTest {
     fun `multi-label subdomains 404`() {
         assertEquals(404, run("a.b.localhost", "/").first)
     }
+
+    // ---- VA-70: the central OAuth callback host ------------------------------
+
+    @Test
+    fun `auth host serves only the login machinery`() {
+        listOf(
+                "/auth/start",
+                "/oauth2/authorization/google",
+                "/login/oauth2/code/google",
+                "/error",
+                "/css/app.css",
+            )
+            .forEach { path ->
+                val (status, forwarded, ctx) = run("auth.localhost", path)
+                assertEquals(200, status, "expected $path to pass on the auth host")
+                assertEquals(path, forwarded!!.requestURI)
+                assertNull(ctx, "the auth host is not a subject host")
+            }
+    }
+
+    @Test
+    fun `everything else 404s on the auth host`() {
+        listOf("/", "/training", "/s/training", "/admin", "/wall").forEach { path ->
+            assertEquals(404, run("auth.localhost", path).first, "expected $path to 404")
+        }
+    }
+
+    @Test
+    fun `auth host requests carry the marker attribute for the chain matcher`() {
+        val request =
+            MockHttpServletRequest("GET", "/auth/start").apply { serverName = "auth.localhost" }
+        filter.doFilter(request, MockHttpServletResponse(), MockFilterChain())
+        assertNotNull(request.getAttribute(AuthHost.ATTR))
+    }
 }

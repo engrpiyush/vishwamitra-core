@@ -66,6 +66,14 @@ data class IntakeManifest(
      */
     val reviewLockedAt: Instant? = null,
     val reviewSubmittedAt: Instant? = null,
+    /**
+     * F2 consent attestation (VA-32, product LLD §13.1): stamped every time the subject attests the
+     * upload-consent text on the self-serve upload surface — required per upload batch, so the
+     * latest attestation wins. One-time and irrevocable; no revocation surface exists anywhere.
+     * Null for operator-driven intakes (consent is tracked per asset there).
+     */
+    val consentAttestedAt: Instant? = null,
+    val consentAttestedBy: String? = null,
     val updatedAt: Instant? = null,
 ) {
     /** The most recent seal-lifecycle event, if any. */

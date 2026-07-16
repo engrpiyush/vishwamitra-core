@@ -492,6 +492,23 @@ class IntakeService(
     fun manifest(subjectId: String): IntakeManifest = recomputeManifest(subjectId)
 
     /**
+     * F2 upload-consent attestation (VA-32, product LLD §13.1): stamp who attested and when on the
+     * manifest. Called by the subject upload surface for every upload batch — required each time,
+     * so the stamp is simply refreshed (latest wins; the attestation itself is irrevocable).
+     */
+    fun attestConsent(subjectId: String, actor: String?): IntakeManifest {
+        val current = recomputeManifest(subjectId)
+        val attested =
+            current.copy(
+                consentAttestedAt = Instant.now(),
+                consentAttestedBy = actor,
+                updatedAt = Instant.now(),
+            )
+        manifests.save(attested)
+        return attested
+    }
+
+    /**
      * Seal the manifest for the Stage 2 handoff. Gated by [IntakeManifest.sealBlockers]; requires a
      * mandatory operator [note] (the confirmation justification), audited in
      * [IntakeManifest.sealEvents].
@@ -594,6 +611,8 @@ class IntakeService(
                 stage2StartedAt = existing?.stage2StartedAt,
                 reviewLockedAt = existing?.reviewLockedAt,
                 reviewSubmittedAt = existing?.reviewSubmittedAt,
+                consentAttestedAt = existing?.consentAttestedAt,
+                consentAttestedBy = existing?.consentAttestedBy,
                 updatedAt = Instant.now(),
             )
         manifests.save(manifest)

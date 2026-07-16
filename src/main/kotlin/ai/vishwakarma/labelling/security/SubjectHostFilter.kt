@@ -15,6 +15,9 @@ import org.springframework.web.filter.OncePerRequestFilter
  *   non-ACTIVE handles 404 — deliberately indistinguishable from a nonexistent site. Reserved
  *   handles never resolve because creation-time validation refuses them (the dev-profile seeded
  *   handle `dev` is the sanctioned exception — see DataSeeder);
+ * - `auth.{base-domain}` (VA-70, LLD §4.2 v1.1) is neither a subject host nor the operator domain:
+ *   it gets [AuthHost.ATTR] stamped (its own security chain matches on it) and serves ONLY the
+ *   OAuth login/callback machinery plus its `/auth/start` front door — everything else 404s;
  * - a resolved host gets [SubjectCtx] attached, and its app path is REWRITTEN under the internal
  *   `/s` prefix (`/training` → `/s/training`) before security + MVC. The subject world therefore
  *   owns disjoint controller mappings: operator URLs have no mapping on subject hosts (404 here),
@@ -42,6 +45,17 @@ class SubjectHostFilter(
         val handle = host.removeSuffix(suffix)
         if (handle.isBlank() || handle.contains('.')) {
             response.sendError(HttpServletResponse.SC_NOT_FOUND)
+            return
+        }
+        // VA-70: the central OAuth callback host — login machinery only, never a subject site.
+        if (handle == AUTH_HANDLE) {
+            request.setAttribute(AuthHost.ATTR, true)
+            val path = request.requestURI
+            if (path in AUTH_EXACT || AUTH_PREFIXES.any { path.startsWith(it) }) {
+                filterChain.doFilter(request, response)
+            } else {
+                response.sendError(HttpServletResponse.SC_NOT_FOUND)
+            }
             return
         }
         val subject = directory.activeByHandle(handle)
@@ -91,5 +105,11 @@ class SubjectHostFilter(
 
         private val SHARED_EXACT = setOf("/favicon.svg", "/error", "/logout")
         private val SHARED_PREFIXES = listOf("/css/", "/js/", "/webjars/", "/login", "/oauth2/")
+
+        /** VA-70: the reserved first label of the central OAuth callback host (§17.2). */
+        private const val AUTH_HANDLE = "auth"
+
+        private val AUTH_EXACT = setOf("/auth/start", "/favicon.svg", "/error")
+        private val AUTH_PREFIXES = listOf("/css/", "/js/", "/login", "/oauth2/")
     }
 }

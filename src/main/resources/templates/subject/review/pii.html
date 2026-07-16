@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-33: S6 step 2 (PII) — private by default, explicit opt-in only (F4, LLD §12.6). -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Private details</h1>
+            <nav class="review-steps">
+                <span class="step done">1 · What we found</span>
+                <span class="step active">2 · Private details</span>
+                <span class="step">3 · Confirm</span>
+            </nav>
+            <p class="lede">Personal details like contact info stay <strong>private by
+                default</strong> — your advocate never uses them unless you say so here.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <p class="empty-state" th:if="${rows.isEmpty()}">Nothing personal came up — carry
+                on.</p>
+
+            <div class="card" th:each="row : ${rows}">
+                <p style="margin:0 0 0.5rem;"><strong th:text="${row.text}">detail</strong>
+                    <span class="badge" th:classappend="${row.included} ? 'badge--info' : 'badge--success'"
+                          th:text="${row.included} ? 'shared with your advocate' : 'kept private'">kept private</span>
+                </p>
+                <p class="muted" th:if="${row.excerpt != null}" style="margin:0 0 0.6rem;">
+                    &ldquo;<span th:text="${row.excerpt}">excerpt</span>&rdquo;</p>
+                <form method="post" th:action="@{/training/review/claims/{id}/pii(id=${row.id})}">
+                    <label style="display:block; margin-bottom:0.3rem;">
+                        <input type="radio" name="choice" value="HIDE" th:checked="${!row.included}"/>
+                        Keep it private (default)</label>
+                    <label style="display:block; margin-bottom:0.5rem;">
+                        <input type="radio" name="choice" value="INCLUDE" th:checked="${row.included}"/>
+                        My advocate may use this</label>
+                    <button type="submit" class="btn--sm">Save</button>
+                </form>
+            </div>
+
+            <div class="panel-links" style="margin-top:1.4rem;">
+                <a class="btn btn--primary" th:href="@{/training/review/preview}">Next:
+                    confirm &rarr;</a>
+                <a class="btn btn--secondary" th:href="@{/training/review/decide}">&larr; What
+                    we found</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

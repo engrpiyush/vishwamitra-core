@@ -583,4 +583,41 @@ class IntakeServiceTest {
         // Not marked STORED — the object is not a completed upload; the row can be retried.
         assertEquals(AssetUploadStatus.AWAITING_UPLOAD, assets.store["a1"]!!.uploadStatus)
     }
+
+    // ---- consent attestation (VA-32, §13.1) --------------------------------
+
+    @Test
+    fun `attestConsent stamps who and when on the manifest`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+
+        val attested = service.attestConsent("s1", "dev-subject@example.com")
+
+        assertTrue(attested.consentAttestedAt != null)
+        assertEquals("dev-subject@example.com", attested.consentAttestedBy)
+    }
+
+    @Test
+    fun `manifest recompute carries the attestation stamp through`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+        val stamped = service.attestConsent("s1", "dev-subject@example.com")
+
+        // Any manifest read recomputes + saves; a field not carried through would be wiped here.
+        val recomputed = service.manifest("s1")
+
+        assertEquals(stamped.consentAttestedAt, recomputed.consentAttestedAt)
+        assertEquals("dev-subject@example.com", recomputed.consentAttestedBy)
+    }
+
+    @Test
+    fun `a later batch's attestation refreshes the stamp`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+        val first = service.attestConsent("s1", "dev-subject@example.com")
+
+        val second = service.attestConsent("s1", "dev-subject@example.com")
+
+        assertTrue(!second.consentAttestedAt!!.isBefore(first.consentAttestedAt!!))
+    }
 }

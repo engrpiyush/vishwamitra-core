@@ -197,6 +197,16 @@ app:
 
 ---
 # Cloud Run production.
+server:
+  servlet:
+    session:
+      cookie:
+        # VA-70 (LLD §4.2 v1.1): the login session is minted on auth.vishwakarma.ai and must be
+        # honored on every subject host, so the cookie is parent-domain in prod only (dev stays
+        # host-only). Authorization is untouched — the §4.4 SUBJECT_ID-of-host check still 403s
+        # a valid session on the wrong host. CSRF holds: tokens live in the (now shared) session.
+        domain: ${SESSION_COOKIE_DOMAIN:.vishwakarma.ai}
+
 spring:
   config:
     activate:

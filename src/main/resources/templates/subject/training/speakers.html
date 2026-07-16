@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-32: S5 speaker helper — the §12.4 chooser, subject-skinned ("Which one is you?"). -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Which one is you?</h1>
+            <p class="lede">This recording has more than one voice. Read what each person said
+                and tick the one that's you — everyone else counts as speaking
+                <em>about</em> you.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <form th:action="@{/training/speakers/{id}(id=${jobId})}" method="post">
+                <div class="card speaker-card" th:each="s : ${samples}">
+                    <label class="speaker-pick">
+                        <input type="checkbox" name="self" th:value="${s.key}"/>
+                        <strong>This is me</strong>
+                    </label>
+                    <blockquote class="speaker-quote" th:text="${s.value}">what they said</blockquote>
+                </div>
+                <p class="empty-state" th:if="${samples.isEmpty()}">We couldn't pull the voices
+                    apart for a preview — leave everything unticked and we'll treat the recording
+                    as being about you.</p>
+                <button type="submit" class="btn btn--primary">That's my voice — continue</button>
+                <p class="panel-fineprint">Not in this recording? Leave every box unticked and
+                    continue — we'll treat it as other people talking about you.</p>
+            </form>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

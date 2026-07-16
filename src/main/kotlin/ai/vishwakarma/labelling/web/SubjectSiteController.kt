@@ -19,9 +19,10 @@ import org.springframework.web.server.ResponseStatusException
  * The subject-world face (VA-30). Mappings live under the internal `/s` prefix that
  * [ai.vishwakarma.labelling.security.SubjectHostFilter] rewrites subject-host paths onto — the
  * external URLs are `https://<handle>.{base-domain}/…`. Every handler 404s without a [SubjectCtx]
- * (defense in depth: reaching the internal `/s` paths on the operator host is not a thing).
- * Root/training are placeholders until VA-42/43 (split landing + chat) and VA-32 (training UI); the
- * terms gate + accept POST are the VA-30 deliverable (the real S1 policy texts ship with VA-45).
+ * (defense in depth: reaching the internal `/s` paths on the operator host is not a thing). Root
+ * renders the split landing until VA-42/43 complete the chat decision tree; the training area lives
+ * in [SubjectTrainingController] (VA-32); the terms gate + accept POST are the VA-30 deliverable
+ * (the real S1 policy texts ship with VA-45).
  */
 @Controller
 @RequestMapping("/s")
@@ -46,14 +47,6 @@ class SubjectSiteController(
         )
         model.addAttribute("signedIn", CurrentUser.email() != null)
         return "subject/landing"
-    }
-
-    @GetMapping("/training")
-    fun training(request: HttpServletRequest, model: Model): String {
-        val ctx = ctx(request)
-        model.addAttribute("pageTitle", "Training — ${ctx.displayName}")
-        model.addAttribute("ctx", ctx)
-        return "subject/training"
     }
 
     @GetMapping("/terms")

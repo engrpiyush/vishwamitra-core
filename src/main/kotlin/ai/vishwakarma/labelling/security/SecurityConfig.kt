@@ -34,10 +34,12 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
  * Host-split security (VA-30, LLD §4.4): [SubjectHostFilter] runs ahead of every chain and stamps
- * subject-host requests with [SubjectCtx]; the chains then split:
- * - subject chain (order 1) — claims any request carrying the ctx attribute, on BOTH profiles, so
+ * subject-host requests with [SubjectCtx] (and auth-host requests with [AuthHost.ATTR]); the chains
+ * then split:
+ * - auth-host chain (order 1, VA-70) — the central OAuth callback host `auth.{base-domain}`.
+ * - subject chain (order 2) — claims any request carrying the ctx attribute, on BOTH profiles, so
  *   dev exercises the real subject authorization table (`<handle>.localhost:8080`).
- * - operator chains (order 2) — exactly the pre-VA-30 posture: `dev` = OAuth bypassed via
+ * - operator chains (order 3) — exactly the pre-VA-30 posture: `dev` = OAuth bypassed via
  *   [DevAuthFilter]; others = Google OAuth2 login gated by [AllowlistOidcUserService].
  *
  * Role hierarchy ADMIN ⊃ REVIEWER ⊃ AUTHOR applies to both web and method security; SUBJECT sits
@@ -113,13 +115,53 @@ class SecurityConfig {
     }
 
     /**
+     * The central OAuth callback host (VA-70, LLD §4.2 v1.1): `auth.{base-domain}` runs the whole
+     * Google dance on the one registered redirect URI. [SubjectHostFilter] stamps the marker
+     * attribute and already 404'd everything but the login machinery; login success redirects back
+     * to the open-redirect-guarded target `/auth/start` parked in the session ([AuthHost]). The
+     * session cookie is parent-domain in prod (application.yml), so the session minted here is
+     * honored on every subject host — authorization stays per-host (§4.4).
+     */
+    @Bean
+    @Order(1)
+    fun authHostSecurityFilterChain(
+        http: HttpSecurity,
+        props: AppProperties,
+        clientRegistrations: ObjectProvider<ClientRegistrationRepository>,
+        allowlistOidcUserService: ObjectProvider<OidcUserService>,
+    ): SecurityFilterChain {
+        http.securityMatcher(RequestMatcher { it.getAttribute(AuthHost.ATTR) != null })
+        http {
+            authorizeHttpRequests {
+                authorize("/css/**", permitAll)
+                authorize("/js/**", permitAll)
+                authorize("/favicon.svg", permitAll)
+                authorize("/error", permitAll)
+                authorize("/auth/start", permitAll)
+                authorize("/login/**", permitAll)
+                authorize("/oauth2/**", permitAll)
+                authorize(anyRequest, denyAll)
+            }
+            if (clientRegistrations.ifAvailable != null) {
+                oauth2Login {
+                    authenticationSuccessHandler = AuthHost.successHandler(props.product.baseDomain)
+                    allowlistOidcUserService.ifAvailable?.let { svc ->
+                        userInfoEndpoint { oidcUserService = svc }
+                    }
+                }
+            }
+        }
+        return http.build()
+    }
+
+    /**
      * The subject world (LLD §4.4 authorization table). Paths arrive rewritten under `/s` (see
      * [SubjectHostFilter]); routes outside the table were already 404'd by the filter, so the
      * denyAll tail is belt-and-braces. Active on both profiles — in dev, [DevAuthFilter] supplies
      * the principal (`?devRole=SUBJECT` etc.) and the same rules apply.
      */
     @Bean
-    @Order(1)
+    @Order(2)
     fun subjectSecurityFilterChain(
         http: HttpSecurity,
         props: AppProperties,
@@ -172,7 +214,16 @@ class SecurityConfig {
             exceptionHandling {
                 accessDeniedHandler = denied
                 defaultAuthenticationEntryPointFor(sessionExpired, expiredChatMatcher)
-                if (!oauthAvailable) {
+                if (oauthAvailable) {
+                    // VA-70 (§4.2 v1.1): per-subject-host redirect URIs can't be registered on the
+                    // Google client, so login bounces through the central auth host, carrying the
+                    // originating URL. Registered as a default-for(AnyRequest) so the chat 401
+                    // mapping above keeps precedence.
+                    defaultAuthenticationEntryPointFor(
+                        AuthHost.entryPoint(props.product.baseDomain),
+                        AnyRequestMatcher.INSTANCE,
+                    )
+                } else {
                     defaultAuthenticationEntryPointFor(
                         HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
                         AnyRequestMatcher.INSTANCE,
@@ -198,7 +249,7 @@ class SecurityConfig {
     }
 
     @Bean
-    @Order(2)
+    @Order(3)
     @Profile("dev")
     fun devSecurityFilterChain(http: HttpSecurity, props: AppProperties): SecurityFilterChain {
         http {
@@ -217,7 +268,7 @@ class SecurityConfig {
     }
 
     @Bean
-    @Order(2)
+    @Order(3)
     @Profile("!dev")
     fun securityFilterChain(
         http: HttpSecurity,

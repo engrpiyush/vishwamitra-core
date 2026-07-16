@@ -605,3 +605,51 @@ textarea { resize: vertical; min-height: 64px; }
     .landing-panels { grid-template-columns: 1fr; }
     .landing-divider { display: none; }
 }
+
+/* ── VA-32: subject training surfaces (S2–S5, LLD §8) ── */
+.subject-panel { width: min(760px, 100%); }
+.subject-panel h1 { font-size: 1.7rem; margin-bottom: 0.5rem; }
+.subject-panel h2 { font-size: 1.1rem; margin: 1.4rem 0 0.6rem; }
+.subject-panel .lede { color: var(--muted); margin-bottom: 1.25rem; }
+.subject-panel .card { margin-bottom: 1.2rem; }
+.subject-panel .card label { display: block; font-size: 0.85rem; color: var(--muted);
+    font-weight: 600; margin-bottom: 0.7rem; }
+.subject-panel .card select, .subject-panel .card input[type=text] { display: block;
+    width: 100%; margin-top: 0.35rem; }
+.subject-panel table.grid { width: 100%; }
+label.attest { display: flex; gap: 0.55rem; align-items: flex-start; font-weight: 400;
+    color: var(--text); font-size: 0.85rem; line-height: 1.45; margin: 0.9rem 0; }
+label.attest input { margin-top: 0.2rem; flex: none; }
+.upload-progress { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; }
+.upload-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--border);
+    overflow: hidden; }
+.upload-bar span { display: block; height: 100%; width: 0; background: var(--accent);
+    transition: width 0.2s; }
+.progress-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.6rem; }
+.progress-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border); border-radius: 8px; }
+.progress-title { flex: 1; }
+.speaker-card { margin-bottom: 0.9rem; }
+.speaker-pick { display: flex; align-items: center; gap: 0.5rem; }
+.speaker-quote { margin: 0.6rem 0 0; padding-left: 0.9rem; border-left: 3px solid var(--border);
+    color: var(--muted); font-size: 0.9rem; max-height: 9rem; overflow-y: auto; }
+.upload-list { margin: 0.4rem 0 0 1.1rem; color: var(--muted); }
+
+/* ── VA-33: subject review wizard (S6) ── */
+.review-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.review-steps .step { font-size: 0.8rem; color: var(--muted); padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border); border-radius: 999px; }
+.review-steps .step.active { color: var(--text); border-color: var(--accent); }
+.review-steps .step.done { color: var(--text); }
+.review-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.review-row { border: 1px solid var(--border); border-radius: 8px; }
+.review-row summary { display: flex; align-items: center; gap: 0.6rem; cursor: pointer;
+    padding: 0.65rem 0.9rem; list-style: none; }
+.review-row summary::-webkit-details-marker { display: none; }
+.review-row .review-text { flex: 1; }
+.review-row[open] { border-color: var(--accent); }
+.review-editor { padding: 0.2rem 0.9rem 0.9rem; border-top: 1px solid var(--border); }
+
+/* The hidden attribute must beat any display rule here (the .modal[hidden] idiom) — the JS
+   toggles suError / suFromWrap / suProgress via [hidden], and .flash/.card label set display. */
+.subject-panel [hidden] { display: none !important; }

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-33: S6 step 1 (decide) — approve-by-default, subject vocabulary (LLD §8.1, §12.3). -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>What we found</h1>
+            <nav class="review-steps">
+                <span class="step active">1 · What we found</span>
+                <span class="step">2 · Private details</span>
+                <span class="step">3 · Confirm</span>
+            </nav>
+            <p class="lede">Everything here is <strong>included by default</strong> — you only
+                act where you want to. Open anything to add context in your own words, and set
+                aside anything we read between the lines that isn't right.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <p class="panel-lede" th:if="${attentionCount > 0}"
+               th:text="|${attentionCount} of these could use a closer look — they're at the top.|">
+            </p>
+
+            <div class="review-list">
+                <details class="review-row" th:each="row : ${rows}" th:id="|c-${row.id}|">
+                    <summary>
+                        <span class="review-text" th:text="${row.text}">what we heard</span>
+                        <span class="badge" th:classappend="${row.chipClass}"
+                              th:text="${row.chipLabel}">Included</span>
+                        <span class="badge badge--warning" th:if="${row.attention}">worth a look</span>
+                    </summary>
+                    <div class="review-editor">
+                        <!-- F11 framing slot (W5 inbox ticket): the generated question text
+                             replaces this plain framing when it lands. -->
+                        <p class="panel-lede" th:if="${row.attention and !row.inferred}">
+                            Is there context you'd like your advocate to carry about this?</p>
+                        <p class="panel-lede" th:if="${row.inferred}">
+                            We read this between the lines — if it isn't right, set it aside.</p>
+                        <p class="muted" th:if="${row.excerpt != null}">
+                            From <span th:text="${row.source}">source</span>:
+                            &ldquo;<span th:text="${row.excerpt}">excerpt</span>&rdquo;</p>
+                        <p class="muted" th:unless="${row.excerpt != null}">
+                            From <span th:text="${row.source}">source</span></p>
+                        <form method="post" class="form" style="max-width:none;"
+                              th:action="@{/training/review/claims/{id}/decision(id=${row.id})}">
+                            <label th:if="${row.inferred}" class="inline">
+                                <input type="checkbox" name="reject" value="true"
+                                       th:checked="${row.rejected}"/>
+                                This isn't right — leave it out
+                            </label>
+                            <label>In your own words (optional — this rides along with it)
+                                <textarea name="justification" rows="2"
+                                          th:text="${row.justification}"></textarea>
+                            </label>
+                            <div class="row-actions">
+                                <button type="submit" class="btn--sm">Save</button>
+                                <span class="muted">Leave blank to keep it as is.</span>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+            </div>
+            <p class="empty-state" th:if="${rows.isEmpty()}">Nothing here yet.</p>
+
+            <div class="panel-links" style="margin-top:1.4rem;">
+                <a class="btn btn--primary" th:href="@{/training/review/pii}">Next: private
+                    details &rarr;</a>
+                <a class="btn btn--secondary" th:href="@{/training}">Back to your training
+                    space</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

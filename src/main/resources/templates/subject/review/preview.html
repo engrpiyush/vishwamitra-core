@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-33: S6 step 3 (preview + submit) — post-submit the training area is read-only. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Confirm</h1>
+            <nav class="review-steps">
+                <span class="step done">1 · What we found</span>
+                <span class="step done">2 · Private details</span>
+                <span class="step active">3 · Confirm</span>
+            </nav>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="tiles" style="grid-template-columns:repeat(3,1fr); margin:0.5rem 0 0.6rem;">
+                <div class="tile"><span class="tile-value" th:text="${summary.approved}">0</span>
+                    <span class="tile-label">carried as is</span></div>
+                <div class="tile"><span class="tile-value" th:text="${summary.sidecared}">0</span>
+                    <span class="tile-label">with your notes</span></div>
+                <div class="tile"><span class="tile-value" th:text="${summary.rejected}">0</span>
+                    <span class="tile-label">set aside</span></div>
+            </div>
+            <p class="muted">Private details: <strong th:text="${summary.sensitiveHeld}">0</strong>
+                kept private · <strong th:text="${summary.sensitiveIncluded}">0</strong> shared
+                with your advocate.</p>
+
+            <h2 th:if="${!nonApproved.isEmpty()}">One last look</h2>
+            <div class="card" th:each="n : ${nonApproved}">
+                <p style="margin:0;"><strong th:text="${n['text']}">item</strong>
+                    <span class="badge" th:classappend="${n['setAside']} ? 'badge--muted' : 'badge--info'"
+                          th:text="${n['setAside']} ? 'set aside' : 'with your note'">tag</span></p>
+                <p class="muted" th:if="${n['note'] != null}" style="margin:0.4rem 0 0;">
+                    your note: &ldquo;<span th:text="${n['note']}">note</span>&rdquo;</p>
+            </div>
+
+            <div class="card" style="margin-top:1.4rem;">
+                <h2 style="margin-top:0;">Ready?</h2>
+                <p class="panel-lede">Once you confirm, your advocate starts learning from
+                    everything you kept. You won't be able to change these choices here
+                    afterwards.</p>
+                <form method="post" th:action="@{/training/review/submit}"
+                      onsubmit="return confirm('Confirm your choices? Your advocate will learn only from what you kept.');">
+                    <button type="submit" class="btn btn--primary">Looks right — build my
+                        advocate</button>
+                </form>
+            </div>
+
+            <div class="panel-links" style="margin-top:1.2rem;">
+                <a class="btn btn--secondary" th:href="@{/training/review/pii}">&larr; Private
+                    details</a>
+                <a class="btn btn--secondary" th:href="@{/training/review/decide}">&larr; What
+                    we found</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

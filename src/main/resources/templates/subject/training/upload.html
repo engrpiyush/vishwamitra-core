@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-32: S3 upload — curated kinds + the F2 consent attestation (LLD §8.1, §13.1). -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Add your evidence</h1>
+            <p class="lede">Recordings of you or people who know your work, documents,
+                certificates, press — anything that shows who you are.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="card" id="subjectUpload">
+                <label>What is this?
+                    <select id="suKind">
+                        <option th:each="k : ${kinds}" th:value="${k.name()}"
+                                th:text="${k.label}"
+                                th:attr="data-asks-who=${k.asksWho},data-hint=${k.hint}">
+                            Kind</option>
+                    </select>
+                </label>
+                <p class="panel-fineprint" id="suKindHint"></p>
+                <label id="suFromWrap" hidden>Who is it from?
+                    <select id="suFrom">
+                        <option th:each="f : ${fromOptions}" th:value="${f.name()}"
+                                th:text="${f.label}">From</option>
+                    </select>
+                </label>
+
+                <div class="dropzone" id="suDropzone">
+                    <p><strong>Drop a file here</strong> or
+                        <button type="button" class="linklike" id="suBrowse">browse</button></p>
+                    <p class="panel-fineprint" id="suFileName">No file selected.</p>
+                    <input type="file" id="suFile" hidden/>
+                </div>
+                <label>Name it (optional)
+                    <input type="text" id="suTitle" placeholder="e.g. My story, 2024 award"/>
+                </label>
+
+                <!-- F2 consent attestation (LLD §13.1) — required per upload batch; the server
+                     refuses registration without it. -->
+                <label class="attest">
+                    <input type="checkbox" id="suAttest"/>
+                    I have the right to share these files, the people in these recordings agreed
+                    to be recorded for this purpose, and I understand my uploads permanently
+                    become part of my advocate's evidence.
+                </label>
+
+                <button type="button" class="btn btn--primary" id="suSubmit" disabled>
+                    Upload</button>
+                <div class="upload-progress" id="suProgress" hidden>
+                    <div class="upload-bar"><span id="suBar"></span></div>
+                    <span id="suPct">0%</span>
+                </div>
+                <p class="flash error" id="suError" hidden></p>
+                <p class="panel-fineprint">Audio (mp3, wav, m4a…), video (mp4, mov…), photos and
+                    documents (pdf, docx…) all work — anything up to 5&nbsp;GB. Long recordings
+                    can take a while to come through; we'll email you when they're ready.</p>
+            </div>
+
+            <h2 th:if="${!rows.isEmpty()}">What you've shared</h2>
+            <table class="grid" th:if="${!rows.isEmpty()}">
+                <tbody>
+                <tr th:each="row : ${rows}">
+                    <td th:text="${row.title}">title</td>
+                    <td>
+                        <span class="badge" th:classappend="${row.ready} ? 'badge--success' : 'badge--muted'"
+                              th:text="${row.status}">Ready</span>
+                    </td>
+                    <td class="actions">
+                        <button th:unless="${row.ready}" type="button"
+                                class="btn btn--sm js-su-retry" th:attr="data-asset-id=${row.id}">
+                            Retry upload</button>
+                        <form th:action="@{/training/assets/{id}/remove(id=${row.id})}"
+                              method="post" class="inline-form"
+                              onsubmit="return confirm('Remove this file? It won\'t be part of your advocate.');">
+                            <button type="submit" class="btn btn--danger btn--sm">Remove</button>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+
+            <div class="card" th:if="${readyCount > 0}">
+                <h2>Done uploading?</h2>
+                <p class="panel-lede">When you submit, we start reading through everything —
+                    you can't add more afterwards.</p>
+                <form th:action="@{/training/submit}" method="post"
+                      onsubmit="return confirm('Submit your evidence? You can\'t add more files after this.');">
+                    <button type="submit" class="btn btn--primary">I'm done — start building</button>
+                </form>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+<script th:src="@{/js/subject-training.js}" defer></script>
+</body>
+</html>

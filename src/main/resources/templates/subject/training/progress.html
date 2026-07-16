@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-32: S4 progress — §8.2 friendly states only; the open page drives the run. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel" id="trainingProgress"
+                 th:attr="data-active-count=${activeCount},data-fingerprint=${stateFingerprint}">
+            <h1>How it's going</h1>
+            <p class="lede">We're reading and listening through everything you shared.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="flash ok" th:if="${longRunning}">This can take a while — we'll email you
+                when it's ready. You don't need to keep this page open.</div>
+
+            <div class="progress-list">
+                <div class="progress-row" th:each="item : ${items}">
+                    <span class="progress-title" th:text="${item.title}">upload</span>
+                    <span class="badge" th:classappend="|badge--${item.state.chip}|"
+                          th:text="${item.label}">state</span>
+                    <a th:if="${item.state.name() == 'NEEDS_YOU'}" class="btn btn--sm btn--primary"
+                       th:href="@{/training/speakers/{id}(id=${item.jobId})}">Which one is you?</a>
+                </div>
+            </div>
+            <p class="empty-state" th:if="${items.isEmpty()}">Getting things ready — check back
+                in a moment.</p>
+
+            <div class="panel-links" style="margin-top:1.2rem;">
+                <a class="btn btn--secondary" th:href="@{/training}">Back to your training
+                    space</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+<script th:src="@{/js/subject-training.js}" defer></script>
+</body>
+</html>
