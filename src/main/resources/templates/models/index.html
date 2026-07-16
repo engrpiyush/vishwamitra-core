@@ -8,7 +8,10 @@
     <nav th:replace="~{fragments/common :: consolenav('models')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
 
-    <h1>Model versions</h1>
+    <div class="row-between">
+        <h1>Model versions</h1>
+        <a th:href="@{/models/advocates}">Advocates panel &rarr;</a>
+    </div>
     <p class="muted">Per-base-family lineage. A single global <b>current</b> is the blessed model.</p>
 
     <p th:if="${families.isEmpty()}" class="muted">No versions yet — submit a tune from Training.</p>

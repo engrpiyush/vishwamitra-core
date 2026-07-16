@@ -19,6 +19,13 @@ data class VertexOperation(
     val error: String?,
 )
 
+/** One `deployedModels[]` entry from an endpoint GET — the substrate truth the sweep reconciles. */
+data class VertexDeployedModel(
+    val id: String,
+    val model: String?,
+    val displayName: String?,
+)
+
 /**
  * Raw Vertex AI Prediction REST for the serving control plane (VA-67): upload a serving-container
  * model, deploy/undeploy it on a shared endpoint, and poll the resulting long-running operations.
@@ -111,6 +118,43 @@ class VertexEndpointClient(private val props: AppProperties) {
             mapOf("deployedModelId" to deployedModelId),
             "undeployModel",
         )
+
+    /** What is actually deployed on [endpointId] right now (empty list when nothing is). */
+    @Suppress("UNCHECKED_CAST")
+    fun deployedModels(endpointId: String): List<VertexDeployedModel> {
+        val response =
+            rest
+                .get()
+                .uri("${base()}/${parent()}/endpoints/$endpointId")
+                .header("Authorization", "Bearer ${token()}")
+                .retrieve()
+                .body(String::class.java) ?: error("empty endpoint response")
+        val map = Json.parse(response) as? Map<String, Any?> ?: error("bad endpoint response")
+        val deployed = map["deployedModels"] as? List<Map<String, Any?>> ?: emptyList()
+        return deployed.mapNotNull { dm ->
+            val id = dm["id"] as? String ?: return@mapNotNull null
+            VertexDeployedModel(
+                id = id,
+                model = dm["model"] as? String,
+                displayName = dm["displayName"] as? String,
+            )
+        }
+    }
+
+    /**
+     * Pass [body] (an OpenAI-style chat-completions JSON payload) through to the endpoint's
+     * container via `rawPredict` and return the raw response JSON. IAM/ADC replaces the v1.2 bearer
+     * wall (VA-74); the vLLM route is pinned at model upload (`/v1/chat/completions`).
+     */
+    fun rawPredict(endpointId: String, body: Map<String, Any?>): String =
+        rest
+            .post()
+            .uri("${base()}/${parent()}/endpoints/$endpointId:rawPredict")
+            .header("Authorization", "Bearer ${token()}")
+            .header("Content-Type", "application/json")
+            .body(Json.writeLine(body))
+            .retrieve()
+            .body(String::class.java) ?: error("empty rawPredict response")
 
     /** Poll an operation by its resource name (host derived from the name's region segment). */
     @Suppress("UNCHECKED_CAST")

@@ -22,9 +22,22 @@ data class ServingHandle(
     val error: String? = null,
 )
 
+/** One chat turn for [ServingBackend.chat] — OpenAI role vocabulary (system/user/assistant). */
+data class ChatMessage(val role: String, val content: String)
+
+/** A chat call against whatever is LIVE on the substrate (VA-38; consumed by §7.5 in W4). */
+data class ChatRequest(
+    val messages: List<ChatMessage>,
+    val maxTokens: Int = 512,
+    val temperature: Double = 0.7,
+)
+
+/** The substrate truth of what is deployed right now — the sweep's reconcile input (§7.4). */
+data class Deployment(val id: String, val displayName: String?)
+
 /**
- * The serving substrate seam (VA-67): deploy a tuned model somewhere it answers `rawPredict`, and
- * tear it down. One impl today (`VertexServingBackend`); an `aws` impl slots in behind the same
+ * The serving substrate seam (VA-67): deploy a tuned model somewhere it answers chat completions,
+ * and tear it down. One impl today (`VertexServingBackend`); an `aws` impl slots in behind the same
  * contract (product LLD W3 substrate-agnostic serving). Selected by `app.serving.backend`.
  */
 interface ServingBackend {
@@ -46,4 +59,14 @@ interface ServingBackend {
 
     /** Begin teardown of a `LIVE` handle; returns a `TEARING_DOWN` handle (or `FAILED`). */
     fun beginTeardown(handle: ServingHandle): ServingHandle
+
+    /** What is actually deployed on the target right now; throws on a transport failure. */
+    fun deployments(): List<Deployment>
+
+    /**
+     * One chat completion against the currently LIVE deployment; returns the assistant reply text.
+     * Throws on transport/parse failures — the caller (AdvocateChatService, §7.5) owns the "not
+     * available right now" mapping so raw errors never reach subjects.
+     */
+    fun chat(req: ChatRequest): String
 }

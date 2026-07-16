@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-40: S9 — the subject's window switch. Friendly vocabulary only (§12.3): every string here
+     comes from SubjectProvisioning; machine detail lives on the operator Advocates panel. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel" id="provisioningSwitch"
+                 th:attr="data-view=${view.name()},data-poll=${view.polling},data-ends-at=${endsAt}">
+            <h1 th:text="${view.headline}">Your advocate</h1>
+            <p class="lede" th:text="${view.blurb}">state copy</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <!-- OFFLINE: the on switch — presets are the whole choice (F10). -->
+            <div class="card" th:if="${view.name() == 'OFFLINE'}">
+                <form class="form" th:action="@{/provisioning/start}" method="post">
+                    <fieldset class="preset-picker">
+                        <legend>How long should it stay on?</legend>
+                        <label th:each="p, it : ${presets}">
+                            <input type="radio" name="preset" th:value="${p.name}"
+                                   th:checked="${it.first}" required/>
+                            <span th:text="${p.label}">1 day</span>
+                        </label>
+                    </fieldset>
+                    <button type="submit" class="btn btn--primary">Turn my advocate on</button>
+                    <p class="panel-fineprint">Starting up takes a little while — up to about half
+                        an hour. It switches itself off when the time is up.</p>
+                </form>
+            </div>
+
+            <!-- GETTING_READY / UNAVAILABLE: nothing to do; the page keeps itself fresh. -->
+            <div class="card" th:if="${view.polling}">
+                <p class="panel-lede">Hang tight — this page updates by itself.</p>
+            </div>
+
+            <!-- ONLINE: countdown + the off switch. -->
+            <div class="card" th:if="${view.name() == 'ONLINE'}">
+                <p class="panel-lede">Time left:
+                    <strong id="windowCountdown" th:attr="data-ends-at=${endsAt}">—</strong></p>
+                <form th:action="@{/provisioning/end}" method="post"
+                      onsubmit="return confirm('Turn your advocate off now? Guests will no longer be able to talk to it.');">
+                    <button type="submit" class="btn btn--danger">Turn it off now</button>
+                </form>
+            </div>
+
+            <!-- Aggregate-score slot (filled by the W7 score ticket). -->
+            <div class="card" th:if="${score != null}">
+                <p class="panel-lede">Authenticity score:
+                    <strong th:text="${#numbers.formatDecimal(score, 1, 2)}">0.00</strong></p>
+            </div>
+
+            <div class="panel-links" style="margin-top:1.2rem;">
+                <a class="btn btn--secondary" th:href="@{/training}">Back to your training space</a>
+                <a class="btn btn--secondary" th:href="@{/tokens}">Guest access codes</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+<script th:src="@{/js/subject-provisioning.js}" defer></script>
+</body>
+</html>

@@ -95,6 +95,11 @@ app:
     region: ${SERVING_REGION:us-central1}
     endpoint-id: ${SERVING_ENDPOINT_ID:}
     image: ${SERVING_IMAGE:}
+    # Serving-region checkpoint staging (VA-75/VA-38): registration copies weights here once so
+    # window deploys fetch in-region. Blank (dev) = no copy, the source URI serves as-is.
+    staging-bucket: ${SERVING_STAGING_BUCKET:}
+    # PROVISIONING older than this flips to DEPLOY_FAILED (measured cold deploy is 25–35 min).
+    deploy-timeout: ${SERVING_DEPLOY_TIMEOUT:60m}
   # Stage 2 (A/V → Claims): managed transcription + Claude claim extraction.
   stage2:
     # STT batchRecognize writes diarized transcripts here (separate lifecycle from intake media).

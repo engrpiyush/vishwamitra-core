@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.serving
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ServingState
+import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.vertex.VertexEndpointClient
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -123,6 +124,36 @@ class VertexServingBackend(
             log.warn("undeployModel kick-off failed: {}", e.message)
             handle.copy(state = ServingState.FAILED, error = "Teardown failed: ${e.message}")
         }
+    }
+
+    override fun deployments(): List<Deployment> {
+        val endpointId = props.serving.endpointId
+        if (endpointId.isBlank()) return emptyList()
+        return client.deployedModels(endpointId).map { Deployment(it.id, it.displayName) }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    override fun chat(req: ChatRequest): String {
+        val endpointId = props.serving.endpointId
+        require(endpointId.isNotBlank()) { "No serving endpoint configured" }
+        val body =
+            mapOf(
+                // --served-model-name pin (VA-74): every deployed advocate answers as "advocate".
+                "model" to "advocate",
+                "messages" to
+                    req.messages.map { mapOf("role" to it.role, "content" to it.content) },
+                "max_tokens" to req.maxTokens,
+                "temperature" to req.temperature,
+                // Qwen3 templates default to thinking mode → a stray </think> opens replies.
+                "chat_template_kwargs" to mapOf("enable_thinking" to false),
+            )
+        val response = client.rawPredict(endpointId, body)
+        val map =
+            Json.parse(response) as? Map<String, Any?> ?: error("bad chat response: $response")
+        val choices = map["choices"] as? List<Map<String, Any?>>
+        val message = choices?.firstOrNull()?.get("message") as? Map<String, Any?>
+        return message?.get("content") as? String
+            ?: error("chat response carried no message content: $response")
     }
 
     private fun deployName(modelResource: String) = "serve-${modelResource.substringAfterLast('/')}"

@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ModelVersion
 import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.VersionStatus
+import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
 import ai.vishwakarma.labelling.serving.ServeRequest
 import ai.vishwakarma.labelling.serving.ServingBackend
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Service
 @Service
 class AdvocateServingService(
     private val versions: ModelVersionRepository,
+    private val advocates: AdvocateRepository,
     backends: List<ServingBackend>,
     private val props: AppProperties,
 ) {
@@ -62,6 +64,17 @@ class AdvocateServingService(
                 return DomainError.Conflict(
                         "${it.displayName} is ${it.servingState} on the shared endpoint — tear it " +
                             "down first (one advocate serves at a time)"
+                    )
+                    .left()
+            }
+        // VA-38: advocate windows share the same single-replica endpoint — exclude them too.
+        advocates
+            .findAll()
+            .firstOrNull { it.occupying }
+            ?.let {
+                return DomainError.Conflict(
+                        "Advocate '${it.subjectId}' is ${it.state} on the shared endpoint — end its " +
+                            "window first (one occupant at a time)"
                     )
                     .left()
             }

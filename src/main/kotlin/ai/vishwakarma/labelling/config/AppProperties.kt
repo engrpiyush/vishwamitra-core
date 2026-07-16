@@ -145,6 +145,18 @@ data class AppProperties(
         val endpointId: String = "",
         /** vLLM-on-Volta serving image (VA-74 pin; v0.20+ dropped SM70). */
         val image: String = "",
+        /**
+         * Serving-region staging bucket (VA-75): `registerAdvocate` copies the tuned checkpoint
+         * here once so every window deploy fetches weights in-region instead of paying cross-region
+         * egress per cold start. Blank (dev) = no copy, serve the source URI as-is.
+         */
+        val stagingBucket: String = "",
+        /**
+         * A window stuck PROVISIONING longer than this flips to DEPLOY_FAILED (operator-visible).
+         * Measured cold deploy is 25–35 min (VA-74), so the default leaves real headroom; a deploy
+         * that completes after the flip is caught by the sweep's orphan reconcile.
+         */
+        val deployTimeout: Duration = Duration.ofMinutes(60),
         val machineType: String = "n1-standard-8",
         val acceleratorType: String = "NVIDIA_TESLA_V100",
         val acceleratorCount: Int = 1,

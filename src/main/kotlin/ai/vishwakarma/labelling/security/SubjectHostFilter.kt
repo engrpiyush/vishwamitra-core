@@ -47,6 +47,19 @@ class SubjectHostFilter(
             response.sendError(HttpServletResponse.SC_NOT_FOUND)
             return
         }
+        // §8.4: www is not a subject host — permanent redirect to the canonical apex (VA-71
+        // design).
+        if (handle == "www") {
+            response.status = HttpServletResponse.SC_MOVED_PERMANENTLY
+            response.setHeader(
+                "Location",
+                "https://" +
+                    props.product.baseDomain.lowercase() +
+                    request.requestURI +
+                    (request.queryString?.let { "?$it" } ?: ""),
+            )
+            return
+        }
         // VA-70: the central OAuth callback host — login machinery only, never a subject site.
         if (handle == AUTH_HANDLE) {
             request.setAttribute(AuthHost.ATTR, true)

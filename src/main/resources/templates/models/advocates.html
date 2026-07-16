@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('models')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+
+    <div class="row-between">
+        <h1>Advocates</h1>
+        <a th:href="@{/models}" class="muted">&larr; model versions</a>
+    </div>
+    <p class="muted">The §7.3 state machine, full vocabulary (LLD §14.2) — one shared endpoint, one
+        occupant at a time. Windows deploy on start and undeploy on end; a deployed replica bills
+        until torn down.</p>
+
+    <!-- Register: stage a READY checkpoint for a subject → UNPROVISIONED (LLD §7.1). -->
+    <section class="panel">
+        <h2>Register a trained model</h2>
+        <form method="post" th:action="@{/models/advocates/register}" class="inline-send">
+            <select name="subjectId" required>
+                <option value="" disabled selected>subject…</option>
+                <option th:each="row : ${rows}" th:value="${row.subject.id}"
+                        th:text="|${row.subject.displayName} (${row.subject.handle ?: 'no handle'})|">subject</option>
+            </select>
+            <input type="text" name="checkpointUri" placeholder="gs://…/final/" size="50" required/>
+            <button type="submit"
+                    data-confirm="Register this checkpoint? It is staged into the serving-region bucket (a one-time multi-GB copy) and replaces any previously registered model."
+                    data-confirm-title="Register model?" data-confirm-ok="Register">Register</button>
+        </form>
+        <details th:if="${!readyVersions.isEmpty()}">
+            <summary class="muted">READY checkpoints</summary>
+            <ul>
+                <li th:each="v : ${readyVersions}">
+                    <span th:text="${v.displayName}">name</span> —
+                    <code class="copyable" title="Click to copy" th:text="${v.gcsCheckpointUri}">gs://…</code>
+                </li>
+            </ul>
+        </details>
+    </section>
+
+    <table class="grid">
+        <thead>
+        <tr>
+            <th>Subject</th>
+            <th>State</th>
+            <th>Window</th>
+            <th>Score</th>
+            <th>Codes</th>
+            <th>Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="row : ${rows}">
+            <td>
+                <b th:text="${row.subject.displayName}">Neo</b>
+                <span class="muted" th:if="${row.subject.handle}" th:text="|(${row.subject.handle})|">(dev)</span>
+            </td>
+            <td>
+                <span class="badge" th:if="${row.advocate != null}"
+                      th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(row.advocate.state),'_','-')}"
+                      th:text="${row.advocate.state}">LIVE</span>
+                <span class="muted" th:if="${row.advocate == null}">no advocate</span>
+                <!-- DEPLOY_FAILED detail is operator vocabulary — verbatim here, never on S9. -->
+                <p class="error" th:if="${row.advocate?.lastError != null}"
+                   th:text="${row.advocate.lastError}">err</p>
+            </td>
+            <td>
+                <span th:if="${row.advocate?.windowEndsAt != null}">
+                    <span th:text="${row.advocate.windowPreset}">D1</span> until
+                    <time class="js-ts" th:datetime="${row.advocate.windowEndsAt}"
+                          th:text="${row.advocate.windowEndsAt}">when</time>
+                    <span class="muted" th:if="${row.advocate.windowSetBy}"
+                          th:text="|by ${row.advocate.windowSetBy}|">by</span>
+                </span>
+                <span class="muted" th:unless="${row.advocate?.windowEndsAt != null}">—</span>
+            </td>
+            <td>
+                <!-- Recompute lands with the W7 score ticket; the denormalized value renders now. -->
+                <span th:if="${row.advocate?.aggregateScore != null}"
+                      th:text="${#numbers.formatDecimal(row.advocate.aggregateScore, 1, 2)}">0.00</span>
+                <span class="muted" th:unless="${row.advocate?.aggregateScore != null}">—</span>
+            </td>
+            <td><span th:text="|${row.tokenActive}/${row.tokenTotal} active|">0/0</span></td>
+            <td class="actions">
+                <form method="post" th:action="@{/models/advocates/start}" th:if="${row.startable}"
+                      class="inline-send"
+                      data-confirm="Start a serving window? Cold deploy is ~25–35 min and the replica bills until the window ends."
+                      data-confirm-title="Start window?" data-confirm-ok="Start">
+                    <input type="hidden" name="subjectId" th:value="${row.subject.id}"/>
+                    <select name="preset">
+                        <option th:each="p : ${presets}" th:value="${p.name()}" th:text="${p.name()}">D1</option>
+                    </select>
+                    <button type="submit" class="link"
+                            th:text="${row.advocate.state.name() == 'DEPLOY_FAILED'} ? 'retry deploy' : 'start window'">start window</button>
+                </form>
+                <form method="post" th:action="@{/models/advocates/end}" th:if="${row.endable}"
+                      data-confirm="End this window now and undeploy the replica?"
+                      data-confirm-title="End window?" data-confirm-ok="End window">
+                    <input type="hidden" name="subjectId" th:value="${row.subject.id}"/>
+                    <button type="submit" class="link">end window</button>
+                </form>
+                <form method="post" th:action="@{/models/advocates/poll}"
+                      th:if="${row.advocate != null and row.advocate.occupying}">
+                    <input type="hidden" name="subjectId" th:value="${row.subject.id}"/>
+                    <button type="submit" class="link">refresh</button>
+                </form>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+    <p class="muted" th:if="${rows.isEmpty()}">No active subjects.</p>
+
+    <!-- §14.3 runbook: the same sweep Cloud Scheduler fires every 15 min (VA-39). -->
+    <form method="post" th:action="@{/models/advocates/sweep}" style="margin-top:1rem;">
+        <button type="submit" class="secondary">Run sweep now</button>
+    </form>
+</main>
+</body>
+</html>

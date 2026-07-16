@@ -1,12 +1,17 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.Advocate
+import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.BaseKind
 import ai.vishwakarma.labelling.domain.ModelVersion
 import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.TuningMethod
 import ai.vishwakarma.labelling.domain.VersionStatus
+import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
+import ai.vishwakarma.labelling.serving.ChatRequest
+import ai.vishwakarma.labelling.serving.Deployment
 import ai.vishwakarma.labelling.serving.ServeRequest
 import ai.vishwakarma.labelling.serving.ServingBackend
 import ai.vishwakarma.labelling.serving.ServingHandle
@@ -30,6 +35,12 @@ private class FakeVersionRepo : ModelVersionRepository(mock(Firestore::class.jav
     override fun save(version: ModelVersion) {
         store[version.id] = version
     }
+}
+
+private class FakeAdvocateRepo : AdvocateRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, Advocate>()
+
+    override fun findAll(): List<Advocate> = store.values.toList()
 }
 
 /**
@@ -62,11 +73,16 @@ private class FakeBackend(override val id: String = "fake", val failServe: Boole
 
     override fun beginTeardown(handle: ServingHandle): ServingHandle =
         handle.copy(state = ServingState.TEARING_DOWN, operation = "op-undeploy")
+
+    override fun deployments(): List<Deployment> = emptyList()
+
+    override fun chat(req: ChatRequest): String = error("not under test")
 }
 
 class AdvocateServingServiceTest {
 
     private val versions = FakeVersionRepo()
+    private val advocates = FakeAdvocateRepo()
 
     private fun props(enabled: Boolean = true, dryRun: Boolean = false) =
         AppProperties(
@@ -87,6 +103,7 @@ class AdvocateServingServiceTest {
     ) =
         AdvocateServingService(
             versions,
+            advocates,
             listOf(FakeBackend(failServe = failServe)),
             props(enabled, dryRun)
         )
@@ -144,6 +161,16 @@ class AdvocateServingServiceTest {
         assertIs<DomainError.Conflict>(err)
         assertTrue(err.message.contains("one advocate serves at a time"))
         assertEquals(ServingState.NONE, versions.store["v2"]!!.servingState)
+    }
+
+    @Test
+    fun `an advocate window occupying the endpoint blocks an operator serve (VA-38 cross-guard)`() {
+        seedReady()
+        advocates.store["subj-1"] =
+            Advocate(subjectId = "subj-1", state = AdvocateState.PROVISIONING)
+        val err = service().serve("v1").err()
+        assertIs<DomainError.Conflict>(err)
+        assertTrue(err.message.contains("end its window first"))
     }
 
     // ---- dry-run ----------------------------------------------------------------
