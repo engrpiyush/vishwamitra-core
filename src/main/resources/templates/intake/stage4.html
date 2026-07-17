@@ -218,6 +218,29 @@
             </div>
         </div>
 
+        <!-- VA-61: §12 DPO pair construction — rendered only when app.stage4.dpo-enabled (dark
+             until the first DPO tune, S4-D4). One pair per approved conversation; batches repeat. -->
+        <div class="panel" th:if="${dpoEnabled != null && dpoEnabled}">
+            <div class="row-actions">
+                <h3 style="margin:0;">DPO pairs</h3>
+                <span class="badge badge--info">§12</span>
+                <span class="muted">
+                    <strong th:text="${dpoGenerated ?: 0}">0</strong> generated
+                    &middot; <span th:text="${dpoPending ?: 0}">0</span> approved conversation(s)
+                    without a pair
+                </span>
+            </div>
+            <div class="row-actions" style="margin-top:0.8rem;">
+                <form method="post" class="inline-form" th:if="${(dpoPending ?: 0) > 0}"
+                      th:action="@{/intake/stage4/runs/{rid}/dpo-generate(rid=${run.id})}"
+                      th:attr="data-confirm=${'Generate rejected-side violations for up to one batch of the ' + dpoPending + ' approved conversation(s) without a pair? Pairs land as DRAFT in the DPO review queue.'}"
+                      data-confirm-title="Generate DPO pairs?" data-confirm-ok="Generate">
+                    <button type="submit" class="secondary">Generate batch</button>
+                </form>
+                <a class="btn btn--ghost btn--sm" th:href="@{/dpo(subject=${subject.id})}">DPO queue &rarr;</a>
+            </div>
+        </div>
+
         <!-- The run record: phase rail + live counters (stage4-poll.js updates them in place). -->
         <div class="panel" id="stage4Run"
              th:attr="data-run-id=${run.id},data-status=${run.status.name()},data-active=${active}">

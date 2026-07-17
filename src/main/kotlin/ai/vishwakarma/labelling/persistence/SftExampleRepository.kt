@@ -79,6 +79,7 @@ class SftExampleRepository(private val db: Firestore) {
             "stamp" to stamp?.toStampMap(),
             "judgeVerdict" to judgeVerdict?.name,
             "archivedReason" to archivedReason,
+            "holdout" to holdout,
             "reviewComments" to
                 reviewComments.map {
                     mapOf("by" to it.by, "text" to it.text, "at" to it.at.toTimestamp())
@@ -123,6 +124,7 @@ class SftExampleRepository(private val db: Firestore) {
             stamp = (get("stamp") as? Map<String, Any?>)?.toStage4Stamp(),
             judgeVerdict = JudgeVerdict.fromOrNull(getString("judgeVerdict")),
             archivedReason = getString("archivedReason"),
+            holdout = getBoolean("holdout") ?: false,
             reviewComments =
                 commentsList.map {
                     ReviewComment(

@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.DpoSource
+import ai.vishwakarma.labelling.domain.DpoViolationClass
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.Turn
@@ -77,6 +78,7 @@ class DpoPairRepository(private val db: Firestore) {
             "status" to status.name,
             "source" to source.name,
             "fromSftId" to fromSftId,
+            "violationClass" to violationClass?.name,
             "stamp" to stamp?.toStampMap(),
             "archivedReason" to archivedReason,
             "reviewComments" to
@@ -121,6 +123,7 @@ class DpoPairRepository(private val db: Firestore) {
                 runCatching { DpoSource.valueOf(getString("source") ?: "MANUAL") }
                     .getOrDefault(DpoSource.MANUAL),
             fromSftId = getString("fromSftId"),
+            violationClass = DpoViolationClass.fromOrNull(getString("violationClass")),
             stamp = (get("stamp") as? Map<String, Any?>)?.toStage4Stamp(),
             archivedReason = getString("archivedReason"),
             reviewComments =

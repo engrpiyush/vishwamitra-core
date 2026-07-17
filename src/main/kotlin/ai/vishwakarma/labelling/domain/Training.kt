@@ -133,6 +133,14 @@ data class ModelVersion(
     val servingOperation: String? = null,
     val servedAt: Instant? = null,
     val servingError: String? = null,
+    // ---- post-tune behavioral eval (VA-60, LLD §14) ----
+    /** The latest completed eval run behind [evalReport] — links to its probe transcripts. */
+    val evalRunId: String? = null,
+    /**
+     * The §14 report JSON (behavior match rate, per-row pass rates, safety table, advisory
+     * warnings), frozen when its eval run completes. Advisory — never blocks anything.
+     */
+    val evalReport: String? = null,
 ) {
     /** Numeric (major, minor) parsed from `version` like "v1.2". */
     val majorMinor: Pair<Int, Int>

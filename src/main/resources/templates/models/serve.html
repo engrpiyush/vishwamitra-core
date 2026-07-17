@@ -71,7 +71,9 @@
     </script>
 
     <h2>Off-GCP serving handoff</h2>
-    <p class="muted">Or serve elsewhere — rent a GPU, serve with vLLM, tear it down.</p>
+    <p class="muted">Or serve elsewhere — rent a GPU, serve with vLLM, tear it down. A box served
+        this way is also the <code>vllm</code> eval transport's target
+        (<a th:href="@{'/models/' + ${v.id} + '/eval'}">behavioral eval &rarr;</a>).</p>
     <pre class="preview" th:text="${serveCommand}"># …</pre>
 </main>
 </body>

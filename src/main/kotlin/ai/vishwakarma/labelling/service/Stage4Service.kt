@@ -34,6 +34,7 @@ import ai.vishwakarma.labelling.stage4.HedgeVerdict
 import ai.vishwakarma.labelling.stage4.SituationalEvidence
 import ai.vishwakarma.labelling.stage4.SituationalHedging
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
+import ai.vishwakarma.labelling.stage4.Stage4Evidence
 import ai.vishwakarma.labelling.stage4.Stage4Generation
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
@@ -62,8 +63,11 @@ data class Stage4SubmitRequest(val fresh: Boolean = false, val mix: MixOverrides
     )
 }
 
-/** What [Stage4Service.export] returns: the completed run plus its `exports` record (VA-58). */
-data class Stage4ExportOutcome(val run: Stage4Run, val record: ExportRecord)
+/**
+ * What [Stage4Service.export] returns: the completed run, its `exports` record (VA-58), and how
+ * many examples the §14 holdout carve kept back for the post-tune eval (VA-60).
+ */
+data class Stage4ExportOutcome(val run: Stage4Run, val record: ExportRecord, val heldOut: Int)
 
 /**
  * What [Stage4Service.bulkApprove] did: [approved] flips, plus everything left untouched by reason
@@ -663,23 +667,8 @@ class Stage4Service(
             promptHash = Stage4Generation.META_TEMPLATE_STAMP,
         )
 
-    /**
-     * One §9.3 evidence line: the claim text with its score, explanation context and F5-precision
-     * dates — everything the prompt may ground on, nothing it may not.
-     */
-    private fun evidenceLine(e: EvidencedClaim): String = buildString {
-        append("[${e.claim.id}] \"${e.claim.text}\" — score ")
-        append("%.2f".format(e.score))
-        e.claim.authenticityTier?.let { append(" (${it.name})") }
-        e.sidecar?.let { append("; explanation on record: \"$it\"") }
-        e.claim.factStamp?.let { fs ->
-            val dates = listOfNotNull(fs.validFrom, fs.validTo).distinct()
-            if (dates.isNotEmpty()) {
-                append("; dated ${dates.joinToString(" → ")}")
-                fs.datePrecision?.let { append(" ($it precision — never voice finer)") }
-            }
-        }
-    }
+    /** One §9.3 evidence line — the shared [Stage4Evidence] rendering. */
+    private fun evidenceLine(e: EvidencedClaim): String = Stage4Evidence.line(e)
 
     /**
      * Absolute GENERATE counters, recomputed from the store each tick: [Stage4Counters.GENERATED] =
@@ -974,8 +963,9 @@ class Stage4Service(
 
     /**
      * Complete a REVIEW_WAIT run: [ExportService.exportStage4Run] filters APPROVED + current-stamp
-     * examples and gates them through both validators (any failure aborts with exampleId pointers
-     * before a blob or record lands), then the exportRecordId is journaled and the run finishes —
+     * examples, carves the §14 holdout slice under the run's frozen `evalHoldoutFraction`, and
+     * gates the rest through both validators (any failure aborts with exampleId pointers before a
+     * blob or record lands); then the exportRecordId is journaled and the run finishes —
      * REVIEW_WAIT → DONE, the one transition the poll loop never makes (QA-4).
      * `TrainingService.submit` consumes the record unchanged (DatasetSource.EXPORT).
      */
@@ -986,7 +976,8 @@ class Stage4Service(
                     "Only a REVIEW_WAIT run can be exported (run is ${run.status})"
                 )
                 .left()
-        return exportService.exportStage4Run(run, actor).map { record ->
+        return exportService.exportStage4Run(run, actor, frozenHoldoutFraction(run)).map { result ->
+            val record = result.record
             val now = Instant.now()
             val done =
                 run.copy(
@@ -997,14 +988,24 @@ class Stage4Service(
                 )
             runs.save(done)
             log.info(
-                "Run {}: REVIEW_WAIT → DONE (export {}, {} example(s) → {})",
+                "Run {}: REVIEW_WAIT → DONE (export {}, {} example(s) → {}; {} held out for eval)",
                 run.id,
                 record.id,
                 record.count,
                 record.gcsUri,
+                result.heldOut,
             )
-            Stage4ExportOutcome(done, record)
+            Stage4ExportOutcome(done, record, result.heldOut)
         }
+    }
+
+    /** The run's frozen `evalHoldoutFraction` (paramsSnapshot), live config as the fallback. */
+    private fun frozenHoldoutFraction(run: Stage4Run): Double {
+        val raw =
+            run.paramsSnapshot
+                ?.let { runCatching { Json.parse(it) as? Map<*, *> }.getOrNull() }
+                ?.get("evalHoldoutFraction")
+        return (raw as? Number)?.toDouble() ?: config.stage4().evalHoldoutFraction
     }
 
     // ---- params snapshot ------------------------------------------------------------

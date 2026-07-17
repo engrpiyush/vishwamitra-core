@@ -304,6 +304,64 @@
                     </div>
                 </form>
             </div>
+
+            <!-- §14 eval-grading rubric (VA-60) — guides the post-tune behavioral eval grader. -->
+            <div class="provider-card" th:with="r=${stage4.eval}">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next eval run."
+                      data-confirm-title="Reset the eval rubric?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:eval</span>
+                        <span class="muted">post-tune behavioral eval grading (§14)</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="6"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- §12 DPO violation rows (VA-61) — one pinned prompt per rejected-side class;
+                 generation ships dark behind app.stage4.dpo-enabled. -->
+            <div th:each="r : ${stage4.dpo}" class="provider-card">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next DPO batch."
+                      data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:dpo:overclaim</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="4"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
         </th:block>
     </th:block>
 </main>

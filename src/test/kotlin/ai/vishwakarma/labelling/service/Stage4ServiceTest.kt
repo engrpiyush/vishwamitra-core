@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.DpoPair
+import ai.vishwakarma.labelling.domain.DpoSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExportRecord
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
@@ -62,8 +63,10 @@ import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.serialization.SftValidator
 import ai.vishwakarma.labelling.serialization.ToolCallMapper
 import ai.vishwakarma.labelling.stage4.AxisVote
+import ai.vishwakarma.labelling.stage4.DryRunStage4RejectedDrafter
 import ai.vishwakarma.labelling.stage4.HedgePhrase
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
+import ai.vishwakarma.labelling.stage4.Stage4DpoGeneration
 import ai.vishwakarma.labelling.stage4.Stage4Generation
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
@@ -261,6 +264,9 @@ private class FakeS4SftRepo : SftExampleRepository(mock(Firestore::class.java)) 
 
 private class FakeS4DpoRepo : DpoPairRepository(mock(Firestore::class.java)) {
     val store = linkedMapOf<String, DpoPair>()
+    private var seq = 0
+
+    override fun newId(): String = "dpo-${++seq}"
 
     override fun findById(id: String): DpoPair? = store[id]
 
@@ -1376,17 +1382,26 @@ class Stage4ServiceTest {
         assertNotNull(outcome.run.finishedAt)
         assertEquals(Stage4RunStatus.DONE, runs.store[run.id]!!.status)
         assertEquals(Stage4RunStatus.DONE, svc.poll(run.id).expectRight().status)
-        // Exactly the APPROVED current-stamp set, each journaled with the record id.
-        assertEquals(approvedIds, outcome.record.exampleIds.toSet())
-        assertEquals(approvedIds.size, outcome.record.count)
-        approvedIds.forEach { assertTrue(sfts.store[it]!!.exportedIn.contains(outcome.record.id)) }
+        // Exactly the APPROVED current-stamp set minus the §14 holdout carve (VA-60), each
+        // exported row journaled with the record id; held rows stay APPROVED and unexported.
+        val holdoutIds = sfts.store.values.filter { it.holdout }.map { it.id }.toSet()
+        assertEquals(holdoutIds.size, outcome.heldOut)
+        assertEquals(approvedIds - holdoutIds, outcome.record.exampleIds.toSet())
+        assertEquals(approvedIds.size - holdoutIds.size, outcome.record.count)
+        outcome.record.exampleIds.forEach {
+            assertTrue(sfts.store[it]!!.exportedIn.contains(outcome.record.id))
+        }
+        holdoutIds.forEach {
+            assertTrue(sfts.store[it]!!.exportedIn.isEmpty())
+            assertEquals(ExampleStatus.APPROVED, sfts.store[it]!!.status)
+        }
         assertTrue(sfts.store[leftBehind.id]!!.exportedIn.isEmpty())
         assertTrue(sfts.store["e-stale-approved"]!!.exportedIn.isEmpty())
         // The blob round-trips the §19 contents/parts line shape — one line per example, guest
         // first, advocate last, text parts only.
         val content = exporter.written.values.single()
         val lines = content.split("\n")
-        assertEquals(approvedIds.size, lines.size)
+        assertEquals(outcome.record.count, lines.size)
         lines.forEach { line ->
             val obj = Json.parse(line) as Map<*, *>
             val contents = assertNotNull(obj["contents"] as? List<*>)
@@ -1402,7 +1417,8 @@ class Stage4ServiceTest {
     @Test
     fun `a validator failure aborts the export with exampleId pointers and no partial record`() {
         seedPublished()
-        val svc = service()
+        // Holdout off so the broken example deterministically reaches the validators.
+        val svc = service(AppProperties(stage4 = AppProperties.Stage4(evalHoldoutFraction = 0.0)))
         val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
         pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
         val approved = approveQueue()
@@ -1536,5 +1552,143 @@ class Stage4ServiceTest {
 
         assertIs<DomainError.Conflict>(svc.bulkApprove(run.id, "op").err())
         assertIs<DomainError.NotFound>(svc.bulkApprove("nope", "op").err())
+    }
+
+    // ---- DPO pair construction (LLD §12, VA-61) ----------------------------------------
+
+    private fun dpoService(props: AppProperties = AppProperties()): Stage4DpoService {
+        val promptService = ExtractionPromptService(promptRepo)
+        return Stage4DpoService(
+            runs = runs,
+            sftExamples = sfts,
+            dpoPairs = dpos,
+            plans = plans,
+            subjects = subjects,
+            personaService =
+                PersonaService(
+                    liveConfig(props),
+                    personas,
+                    subjects,
+                    FakeS4NameRepo(),
+                    promptService
+                ),
+            reviewService =
+                ClaimReviewService(
+                    FakeS4ManifestRepo(),
+                    FakeS4JobRepo(),
+                    claims,
+                    reviews,
+                    liveConfig(props)
+                ),
+            claimReviews = reviews,
+            drafter = DryRunStage4RejectedDrafter(),
+            prompts = promptService,
+            config = liveConfig(props),
+        )
+    }
+
+    private fun dpoEnabledProps() = AppProperties(stage4 = AppProperties.Stage4(dpoEnabled = true))
+
+    /** Walk a run to REVIEW_WAIT and approve the whole queue; returns (run, approved ids). */
+    private fun approvedRun(svc: Stage4Service): Pair<Stage4Run, List<String>> {
+        seedPublished()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+        return runs.store[run.id]!! to approveQueue()
+    }
+
+    @Test
+    fun `DPO generation is dark - flag off means a Conflict and zero writes`() {
+        val svc = service()
+        val (run, _) = approvedRun(svc)
+
+        assertIs<DomainError.Conflict>(dpoService().generate(run.id, "op").err())
+
+        assertTrue(dpos.store.isEmpty())
+    }
+
+    @Test
+    fun `DPO pairs land as DRAFT with stamp, violation class and clean prompt-chosen split`() {
+        val props = dpoEnabledProps()
+        val svc = service(props)
+        val (run, approved) = approvedRun(svc)
+        // A §14 holdout conversation never seeds a pair — its prompt and reference answer must
+        // stay out of every training set (the eval-contamination guard).
+        val held = approved.first()
+        sfts.store[held] = sfts.store[held]!!.copy(holdout = true)
+        val sftSnapshot = sfts.store.mapValues { (_, v) -> v }
+        val dpoSvc = dpoService(props)
+        val promptService = ExtractionPromptService(promptRepo)
+
+        var remaining = Int.MAX_VALUE
+        var rounds = 0
+        while (remaining > 0 && rounds < 20) {
+            remaining = dpoSvc.generate(run.id, "op").expectRight().remaining
+            rounds++
+        }
+
+        // One pair per approved non-holdout example, each fully traceable.
+        assertEquals(approved.size - 1, dpos.store.size)
+        assertEquals(approved.toSet() - held, dpos.store.values.mapNotNull { it.fromSftId }.toSet())
+        dpos.store.values.forEach { pair ->
+            val source = sfts.store[pair.fromSftId]!!
+            val plan = plans.store.values.first { it.plan.planId == source.stamp?.planId }.plan
+            assertEquals(ExampleStatus.DRAFT, pair.status)
+            assertEquals(DpoSource.LLM2, pair.source)
+            assertEquals(Stage4DpoGeneration.classFor(plan), pair.violationClass)
+            // Prompt = the conversation minus the final model turn; chosen = that final turn.
+            assertEquals(source.turns.dropLast(1), pair.promptTurns)
+            assertEquals(source.turns.last().text, pair.chosenText)
+            assertTrue(pair.rejectedText.contains("[dry-run"))
+            // The stamp travels; the generator hash is the violation row's.
+            assertEquals(source.stamp?.planId, pair.stamp?.planId)
+            assertEquals("pub-1", pair.stamp?.scoreRunId)
+            val row =
+                promptService.resolveKey(
+                    ExtractionPromptService.stage4DpoKey(pair.violationClass!!)
+                )
+            assertEquals(row.hash, pair.stamp?.generatorPromptHash)
+        }
+        // The rejected side never touches the SFT pool (the VA-61 leak contract).
+        assertEquals(sftSnapshot, sfts.store.toMap())
+
+        // Idempotent: a further batch generates nothing.
+        val again = dpoSvc.generate(run.id, "op").expectRight()
+        assertEquals(0, again.generated)
+        assertEquals(approved.size - 1, dpos.store.size)
+    }
+
+    @Test
+    fun `DPO pairs never enter the SFT export`() {
+        val props = dpoEnabledProps()
+        val svc = service(props)
+        val (run, approved) = approvedRun(svc)
+        val dpoSvc = dpoService(props)
+        var remaining = Int.MAX_VALUE
+        var rounds = 0
+        while (remaining > 0 && rounds < 20) {
+            remaining = dpoSvc.generate(run.id, "op").expectRight().remaining
+            rounds++
+        }
+
+        val outcome = svc.export(run.id, "op").expectRight()
+
+        // Every exported id is an SFT example; no pair id (or rejected text) reaches the blob.
+        outcome.record.exampleIds.forEach { assertTrue(it in approved) }
+        val blob = exporter.written.values.single()
+        assertTrue(!blob.contains("[dry-run overclaim"))
+        dpos.store.keys.forEach { assertTrue(it !in outcome.record.exampleIds) }
+    }
+
+    @Test
+    fun `DPO generation requires a reviewed run`() {
+        seedPublished()
+        val props = dpoEnabledProps()
+        val svc = service(props)
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
+
+        assertIs<DomainError.Conflict>(dpoService(props).generate(run.id, "op").err())
+        assertTrue(dpos.store.isEmpty())
     }
 }

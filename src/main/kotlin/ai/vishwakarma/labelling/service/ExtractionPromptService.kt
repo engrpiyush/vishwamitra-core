@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.domain.ContentType
+import ai.vishwakarma.labelling.domain.DpoViolationClass
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
 import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.domain.Stage4Category
@@ -35,6 +36,10 @@ data class Stage4PromptRows(
     val generators: List<ReservedPromptRow>,
     /** The §11 judge rubric row. */
     val judge: ReservedPromptRow,
+    /** The six §12 DPO violation-class rows (VA-61), in class order. */
+    val dpo: List<ReservedPromptRow>,
+    /** The §14 eval-grading rubric row (VA-60). */
+    val eval: ReservedPromptRow,
 )
 
 /** The instruction block an extraction run actually used, with its provenance stamp. */
@@ -123,9 +128,11 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** True when [id] is a reserved Stage 4 row (presets incl. admin-added, generators, judge). */
     fun isStage4Key(id: String): Boolean =
         id == STAGE4_JUDGE_KEY ||
+            id == STAGE4_EVAL_KEY ||
             id == STAGE4_PRESET_DEFAULT_KEY ||
             id.startsWith(STAGE4_PRESET_PREFIX) ||
-            id in STAGE4_GENERATOR_KEYS
+            id in STAGE4_GENERATOR_KEYS ||
+            id in STAGE4_DPO_KEYS
 
     /** The VA-66 admin-page slice: presets (+ default pointer), generator rows, judge rubric. */
     fun listStage4(): Stage4PromptRows {
@@ -139,6 +146,8 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
             presets = presetIds.map { row(STAGE4_PRESET_PREFIX + it) },
             generators = STAGE4_GENERATOR_KEYS.map { row(it) },
             judge = row(STAGE4_JUDGE_KEY),
+            dpo = STAGE4_DPO_KEYS.map { row(it) },
+            eval = row(STAGE4_EVAL_KEY),
         )
     }
 
@@ -259,5 +268,14 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
                 "stage4:gen:multi-claim",
                 "stage4:gen:negative",
             )
+
+        /** The reserved §14 eval-grading rubric row (VA-60) — resolved by the eval grader. */
+        const val STAGE4_EVAL_KEY = "stage4:eval"
+
+        /** The reserved `stage4:dpo:*` violation rows (§12, VA-61) — one pinned row per class. */
+        val STAGE4_DPO_KEYS = DpoViolationClass.entries.map { "stage4:dpo:${it.slug}" }
+
+        /** The pinned §12 prompt row behind one violation class. */
+        fun stage4DpoKey(violation: DpoViolationClass): String = "stage4:dpo:${violation.slug}"
     }
 }

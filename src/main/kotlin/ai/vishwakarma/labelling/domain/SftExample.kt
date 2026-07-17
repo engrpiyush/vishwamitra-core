@@ -81,6 +81,12 @@ data class SftExample(
     val judgeVerdict: JudgeVerdict? = null,
     /** Why the example was ARCHIVED, e.g. "superseded by <scoreRunId|personaHash>" (QA-6). */
     val archivedReason: String? = null,
+    /**
+     * Held out of every SFT export for the post-tune behavioral eval (LLD §14, VA-60). Selected
+     * deterministically at export time and sticky forever after — a holdout example must never
+     * reach a training set, or the eval grades the model on its own memorized data.
+     */
+    val holdout: Boolean = false,
     val reviewComments: List<ReviewComment> = emptyList(),
     val createdBy: String? = null,
     val createdAt: Instant? = null,

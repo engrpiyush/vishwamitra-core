@@ -32,6 +32,8 @@
                 </td>
                 <td class="actions">
                     <a th:href="@{'/models/' + ${v.id} + '/serve'}" th:if="${v.status.name() == 'READY'}">serve</a>
+                    <a th:href="@{'/models/' + ${v.id} + '/eval'}" th:if="${v.status.name() == 'READY'}"
+                       th:text="${v.evalReport != null} ? 'eval report' : 'eval'">eval</a>
                     <span th:if="${servingEnabled and v.servingState.name() != 'NONE'}"
                           class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.servingState),'_','-')}"
                           th:text="${v.servingState}">LIVE</span>

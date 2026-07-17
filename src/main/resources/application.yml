@@ -102,6 +102,11 @@ app:
     deploy-timeout: ${SERVING_DEPLOY_TIMEOUT:60m}
     # §14.1 window $-estimate dial (VA-68): all-in hourly price of one serving replica.
     hourly-usd: ${SERVING_HOURLY_USD:2.90}
+    # Stage 4 eval serving path (VA-67): `endpoint` = short-lived deploy on the shared Vertex
+    # endpoint (unconditional teardown when probing ends); `vllm` = a dev vLLM box serving the
+    # checkpoint per the model's Serve page recipe, reached at the base URL below.
+    eval-transport: ${EVAL_TRANSPORT:endpoint}
+    eval-vllm-base-url: ${EVAL_VLLM_BASE_URL:}
   # Stage 2 (A/V → Claims): managed transcription + Claude claim extraction.
   stage2:
     # STT batchRecognize writes diarized transcripts here (separate lifecycle from intake media).

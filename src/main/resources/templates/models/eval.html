@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('models')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+    <div class="row-between">
+        <h1>Behavioral eval <span th:text="${v.displayName}">model</span></h1>
+        <a th:href="@{/models}" class="muted">&larr; back to models</a>
+    </div>
+
+    <p>Version <code th:text="${v.version}">v1.0</code> · status
+        <span class="badge" th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(v.status),'_','-')}" th:text="${v.status}">READY</span>
+        · transport <code th:text="${transport}">endpoint</code></p>
+    <p class="muted">LLD §14 — advisory: bars warn, never block. Read this report before
+        registering the advocate; a failing safety row means the tune did not hold that boundary.</p>
+
+    <!-- Start (no run in flight). -->
+    <section class="panel" th:if="${run == null or run.status.terminal}" sec:authorize="hasRole('REVIEWER')">
+        <form method="post" th:action="@{'/models/' + ${v.id} + '/eval/start'}"
+              th:attr="data-confirm=${transport == 'endpoint'} ? 'Start the eval? This deploys the advocate to the shared endpoint (~25–35 min cold start, billed until released) and tears it down when probing ends.' : 'Start the eval against the configured vLLM box?'"
+              data-confirm-title="Start behavioral eval?" data-confirm-ok="Start eval">
+            <button type="submit">Start eval</button>
+        </form>
+    </section>
+
+    <!-- Live run card. -->
+    <section class="panel" th:if="${run != null}">
+        <div class="row-actions">
+            <h2 style="margin:0;">Eval run <code th:text="${run.id}">id</code></h2>
+            <span class="badge"
+                  th:classappend="${run.status.name() == 'DONE'} ? 'badge--success' : (${run.status.name() == 'FAILED'} ? 'badge--danger' : 'badge--info')"
+                  th:text="${run.status}">PROBING</span>
+        </div>
+        <p class="muted">
+            Probes <b th:text="${run.counters['answered'] ?: 0}">0</b>/<b th:text="${run.counters['probes'] ?: 0}">0</b>
+            · matched <b th:text="${run.counters['matched'] ?: 0}">0</b>
+            · safety fails <b th:text="${run.counters['safetyFailed'] ?: 0}">0</b>
+        </p>
+        <p class="error" th:if="${run.error != null}" th:text="${run.error}">err</p>
+        <div class="row-actions" th:if="${active}">
+            <form method="post" th:action="@{'/models/eval/runs/' + ${run.id} + '/poll'}">
+                <button type="submit" class="secondary">Refresh status</button>
+            </form>
+        </div>
+        <p class="muted" th:if="${run.status.name() == 'DEPLOYING'}">
+            Cold deploy in progress (~25–35 min) — this page auto-polls.</p>
+        <p class="muted" th:if="${run.status.name() == 'TEARING_DOWN'}">
+            Releasing the endpoint (the cost guard) — this page auto-polls.</p>
+    </section>
+
+    <!-- Auto-poll while the eval is in flight (the serve-page idiom). -->
+    <script th:if="${active}">
+        setTimeout(function () {
+            var f = document.querySelector('form[action*="/eval/runs/"]');
+            if (f) { f.dataset.confirmed = "1"; f.requestSubmit ? f.requestSubmit() : f.submit(); }
+        }, 15000);
+    </script>
+
+    <!-- The §14 advisory report. -->
+    <section class="panel" th:if="${report != null}">
+        <div class="row-actions">
+            <h2 style="margin:0;">Report</h2>
+            <span class="badge" th:classappend="${report['safetyPass'] == true and report['behaviorBarMet'] == true} ? 'badge--success' : 'badge--warning'"
+                  th:text="${report['safetyPass'] == true and report['behaviorBarMet'] == true} ? 'bars met' : 'advisory warnings'">bars</span>
+        </div>
+        <p>Behavior match
+            <b th:text="${#numbers.formatPercent(report['behaviorMatchRate'], 1, 0)}">93%</b>
+            against the <span th:text="${#numbers.formatPercent(report['behaviorBar'], 1, 0)}">90%</span> bar
+            · <span th:text="${report['graded']}">0</span> graded
+            (<span th:text="${report['core']}">0</span> core + <span th:text="${report['holdout']}">0</span> holdout)
+            · <time class="js-ts" th:datetime="${report['at']}" th:text="${report['at']}">when</time></p>
+
+        <div th:if="${!#lists.isEmpty(report['warnings'])}">
+            <p class="error" th:each="w : ${report['warnings']}" th:text="${w}">warning</p>
+        </div>
+
+        <h3>Safety rows <span class="muted">(100% advisory bar)</span></h3>
+        <table class="grid">
+            <thead><tr><th>Class</th><th>Result</th><th>Probe</th></tr></thead>
+            <tbody>
+            <tr th:each="s : ${report['safety']}">
+                <td><code th:text="${s['class']}">banned:health</code></td>
+                <td><span class="badge" th:classappend="${s['pass'] == true} ? 'badge--success' : 'badge--danger'"
+                          th:text="${s['pass'] == true} ? 'PASS' : 'FAIL'">PASS</span></td>
+                <td><a th:href="'#probe-' + ${s['probeId']}" th:text="${s['probeId']}">id</a></td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>Per voicing row</h3>
+        <table class="grid">
+            <thead><tr><th>Row</th><th>Probes</th><th>Matched</th></tr></thead>
+            <tbody>
+            <tr th:each="r : ${report['perRow']}">
+                <td th:text="${r['row']}">1</td>
+                <td th:text="${r['total']}">3</td>
+                <td th:text="${r['matched']} + (${r['matched']} &lt; ${r['total']} ? ' ⚠' : '')">3</td>
+            </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- Probe transcripts (the report's links land here). -->
+    <section th:if="${!#lists.isEmpty(probes)}">
+        <h2>Probe transcripts</h2>
+        <table class="grid">
+            <thead><tr><th>Probe</th><th>Kind</th><th>Row</th><th>Expected</th><th>Observed</th><th>Match</th></tr></thead>
+            <tbody>
+            <tr th:each="p : ${probes}" th:id="'probe-' + ${p.id}">
+                <td>
+                    <details>
+                        <summary><span th:text="${#strings.abbreviate(p.question, 80)}">q</span>
+                            <span class="badge badge--warning" th:if="${p.safetyClass != null}" th:text="${p.safetyClass}">pii</span></summary>
+                        <p><b>Q:</b> <span th:text="${p.question}">q</span></p>
+                        <p th:if="${p.reply != null}"><b>Reply:</b> <span th:text="${p.reply}">r</span></p>
+                        <p th:if="${p.referenceAnswer != null}" class="muted"><b>Reference:</b> <span th:text="${p.referenceAnswer}">ref</span></p>
+                        <p th:if="${p.rationale != null}" class="muted"><b>Grader:</b> <span th:text="${p.rationale}">why</span></p>
+                    </details>
+                </td>
+                <td th:text="${p.kind}">CORE</td>
+                <td th:text="${p.rowId}">1</td>
+                <td th:text="${p.expectedBehavior}">ASSERT</td>
+                <td th:text="${p.observedBehavior} ?: '—'">ASSERT</td>
+                <td>
+                    <span class="badge" th:if="${p.behaviorMatch != null}"
+                          th:classappend="${p.behaviorMatch} ? 'badge--success' : 'badge--danger'"
+                          th:text="${p.behaviorMatch} ? 'match' : 'miss'">match</span>
+                    <span class="muted" th:if="${p.behaviorMatch == null}">pending</span>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </section>
+</main>
+</body>
+</html>

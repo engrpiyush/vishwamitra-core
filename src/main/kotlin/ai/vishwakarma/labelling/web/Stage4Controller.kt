@@ -10,6 +10,7 @@ import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.PersonaService
+import ai.vishwakarma.labelling.service.Stage4DpoService
 import ai.vishwakarma.labelling.service.Stage4Service
 import ai.vishwakarma.labelling.service.Stage4SubmitRequest
 import ai.vishwakarma.labelling.service.StageConfigService
@@ -39,6 +40,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes
 class Stage4Controller(
     private val subjectService: SubjectService,
     private val stage4: Stage4Service,
+    private val stage4Dpo: Stage4DpoService,
     private val personaService: PersonaService,
     private val subjectScores: SubjectScoreRepository,
     private val sftExamples: SftExampleRepository,
@@ -125,6 +127,13 @@ class Stage4Controller(
                     "approved" to stamped.count { it.status == ExampleStatus.APPROVED },
                 ),
             )
+            // VA-61: the DPO mini-panel — only when the §12 feature flag is on (dark otherwise).
+            val dpoEnabled = config.stage4().dpoEnabled
+            model.addAttribute("dpoEnabled", dpoEnabled)
+            if (dpoEnabled) {
+                model.addAttribute("dpoPending", stage4Dpo.pending(run).size)
+                model.addAttribute("dpoGenerated", stage4Dpo.generatedCount(run))
+            }
         }
         // VA-88: the coverage report frozen at PLAN — categories hit/missed vs template targets.
         val coverage = run?.coverageReport?.let { parseCoverage(it) }.orEmpty()
@@ -243,7 +252,31 @@ class Stage4Controller(
                         ra.addFlashAttribute(
                             "ok",
                             "Exported ${outcome.record.count} example(s) → " +
-                                "${outcome.record.gcsUri} — run complete",
+                                "${outcome.record.gcsUri} (${outcome.heldOut} held out for the " +
+                                "post-tune eval) — run complete",
+                        )
+                    },
+                )
+        }
+
+    /**
+     * One bounded §12 DPO batch (VA-61) — the button repeats while a pending count remains. The
+     * service owns the dark-launch guard (`app.stage4.dpo-enabled`); off ⇒ a Conflict flash and
+     * zero writes.
+     */
+    @PostMapping("/stage4/runs/{runId}/dpo-generate")
+    fun dpoGenerate(@PathVariable runId: String, ra: RedirectAttributes): String =
+        runAction(runId, ra) {
+            stage4Dpo
+                .generate(runId, actor())
+                .fold(
+                    { ra.addFlashAttribute("error", it.message) },
+                    { o ->
+                        ra.addFlashAttribute(
+                            "ok",
+                            "Generated ${o.generated} DPO pair(s) as DRAFT — ${o.remaining} " +
+                                "remaining" +
+                                (if (o.skipped > 0) ", ${o.skipped} skipped (see logs)" else ""),
                         )
                     },
                 )

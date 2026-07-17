@@ -179,6 +179,15 @@ data class AppProperties(
                 "--max-model-len=8192",
                 "--gpu-memory-utilization=0.90",
             ),
+        /**
+         * How the §14 behavioral eval reaches a tuned checkpoint (VA-67): `endpoint` = a
+         * short-lived deploy onto the shared Vertex endpoint (torn down unconditionally when
+         * probing ends); `vllm` = a dev vLLM box serving the checkpoint per the ServeCommand
+         * recipe, reached at [evalVllmBaseUrl].
+         */
+        val evalTransport: String = "endpoint",
+        /** Base URL of the dev vLLM serve (e.g. `http://10.0.0.5:8000`); required for `vllm`. */
+        val evalVllmBaseUrl: String = "",
     )
 
     data class Auth(

@@ -54,6 +54,8 @@ class ModelVersionRepository(private val db: Firestore) {
             "servingOperation" to servingOperation,
             "servedAt" to servedAt?.toTimestamp(),
             "servingError" to servingError,
+            "evalRunId" to evalRunId,
+            "evalReport" to evalReport,
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -92,6 +94,8 @@ class ModelVersionRepository(private val db: Firestore) {
             servingOperation = getString("servingOperation"),
             servedAt = instant("servedAt"),
             servingError = getString("servingError"),
+            evalRunId = getString("evalRunId"),
+            evalReport = getString("evalReport"),
         )
 
     companion object {
