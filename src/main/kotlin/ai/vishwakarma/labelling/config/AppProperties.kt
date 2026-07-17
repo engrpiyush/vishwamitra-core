@@ -16,7 +16,6 @@ data class AppProperties(
     val tuning: Tuning = Tuning(),
     val serving: Serving = Serving(),
     val auth: Auth = Auth(),
-    val comingSoon: ComingSoon = ComingSoon(),
     val intake: Intake = Intake(),
     val stage2: Stage2 = Stage2(),
     val stage3: Stage3 = Stage3(),
@@ -76,12 +75,6 @@ data class AppProperties(
          * Google-signed identity with the right audience.
          */
         val internalInvoker: String = "",
-    )
-
-    data class ComingSoon(
-        /** Origins permitted to call the subscribe API cross-site (the page is same-origin). */
-        val corsOrigins: List<String> =
-            listOf("https://*.vishwakarma.ai", "https://vishwakarma.ai"),
     )
 
     data class Gcp(

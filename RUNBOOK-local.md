@@ -259,3 +259,21 @@ posture.
 | Graph health | `GET /api/stage3/graph/health?guards=true` |
 | Server posture (ADMIN) | `GET /api/admin/status` — per-stage dry-run legs + env wiring; the run page shows the same as a DRY-RUN/LIVE badge |
 | Neo4j Browser (graph spelunking) | `http://localhost:7474` (`neo4j` / `vishwamitra-dev`) |
+
+## 10. Prod wiring (VA-72 — where prod differs from this runbook)
+
+Prod runs the same binary with the live legs wired by Terraform
+(`vishwamitra-infra/terraform`, README → "Stage 3 graph … Option 1" + "Prod verification"):
+
+| Local (this runbook) | Prod (Cloud Run) |
+| --- | --- |
+| Firestore **emulator** (in-memory, snapshot scripts) | Real Firestore, named DB `vishwakarma-labelling` |
+| Local Docker Neo4j (`neo4j`/`vishwamitra-dev`) | **AuraDB Free** via operator secrets `NEO4J_DB_URL` / `NEO4J_DB_SECRET` (`neo4j_wire_app=true`) |
+| `GEMINI_API_KEY` exported in T3 | Secret-backed env from the `GEMINI_API_KEY` secret (+ `STAGE3_EMBEDDING_TRANSPORT=gemini-api`) |
+| dev profile simulates tunes/serving | Live legs — check `GET /api/admin/status` FIRST, same as §2 |
+| SA impersonation ADC (§1) | The service's own SA (`vishwakarma-labelling-sa`) |
+
+The posture check (`GET /api/admin/status`, ADMIN) is the same habit in both worlds: read it
+before any live-leg run — it shows what the server will ACTUALLY do. Prod smoke = Stage 1→3
+loop on a test subject to PUBLISH; all-zero corroborations/mentions on a real subject = the
+stub-run symptom (§8), check the run's paramsSnapshot.

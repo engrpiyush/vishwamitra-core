@@ -138,16 +138,13 @@ app:
     embedding-transport: ${STAGE3_EMBEDDING_TRANSPORT:vertex}
     gemini-api-key: ${GEMINI_API_KEY:}
     dry-run: ${STAGE3_DRY_RUN:false}
-  # Cross-site origins allowed to call the coming-soon subscribe API (the page is same-origin).
-  coming-soon:
-    cors-origins: ${COMING_SOON_CORS_ORIGINS:https://*.vishwakarma.ai,https://vishwakarma.ai}
   # vishwakarma.ai product face (LLD §17.1): subject hosts <handle>.{base-domain} split from the
   # operator app by host-first routing (VA-30); product mail + internal-endpoint auth (VA-41).
   product:
     base-domain: ${PRODUCT_BASE_DOMAIN:vishwakarma.ai}
     operator-domain: ${PRODUCT_OPERATOR_DOMAIN:labelling.vishwakarma.ai}
     mail-daily-cap: ${PRODUCT_MAIL_DAILY_CAP:200}
-    mail-from: ${PRODUCT_MAIL_FROM:info@vishx}
+    mail-from: ${PRODUCT_MAIL_FROM:info@vishx.com}
     # Guest tokens & wall (VA-36, LLD §6): the pepper comes from Secret Manager (§3.3); blank
     # outside dev = token generation/redemption fail closed. Dev pins a fixed value below.
     token-cap: ${PRODUCT_TOKEN_CAP:10}
@@ -222,7 +219,9 @@ server:
         # honored on every subject host, so the cookie is parent-domain in prod only (dev stays
         # host-only). Authorization is untouched — the §4.4 SUBJECT_ID-of-host check still 403s
         # a valid session on the wrong host. CSRF holds: tokens live in the (now shared) session.
-        domain: ${SESSION_COOKIE_DOMAIN:.vishwakarma.ai}
+        # NO leading dot: RFC 6265 covers subdomains without it, and Tomcat 11's cookie
+        # processor REJECTS a leading-dot Domain (500 on every session mint — found at cutover).
+        domain: ${SESSION_COOKIE_DOMAIN:vishwakarma.ai}
 
 spring:
   config:

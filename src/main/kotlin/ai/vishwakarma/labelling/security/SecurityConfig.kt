@@ -29,9 +29,6 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
 import org.springframework.security.web.authentication.HttpStatusEntryPoint
 import org.springframework.security.web.util.matcher.AnyRequestMatcher
 import org.springframework.security.web.util.matcher.RequestMatcher
-import org.springframework.web.cors.CorsConfiguration
-import org.springframework.web.cors.CorsConfigurationSource
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
  * Host-split security (VA-30, LLD §4.4): [SubjectHostFilter] runs ahead of every chain and stamps
@@ -65,24 +62,6 @@ class SecurityConfig {
         roleHierarchy: RoleHierarchy
     ): DefaultMethodSecurityExpressionHandler =
         DefaultMethodSecurityExpressionHandler().apply { setRoleHierarchy(roleHierarchy) }
-
-    /**
-     * Restricts cross-site calls to the subscribe API to vishwakarma.ai origins. The page is served
-     * same-origin so it is unaffected; this blocks other sites' scripts from posting.
-     */
-    @Bean
-    fun corsConfigurationSource(props: AppProperties): CorsConfigurationSource {
-        val config =
-            CorsConfiguration().apply {
-                allowedOriginPatterns = props.comingSoon.corsOrigins
-                allowedMethods = listOf("GET", "POST", "OPTIONS")
-                allowedHeaders = listOf("Content-Type", "Accept")
-                maxAge = 3600
-            }
-        return UrlBasedCorsConfigurationSource().apply {
-            registerCorsConfiguration("/coming-soon/**", config)
-        }
-    }
 
     /**
      * Host-first routing must run before the Spring Security proxy so the chains' securityMatcher
@@ -290,7 +269,10 @@ class SecurityConfig {
                 authorize("/favicon.svg", permitAll)
                 authorize("/error", permitAll)
                 authorize("/p", permitAll)
+                authorize("/p/construct", permitAll)
                 authorize("/p/policies/**", permitAll)
+                // Matrix-landing round: the data-collection guide is linked from the apex footer.
+                authorize("/user-guide/**", permitAll)
                 authorize(anyRequest, denyAll)
             }
             csrf { disable() }
@@ -335,10 +317,6 @@ class SecurityConfig {
                 authorize("/login/**", permitAll)
                 authorize("/", permitAll)
                 authorize("/error", permitAll)
-                // Public coming-soon page + its subscribe API.
-                authorize("/coming-soon.html", permitAll)
-                authorize("/vishwakarma-ai-landing.html", permitAll)
-                authorize("/coming-soon/**", permitAll)
                 // Public data-collection guide (static pages, read before gathering data).
                 authorize("/user-guide/**", permitAll)
                 authorize("/admin/**", hasRole("ADMIN"))
@@ -359,11 +337,6 @@ class SecurityConfig {
                 authorize("/models/**", hasRole("REVIEWER"))
                 authorize(anyRequest, authenticated)
             }
-            // Subscribe API is locked to vishwakarma.ai origins (see corsConfigurationSource).
-            cors {}
-            // The subscribe endpoint is unauthenticated JSON (no session to protect) and is already
-            // origin-restricted by CORS, so exempt it from CSRF — the page sends no CSRF token.
-            csrf { ignoringRequestMatchers("/coming-soon/**") }
             // The root "/" landing page is the OAuth entry point: unauthenticated requests redirect
             // here (instead of straight to Google); its CTA initiates /oauth2/authorization/google.
             // On success, land on /home — unless a deep-linked protected page was saved first.

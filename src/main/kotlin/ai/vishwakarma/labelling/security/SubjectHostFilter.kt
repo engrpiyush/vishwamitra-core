@@ -117,9 +117,10 @@ class SubjectHostFilter(
     }
 
     /**
-     * §8.4: the public-apex world is two pages — stamp the marker, rewrite onto the internal `/p`
-     * prefix, 404 anything that isn't the landing, a policy page or a shared static asset. No login
-     * machinery, no logout, no subject or operator route exists here.
+     * §8.4: the public-apex world — stamp the marker, rewrite onto the internal `/p` prefix, 404
+     * anything that isn't the landing (the brand page), `/construct` (the product front door), a
+     * policy page, the data-collection guide or a shared static asset. No login machinery, no
+     * logout, no subject or operator route exists here.
      */
     private fun servePublic(
         request: HttpServletRequest,
@@ -132,6 +133,8 @@ class SubjectHostFilter(
             path in PUBLIC_EXACT || PUBLIC_PREFIXES.any { path.startsWith(it) } ->
                 filterChain.doFilter(request, response)
             path == "/" -> filterChain.doFilter(rewritten(request, "/p"), response)
+            path == "/construct" ->
+                filterChain.doFilter(rewritten(request, "/p/construct"), response)
             path.startsWith("/policies/") ->
                 filterChain.doFilter(rewritten(request, "/p$path"), response)
             else -> response.sendError(HttpServletResponse.SC_NOT_FOUND)
@@ -175,8 +178,11 @@ class SubjectHostFilter(
         private val AUTH_EXACT = setOf("/auth/start", "/favicon.svg", "/error")
         private val AUTH_PREFIXES = listOf("/css/", "/js/", "/login", "/oauth2/")
 
-        /** VA-71: what exists on the apex besides the rewritten landing + policy pages. */
+        /**
+         * VA-71: what exists on the apex besides the rewritten landing + policy pages. The
+         * data-collection guide joined at the matrix-landing round — the apex footer links it.
+         */
         private val PUBLIC_EXACT = setOf("/favicon.svg", "/error")
-        private val PUBLIC_PREFIXES = listOf("/css/", "/js/", "/webjars/")
+        private val PUBLIC_PREFIXES = listOf("/css/", "/js/", "/webjars/", "/user-guide/")
     }
 }
