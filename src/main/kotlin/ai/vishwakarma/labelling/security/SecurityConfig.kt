@@ -227,8 +227,19 @@ class SecurityConfig {
                         AnyRequestMatcher.INSTANCE,
                     )
                 } else {
+                    // No OIDC client = the dev posture. With dev-bypass on, the "sign-in dance"
+                    // equivalent is the dev filter: bounce the anonymous visitor (a sticky
+                    // ?devRole=NONE session — the landing's sign-in CTA is the one flow that
+                    // gets here) back to root as the seeded subject, mirroring prod's
+                    // entry-point → authenticate → root shape. Without dev-bypass keep the 401.
                     defaultAuthenticationEntryPointFor(
-                        HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
+                        if (props.auth.devBypass) {
+                            AuthenticationEntryPoint { _, response, _ ->
+                                response.sendRedirect("/?devRole=SUBJECT")
+                            }
+                        } else {
+                            HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
+                        },
                         AnyRequestMatcher.INSTANCE,
                     )
                 }
@@ -241,7 +252,12 @@ class SecurityConfig {
                     }
                 }
             }
-            logout { logoutSuccessUrl = "/" }
+            // Logout invalidates the session — in dev that also destroys the sticky devRole, so
+            // a plain "/" would re-enter as the DEFAULT role (self view again). Landing on
+            // ?devRole=NONE re-establishes the signed-out sentinel in the fresh session, so
+            // sign-out shows the split landing exactly as prod's anonymous "/" does; the sign-in
+            // CTA then round-trips back via the /?devRole=SUBJECT entry point above.
+            logout { logoutSuccessUrl = if (props.auth.devBypass) "/?devRole=NONE" else "/" }
         }
         if (props.auth.devBypass) {
             http.addFilterBefore(devAuthFilter(props), AnonymousAuthenticationFilter::class.java)

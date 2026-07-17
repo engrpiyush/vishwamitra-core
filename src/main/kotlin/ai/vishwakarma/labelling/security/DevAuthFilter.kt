@@ -18,6 +18,12 @@ import org.springframework.web.filter.OncePerRequestFilter
  * the seeded dev subject ([DEV_SUBJECT_EMAIL], bound to [DEV_SUBJECT_ID]); any operator role
  * becomes the configured dev user at that role. The choice is remembered in the HTTP session (the
  * filter re-authenticates every request), so one `?devRole=` sticks until the next one.
+ *
+ * `?devRole=NONE` is the signed-out escape (the VA-43 landing walk): the filter injects nothing,
+ * Spring's anonymous filter takes over downstream, and the subject root falls through the §8.3
+ * decision tree to the split landing — without it, every dev identity resolves to "self" on the dev
+ * host and the landing (plus the guest code walk that starts there) is unreachable. Sticky like any
+ * other choice; pass a real `?devRole=` to sign back in.
  */
 class DevAuthFilter(
     private val email: String,
@@ -29,12 +35,22 @@ class DevAuthFilter(
         response: HttpServletResponse,
         filterChain: FilterChain,
     ) {
-        Role.fromOrNull(request.getParameter("devRole"))?.let {
-            request.session.setAttribute(SESSION_ROLE_KEY, it.name)
+        request.getParameter("devRole")?.let { raw ->
+            when {
+                raw.equals(NONE, ignoreCase = true) ->
+                    request.session.setAttribute(SESSION_ROLE_KEY, NONE)
+                Role.fromOrNull(raw) != null ->
+                    request.session.setAttribute(SESSION_ROLE_KEY, Role.fromOrNull(raw)!!.name)
+                else -> Unit // Unknown values keep the current choice, as before.
+            }
         }
-        val effective =
-            Role.fromOrNull(request.getSession(false)?.getAttribute(SESSION_ROLE_KEY) as? String)
-                ?: role
+        val stored = request.getSession(false)?.getAttribute(SESSION_ROLE_KEY) as? String
+        if (stored == NONE) {
+            // Signed-out visitor: leave the context untouched (anonymous downstream).
+            filterChain.doFilter(request, response)
+            return
+        }
+        val effective = Role.fromOrNull(stored) ?: role
         val context = SecurityContextHolder.getContext()
         val existing = context.authentication
         if (existing == null || !existing.isAuthenticated) {
@@ -61,6 +77,9 @@ class DevAuthFilter(
 
     companion object {
         private const val SESSION_ROLE_KEY = "devRole"
+
+        /** The `?devRole=NONE` sentinel — not a [Role]; stored verbatim in the session. */
+        private const val NONE = "NONE"
 
         /** The seeded dev subject identity (DataSeeder creates both rows in dev). */
         const val DEV_SUBJECT_EMAIL = "dev-subject@example.com"
