@@ -8,6 +8,7 @@ import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.service.IntakeService
+import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.web.SubjectTraining.TrainingPhase
 import jakarta.servlet.http.HttpServletRequest
@@ -38,6 +39,7 @@ class SubjectTrainingController(
     private val intake: IntakeService,
     private val stage2: Stage2Service,
     private val advocates: AdvocateRepository,
+    private val questions: QuestionService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -66,6 +68,8 @@ class SubjectTrainingController(
             "needsYou",
             jobs.count { it.status == Stage2JobStatus.AWAITING_SPEAKER_SELECTION },
         )
+        // F11 (VA-35): the S2 inbox badge — shown whenever OPEN questions exist.
+        model.addAttribute("openQuestions", questions.openCount(ctx.subjectId))
         // Post-submit S2 (read-only): the uploads list + tool links (§8.1), and the §10
         // evidence-strength card (VA-44) — scoring only means anything once training is in.
         if (phase == TrainingPhase.SUBMITTED) {

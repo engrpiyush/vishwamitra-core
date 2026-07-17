@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.Stage2JobStatus
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.ClaimReviewService
 import ai.vishwakarma.labelling.service.IntakeService
+import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
 import org.springframework.security.access.prepost.PreAuthorize
@@ -36,6 +37,7 @@ class Stage2Controller(
     private val intake: IntakeService,
     private val stage2: Stage2Service,
     private val reviewService: ClaimReviewService,
+    private val questions: QuestionService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -256,6 +258,8 @@ class Stage2Controller(
                     "redirect:/intake/$id/stage2"
                 },
                 {
+                    // F11 (§9.2): questions generate at review lock, whichever door locked it.
+                    questions.generateForReview(id)
                     ra.addFlashAttribute("ok", "Claim review started — claims are now locked")
                     "redirect:/intake/$id/review/decide"
                 },

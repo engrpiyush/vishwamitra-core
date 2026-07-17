@@ -10,6 +10,15 @@
             <h1>Your training space</h1>
             <div th:replace="~{fragments/common :: flash}"></div>
 
+            <!-- F11 (VA-35): inbox badge — whenever open questions exist, whatever the phase. -->
+            <div class="card" th:if="${openQuestions > 0}">
+                <p class="panel-lede">
+                    <span class="badge badge--info" th:text="${openQuestions}">2</span>
+                    <strong th:text="${openQuestions == 1 ? ' question' : ' questions'}"> questions</strong>
+                    for you — a chance to add your side of the story.</p>
+                <a class="btn btn--secondary" th:href="@{/questions}">See your questions</a>
+            </div>
+
             <!-- UPLOAD: collecting evidence. -->
             <div th:if="${phase == 'UPLOAD'}">
                 <p class="lede">Teach your advocate who you are. Share recordings, documents and

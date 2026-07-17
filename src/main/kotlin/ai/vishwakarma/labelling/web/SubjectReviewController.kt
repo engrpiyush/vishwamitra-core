@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.service.ClaimReviewService
 import ai.vishwakarma.labelling.service.IntakeService
+import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.StageConfigService
 import jakarta.servlet.http.HttpServletRequest
@@ -41,6 +42,7 @@ class SubjectReviewController(
     private val stage2: Stage2Service,
     private val claims: ClaimRepository,
     private val config: StageConfigService,
+    private val questions: QuestionService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -62,7 +64,11 @@ class SubjectReviewController(
                     ra.addFlashAttribute("error", SubjectTrainingController.GENERIC_SORRY)
                     "redirect:/training"
                 },
-                { "redirect:/training/review/decide" },
+                {
+                    // F11 (§9.2): questions generate the moment claims lock — never blocking.
+                    questions.generateForReview(ctx.subjectId)
+                    "redirect:/training/review/decide"
+                },
             )
     }
 
@@ -104,6 +110,9 @@ class SubjectReviewController(
         val chipClass: String,
         val justification: String?,
         val rejected: Boolean,
+        /** The row's OPEN F11 question, when one exists — it replaces the plain framing (§9.3). */
+        val questionId: String? = null,
+        val questionText: String? = null,
     )
 
     @GetMapping("/decide")
@@ -115,6 +124,8 @@ class SubjectReviewController(
         val threshold = config.stage2().favorabilityThreshold
         val partition = reviewService.partition(ctx.subjectId)
         val titles = intake.listAssets(ctx.subjectId).associate { it.id to it.title }
+        // F11 (§9.3): an unfavorable claim's OPEN question frames its row — one store, two doors.
+        val openQuestions = questions.openByClaim(ctx.subjectId)
         val rows =
             stage2
                 .listClaims(ctx.subjectId)
@@ -146,6 +157,8 @@ class SubjectReviewController(
                             },
                         justification = review?.justification,
                         rejected = decision == ReviewDecision.CONTESTED,
+                        questionId = openQuestions[c.id]?.id,
+                        questionText = openQuestions[c.id]?.questionText,
                     )
                 }
         model.addAttribute("pageTitle", "Review — ${ctx.displayName}")

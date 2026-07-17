@@ -104,8 +104,21 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
     /** True when [id] is a reserved Stage 3 row the admin page may edit alongside content types. */
     fun isStage3Key(id: String): Boolean = id in STAGE3_KEYS
 
-    /** True when [id] is the reserved product row (the §7.5 advocate chat system prompt). */
-    fun isProductKey(id: String): Boolean = id == ADVOCATE_SYSTEM_KEY
+    /** True when [id] is a reserved product row (advocate chat system, F11 generator). */
+    fun isProductKey(id: String): Boolean = id in PRODUCT_KEYS
+
+    /**
+     * The F11 generator row for the Stage 2 Prompts tab (VA-34 — the review flow it frames lives
+     * there; `advocate_system` stays POST-only as VA-42 built it).
+     */
+    fun listF11(): ReservedPromptRow {
+        val existing = prompts.findById(F11_QUESTION_GENERATOR_KEY)
+        return ReservedPromptRow(
+            F11_QUESTION_GENERATOR_KEY,
+            existing,
+            ExtractionPrompt.builtinForKey(F11_QUESTION_GENERATOR_KEY),
+        )
+    }
 
     /** True when [id] is a reserved Stage 4 row (presets incl. admin-added, generators, judge). */
     fun isStage4Key(id: String): Boolean =
@@ -213,6 +226,15 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
          * resolved fresh per send by `AdvocateChatService` ({{subject}} substituted at call time).
          */
         const val ADVOCATE_SYSTEM_KEY = "advocate_system"
+
+        /**
+         * The F11 clarification-question generator row (VA-34, product LLD §9.2) — resolved fresh
+         * per generation batch by `QuestionService`.
+         */
+        const val F11_QUESTION_GENERATOR_KEY = "f11_question_generator"
+
+        /** The reserved product rows the admin prompt POSTs accept (§12.1 idiom). */
+        val PRODUCT_KEYS = listOf(ADVOCATE_SYSTEM_KEY, F11_QUESTION_GENERATOR_KEY)
 
         /** The reserved §11 judge-rubric row (VA-57) — resolved by [GeminiStage4Judge]. */
         const val STAGE4_JUDGE_KEY = "stage4:judge"

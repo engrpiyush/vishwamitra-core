@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!-- VA-35: S7 "Questions for you" inbox (product LLD §9.3) — an invitation, not an obligation. -->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Questions for you</h1>
+            <p class="lede">While going through what you shared, a few things looked worth a word
+                from you. Answer in your own voice — it rides along with your story — or skip
+                anything you'd rather leave.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <div class="card" th:each="q : ${open}" th:id="|q-${q.id}|">
+                <p class="panel-lede" th:text="${q.text}">question text</p>
+                <form method="post" class="form" style="max-width:none;"
+                      th:action="@{/questions/{id}/answer(id=${q.id})}">
+                    <label>Your answer
+                        <textarea name="answer" rows="3"
+                                  placeholder="Whatever context you'd like carried…"></textarea>
+                    </label>
+                    <div class="row-actions">
+                        <button type="submit" class="btn btn--primary btn--sm">Answer</button>
+                    </div>
+                </form>
+                <form method="post" class="inline-form"
+                      th:action="@{/questions/{id}/skip(id=${q.id})}">
+                    <button type="submit" class="btn btn--secondary btn--sm">Skip for now</button>
+                </form>
+            </div>
+
+            <p class="empty-state" th:if="${open.isEmpty()}">No questions right now — if anything
+                comes up, it'll appear here.</p>
+
+            <details th:if="${!history.isEmpty()}" style="margin-top:1.4rem;">
+                <summary>Earlier questions</summary>
+                <div class="card" th:each="q : ${history}">
+                    <p class="panel-lede" th:text="${q.text}">question text</p>
+                    <span class="badge"
+                          th:classappend="${q.answer != null ? 'badge--success' : 'badge--muted'}"
+                          th:text="${q.statusLabel}">Answered</span>
+                    <p class="muted" th:if="${q.answer != null}"
+                       th:text="|Your answer: “${q.answer}”|">answer</p>
+                    <form method="post" class="inline-form" th:if="${q.reopenable}"
+                          th:action="@{/questions/{id}/reopen(id=${q.id})}">
+                        <button type="submit" class="btn btn--secondary btn--sm">Bring it back</button>
+                    </form>
+                </div>
+            </details>
+        </section>
+    </main>
+    <footer class="landing-foot">
+        <a th:href="@{/}">Home</a> ·
+        <a th:href="@{/training}">Training space</a> ·
+        <a th:href="@{/terms}">Terms &amp; policies</a>
+    </footer>
+</div>
+
+</body>
+</html>

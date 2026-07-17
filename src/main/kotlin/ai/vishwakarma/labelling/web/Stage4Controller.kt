@@ -126,9 +126,23 @@ class Stage4Controller(
                 ),
             )
         }
+        // VA-88: the coverage report frozen at PLAN — categories hit/missed vs template targets.
+        val coverage = run?.coverageReport?.let { parseCoverage(it) }.orEmpty()
+        model.addAttribute("coverage", coverage)
+        model.addAttribute(
+            "coverageMissed",
+            coverage.count {
+                ((it["planned"] as? Number)?.toInt() ?: 0) <
+                    ((it["target"] as? Number)?.toInt() ?: 0)
+            },
+        )
         model.addAttribute("exportRecord", run?.exportRecordId?.let { exports.findById(it) })
         return "intake/stage4"
     }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseCoverage(json: String): List<Map<String, Any?>> =
+        runCatching { Json.parse(json) as? List<Map<String, Any?>> }.getOrNull().orEmpty()
 
     @PostMapping("/{id}/stage4/run")
     fun run(

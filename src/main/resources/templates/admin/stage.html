@@ -110,6 +110,40 @@
                     </form>
                 </div>
             </section>
+
+            <!-- F11 clarification-question generator (VA-34, product LLD §9.2). -->
+            <section th:if="${f11Row != null}">
+                <h2>Clarification questions (F11)</h2>
+                <p class="muted">Turns unfavorable-claim findings into respectful questions to the
+                    subject when their review locks. This row owns task and tone; the findings block
+                    and the output schema are fixed in code.</p>
+                <div class="provider-card">
+                    <form th:id="'reset-' + ${f11Row.key}" method="post"
+                          th:action="@{'/admin/extraction-prompts/' + ${f11Row.key} + '/reset'}"
+                          data-confirm="This deletes the saved override; the code default applies from the next review."
+                          data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                        <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    </form>
+                    <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${f11Row.key}}">
+                        <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                        <div class="form-row">
+                            <span class="provider-name" th:text="${f11Row.key}">f11_question_generator</span>
+                            <span class="muted" th:if="${f11Row.prompt == null}">code default</span>
+                            <span class="muted" th:if="${f11Row.prompt != null}"
+                                  th:text="'v' + ${f11Row.prompt.version} + ' · ' + ${f11Row.prompt.updatedBy}">v1 · admin</span>
+                        </div>
+                        <div class="prompt-editor">
+                            <textarea name="instructions" rows="5"
+                                      th:text="${f11Row.prompt != null ? f11Row.prompt.instructions : f11Row.builtin}"></textarea>
+                            <div class="prompt-actions">
+                                <button type="submit">Save</button>
+                                <button type="submit" class="btn--danger"
+                                        th:attr="form='reset-' + ${f11Row.key}">Reset to default</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
         </th:block>
 
         <!-- Stage 3: the reserved graph-prompt rows -->

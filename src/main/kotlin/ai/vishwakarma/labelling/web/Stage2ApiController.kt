@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.SpeakerAssignment
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.ClaimReviewService
 import ai.vishwakarma.labelling.service.DomainError
+import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
 import arrow.core.Either
 import org.springframework.http.HttpStatus
@@ -39,6 +40,7 @@ data class PiiRequest(val choice: String)
 class Stage2ApiController(
     private val stage2: Stage2Service,
     private val reviewService: ClaimReviewService,
+    private val questions: QuestionService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -96,7 +98,14 @@ class Stage2ApiController(
     /** Start the review flow: freezes the subject's claims (no more re-extraction). */
     @PostMapping("/subjects/{id}/review/start")
     fun startReview(@PathVariable id: String): ResponseEntity<Any> =
-        reviewService.startReview(id).toResponse()
+        reviewService
+            .startReview(id)
+            // F11 (§9.2): questions generate at review lock, whichever door locked it.
+            .map { manifest ->
+                questions.generateForReview(id)
+                manifest
+            }
+            .toResponse()
 
     /** Record a decision on one claim (approve / sidecar / contest). */
     @PostMapping("/claims/{claimId}/review")

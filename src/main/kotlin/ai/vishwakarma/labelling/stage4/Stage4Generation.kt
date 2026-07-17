@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage4
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PersonaStance
 import ai.vishwakarma.labelling.domain.ResolvedPersona
 import ai.vishwakarma.labelling.domain.Turn
@@ -10,6 +11,8 @@ import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.DraftPrompts
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
+import java.security.MessageDigest
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -59,6 +62,48 @@ object Stage4Generation {
      * bump when [renderMeta]'s output shape changes so stale meta examples regenerate (§9.3 cache).
      */
     const val META_TEMPLATE_STAMP = "meta-template:1"
+
+    /**
+     * The instruction block a NotebookTemplate contributes to the generation prompt (VA-88): the
+     * template's own prompt scaffold plus its format constraints. Rendered + hashed like a prompt
+     * row, so a template edit re-drafts exactly the affected plans (the §9.3 cache contract) — see
+     * [templateRow].
+     */
+    fun templateInstructions(template: NotebookTemplate, subjectName: String): String =
+        buildString {
+                appendLine(
+                    "Fill this conversation format — template \"${template.title}\" " +
+                        "(category ${template.category}). The format constrains the shape of " +
+                        "the exchange; the voicing constraints below still own what may be said."
+                )
+                if (template.promptTemplate.isNotBlank()) {
+                    appendLine(template.promptTemplate.replace("{{subject}}", subjectName))
+                }
+                val spec = template.formatSpec
+                if (spec.turnShape.isNotBlank()) appendLine("- Turn shape: ${spec.turnShape}")
+                if (spec.intent.isNotBlank()) appendLine("- Intent: ${spec.intent}")
+                if (spec.personaLens.isNotBlank()) {
+                    appendLine("- The guest speaks as: ${spec.personaLens}")
+                }
+                spec.expectedBehaviours.forEach { appendLine("- Expected behaviour: $it") }
+            }
+            .trim()
+
+    /**
+     * The template's block dressed as a resolved prompt row (instructions/version/hash), so the
+     * GENERATE cache and stamps treat a template edit exactly like a prompt-row bump.
+     */
+    fun templateRow(template: NotebookTemplate, subjectName: String): ResolvedExtractionPrompt {
+        val instructions = templateInstructions(template, subjectName)
+        return ResolvedExtractionPrompt(instructions, template.version, shortHash(instructions))
+    }
+
+    /** Short SHA-256 (12 hex) — the ExtractionPrompt idiom's hash, reproduced for templates. */
+    fun shortHash(text: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(12)
 
     /** The §7 step-0 fixed card — non-negotiable lines every generation prompt carries. */
     private val FIXED_CARD =
@@ -121,7 +166,16 @@ object Stage4Generation {
         if (request.evidence.isEmpty()) appendLine("- none — this is a no-evidence probe")
         else request.evidence.forEach { appendLine("- $it") }
         appendLine()
-        appendLine("Guest question (the conversation's first turn, verbatim):")
+        // Template-shaped plans (VA-88) let the drafter voice the opening naturally inside the
+        // template's format; everything else pins the planned question verbatim.
+        if (request.plan.templateId != null) {
+            appendLine(
+                "Planned guest question (open with a natural question in its spirit — keep " +
+                    "the substance):"
+            )
+        } else {
+            appendLine("Guest question (the conversation's first turn, verbatim):")
+        }
         appendLine(request.question)
         appendLine()
         append(TURN_SCHEMA)
@@ -235,10 +289,13 @@ class DryRunStage4Drafter : Stage4ConversationDrafter {
     override fun draft(request: Stage4GenerationRequest): List<Turn> {
         val evidenceNote =
             request.evidence.firstOrNull()?.let { " The record shows: ${it.take(120)}" } ?: ""
+        // Template-planned conversations carry their template id (VA-88) so a dev walk can see
+        // template-driven generation working offline at a glance.
+        val template = request.plan.templateId?.let { " · tpl $it" } ?: ""
         val reply =
-            "[dry-run ${request.plan.category.name.lowercase()} · row ${request.plan.rowId} · " +
-                "${request.plan.hedgeLevel.name.lowercase()}] Speaking as " +
-                "${request.persona.advocateName}, ${request.plan.voice.lowercase()}." +
+            "[dry-run ${request.plan.category.name.lowercase()}$template · row " +
+                "${request.plan.rowId} · ${request.plan.hedgeLevel.name.lowercase()}] " +
+                "Speaking as ${request.persona.advocateName}, ${request.plan.voice.lowercase()}." +
                 evidenceNote
         val json =
             Json.writeLine(

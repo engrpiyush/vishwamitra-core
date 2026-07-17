@@ -247,6 +247,17 @@ class Stage3Service(
     fun latestForSubject(subjectId: String): Stage3Run? =
         runs.findBySubject(subjectId).firstOrNull()
 
+    /**
+     * F11 v1.1 seam (product LLD §9.6, VA-34): a CONTRADICTION answer will poke the §11.9–11.10
+     * incremental re-judge with the answer as added context (VA-18). Deliberately a no-op in v1 —
+     * the schema (`subject_questions.edgeId`) and this seam ship now so v1.1 is a generator query
+     * plus one wire, no migration.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun requestReJudge(edgeId: String, context: String) {
+        log.info("requestReJudge({}) is a v1 no-op — the v1.1 wire lands with VA-18", edgeId)
+    }
+
     // ---- phases -----------------------------------------------------------------
 
     /**

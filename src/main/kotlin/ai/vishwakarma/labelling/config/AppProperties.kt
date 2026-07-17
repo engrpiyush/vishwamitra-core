@@ -54,6 +54,11 @@ data class AppProperties(
         /** Minimum gap between sends within one session (LLD §7.5 pace guard; 429 under it). */
         val chatMinInterval: Duration = Duration.ofSeconds(3),
         /**
+         * F11 (LLD §9.2): claims whose `favorability` sits below this draw one clarification
+         * question when review locks. The favorability marker is the §12.6 extractor's.
+         */
+        val f11Threshold: Double = 0.4,
+        /**
          * App-level daily ceiling across ALL outbound product mail (LLD §11.1). At the ceiling
          * sends are skipped loudly (WARN + per-feature mark) — email never blocks a flow.
          */

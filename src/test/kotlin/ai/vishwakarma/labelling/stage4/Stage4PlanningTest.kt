@@ -3,6 +3,8 @@ package ai.vishwakarma.labelling.stage4
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.FormatSpec
+import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PersonaDefaults
 import ai.vishwakarma.labelling.domain.PublishedAttestor
 import ai.vishwakarma.labelling.domain.PublishedFactStamp
@@ -95,6 +97,7 @@ class Stage4PlanningTest {
         mix: AppProperties.Stage4.Mix = AppProperties.Stage4.Mix(),
         cap: Int = 6,
         threshold: Double = 0.85,
+        templates: List<NotebookTemplate> = emptyList(),
     ) =
         planning.plan(
             subjectName = "Asha",
@@ -105,6 +108,22 @@ class Stage4PlanningTest {
             mix = mix,
             maxConversationsPerClaim = cap,
             dedupeJaccardThreshold = threshold,
+            templates = templates,
+        )
+
+    private fun template(
+        id: String,
+        category: String,
+        title: String = id,
+        coverageTarget: Int = 1,
+        personaLens: String = "",
+    ) =
+        NotebookTemplate(
+            id = id,
+            category = category,
+            title = title,
+            formatSpec = FormatSpec(personaLens = personaLens),
+            coverageTarget = coverageTarget,
         )
 
     // ---- mix weights (QA-3, QD-5) -----------------------------------------------------------
@@ -333,5 +352,89 @@ class Stage4PlanningTest {
         assertTrue(situational.isNotEmpty())
         assertTrue(situational.none { it.question.contains("{{adjacent}}") })
         assertTrue(situational.none { it.question.contains("\"\"") })
+    }
+
+    // ---- VA-88: template-driven planning -----------------------------------------------------
+
+    @Test
+    fun `a non-empty library replaces the trio with stamped template units, banks exempt`() {
+        val eligible = (1..3).map { claim("c$it") }
+        val facts =
+            listOf(
+                fact("f1", members = listOf("c1", "c2"), label = "payments migration"),
+                fact("f2", members = listOf("c3"), label = "B.E. in CS", belief = 0.8),
+            )
+        val templates =
+            listOf(
+                template("tpl-a", category = "career-timeline", personaLens = "a recruiter"),
+                template("tpl-b", category = "peer", coverageTarget = 2),
+            )
+
+        val outcome = plan(eligible, facts, mix = mix(qa = 1.0), templates = templates)
+
+        val templated = outcome.planned.filter { it.plan.templateId != null }
+        // tpl-a: 1 slot; tpl-b: 2 slots over 2 anchors — 3 units, no dedupe casualties.
+        assertEquals(3, templated.size)
+        // Trio replaced: every fact-driven plan is template-stamped; banks ride template-less.
+        assertTrue(
+            outcome.planned
+                .filter { it.plan.templateId == null }
+                .all {
+                    it.plan.category == Stage4Category.NEGATIVE ||
+                        it.plan.category == Stage4Category.META
+                }
+        )
+        // The multi-member anchor governs as a fact group; the single-member one as a claim.
+        assertTrue(templated.any { it.plan.category == Stage4Category.MULTI_CLAIM })
+        assertTrue(templated.any { it.plan.category == Stage4Category.QA })
+        // The persona lens reaches the planned question; the category stamp rides the plan.
+        assertTrue(templated.any { it.question.startsWith("As a recruiter: ") })
+        assertEquals(
+            setOf("career-timeline", "peer"),
+            templated.mapNotNull { it.plan.templateCategory }.toSet(),
+        )
+    }
+
+    @Test
+    fun `coverage report counts survivors per category against targets`() {
+        val eligible = (1..2).map { claim("c$it") }
+        // ONE evidenced anchor: tpl-b's second slot duplicates the first and dedupes away.
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates =
+            listOf(
+                template("tpl-a", category = "career-timeline"),
+                template("tpl-b", category = "peer", coverageTarget = 2),
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val byCategory = outcome.coverage.associateBy { it.category }
+        assertEquals(CategoryCoverage("career-timeline", 1, 1), byCategory["career-timeline"])
+        assertEquals(CategoryCoverage("peer", 2, 1), byCategory["peer"])
+    }
+
+    @Test
+    fun `no evidenced facts plans no template units — every category reports missed`() {
+        val eligible = listOf(claim("c1"))
+        val templates = listOf(template("tpl-a", category = "career-timeline", coverageTarget = 2))
+
+        val outcome = plan(eligible, facts = emptyList(), templates = templates)
+
+        assertTrue(outcome.planned.none { it.plan.templateId != null })
+        assertEquals(listOf(CategoryCoverage("career-timeline", 2, 0)), outcome.coverage)
+        // The trio stays replaced even with nothing to fill templates from — no blind fallback.
+        assertTrue(outcome.planned.none { it.plan.category == Stage4Category.QA })
+    }
+
+    @Test
+    fun `template plan ids are stable across re-runs`() {
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2")))
+        val templates = listOf(template("tpl-a", category = "career-timeline"))
+
+        val first = plan(eligible, facts, templates = templates).planned.map { it.plan.planId }
+        val second = plan(eligible, facts, templates = templates).planned.map { it.plan.planId }
+
+        assertEquals(first, second)
     }
 }

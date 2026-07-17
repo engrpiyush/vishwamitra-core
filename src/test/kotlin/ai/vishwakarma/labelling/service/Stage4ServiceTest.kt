@@ -9,9 +9,12 @@ import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExportRecord
 import ai.vishwakarma.labelling.domain.ExtractionPrompt
+import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.JudgeAxis
 import ai.vishwakarma.labelling.domain.JudgeVerdict
+import ai.vishwakarma.labelling.domain.NotebookTemplate
+import ai.vishwakarma.labelling.domain.NotebookTemplateTaxonomy
 import ai.vishwakarma.labelling.domain.PersonaDefaults
 import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.ReviewDecision
@@ -25,6 +28,8 @@ import ai.vishwakarma.labelling.domain.Stage4RunStatus
 import ai.vishwakarma.labelling.domain.Stage4Stamp
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectPersona
+import ai.vishwakarma.labelling.domain.TemplateCategory
+import ai.vishwakarma.labelling.domain.TemplateCategoryGroup
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.gcs.Exporter
@@ -36,6 +41,8 @@ import ai.vishwakarma.labelling.persistence.DpoPairRepository
 import ai.vishwakarma.labelling.persistence.ExportRepository
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
+import ai.vishwakarma.labelling.persistence.NotebookTemplateRepository
+import ai.vishwakarma.labelling.persistence.NotebookTemplateTaxonomyRepository
 import ai.vishwakarma.labelling.persistence.SftExampleRepository
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
 import ai.vishwakarma.labelling.persistence.Stage4JudgmentRepository
@@ -57,6 +64,7 @@ import ai.vishwakarma.labelling.serialization.ToolCallMapper
 import ai.vishwakarma.labelling.stage4.AxisVote
 import ai.vishwakarma.labelling.stage4.HedgePhrase
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
+import ai.vishwakarma.labelling.stage4.Stage4Generation
 import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
@@ -166,6 +174,45 @@ private class FakeS4PromptRepo : ExtractionPromptRepository(mock(Firestore::clas
     override fun findById(id: String): ExtractionPrompt? = store[id]
 
     override fun findAll(): List<ExtractionPrompt> = store.values.toList()
+}
+
+private class FakeS4TemplateRepo : NotebookTemplateRepository(mock(Firestore::class.java)) {
+    val store = mutableMapOf<String, NotebookTemplate>()
+    private var seq = 0
+
+    override fun newId(): String = "tpl-${++seq}"
+
+    override fun findById(id: String): NotebookTemplate? = store[id]
+
+    override fun findAll(): List<NotebookTemplate> = store.values.toList()
+
+    override fun save(template: NotebookTemplate) {
+        store[template.id] = template
+    }
+
+    override fun delete(id: String) {
+        store.remove(id)
+    }
+}
+
+private class FakeS4TaxonomyRepo : NotebookTemplateTaxonomyRepository(mock(Firestore::class.java)) {
+    var doc =
+        NotebookTemplateTaxonomy(
+            listOf(
+                TemplateCategory(
+                    "career-timeline",
+                    "Career Timeline",
+                    TemplateCategoryGroup.FOUNDATIONAL
+                ),
+                TemplateCategory("peer", "Peer", TemplateCategoryGroup.PERSPECTIVES),
+            )
+        )
+
+    override fun get(): NotebookTemplateTaxonomy = doc
+
+    override fun save(taxonomy: NotebookTemplateTaxonomy) {
+        doc = taxonomy
+    }
 }
 
 /** Recording drafter double — every LLM-bound plan lands in [requests]; META must never. */
@@ -326,6 +373,8 @@ class Stage4ServiceTest {
     private val judgments = FakeS4JudgmentRepo()
     private val exportRepo = FakeS4ExportRepo()
     private val exporter = FakeS4Exporter()
+    private val templateRepo = FakeS4TemplateRepo()
+    private val taxonomyRepo = FakeS4TaxonomyRepo()
 
     /** The hash SELECT freezes for a subject with nothing stored (defaults-only persona). */
     private val defaultPersonaHash =
@@ -386,6 +435,7 @@ class Stage4ServiceTest {
             plans = plans,
             sftExamples = sfts,
             dpoPairs = dpos,
+            notebookTemplates = NotebookTemplateService(templateRepo, taxonomyRepo),
             config = liveConfig(props),
         )
     }
@@ -797,6 +847,113 @@ class Stage4ServiceTest {
         pollUntil(svc, second.id, Stage4RunStatus.REVIEW_WAIT)
 
         assertEquals(planIds, plans.store.keys.toSet())
+    }
+
+    // ---- VA-88: template-driven planning ------------------------------------------
+
+    @Test
+    fun `a template library drives PLAN - stamps, coverage report, template-hash generation`() {
+        seedPublished()
+        templateRepo.save(
+            NotebookTemplate(
+                id = "tpl-ct",
+                category = "career-timeline",
+                title = "Career Timeline",
+                formatSpec =
+                    FormatSpec(
+                        turnShape = "4-6 turn probing exchange",
+                        intent = "trace the professional arc",
+                        personaLens = "a recruiter",
+                    ),
+                promptTemplate = "Walk the guest through {{subject}}'s timeline.",
+                coverageTarget = 1,
+            )
+        )
+        // Two slots but only one evidenced anchor — the duplicate dedupes, so 'peer' is MISSED.
+        templateRepo.save(
+            NotebookTemplate(id = "tpl-peer", category = "peer", title = "Peer", coverageTarget = 2)
+        )
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        svc.poll(run.id).expectRight() // SELECT
+        val afterPlan = svc.poll(run.id).expectRight() // PLAN
+
+        // The blind trio is replaced: every fact-driven plan carries its template; the probe
+        // banks (behavioral curriculum) ride along template-less.
+        val templatePlans = plans.store.values.filter { it.plan.templateId != null }
+        assertTrue(templatePlans.isNotEmpty())
+        assertTrue(
+            plans.store.values
+                .filter { it.plan.templateId == null }
+                .all {
+                    it.plan.category == Stage4Category.NEGATIVE ||
+                        it.plan.category == Stage4Category.META
+                }
+        )
+        assertEquals(
+            templatePlans.size.toLong(),
+            afterPlan.counters[Stage4Counters.PLANS_FROM_TEMPLATES],
+        )
+
+        // The coverage report freezes on the run: 'career-timeline' hit, 'peer' missed.
+        @Suppress("UNCHECKED_CAST")
+        val coverage =
+            Json.parse(assertNotNull(afterPlan.coverageReport)) as List<Map<String, Any?>>
+        val byCategory = coverage.associateBy { it["category"] }
+        assertEquals(setOf("career-timeline", "peer"), byCategory.keys)
+        assertEquals(1, (byCategory["career-timeline"]?.get("planned") as Number).toInt())
+        assertEquals(1, (byCategory["peer"]?.get("planned") as Number).toInt())
+        assertEquals(2, (byCategory["peer"]?.get("target") as Number).toInt())
+
+        // GENERATE: template examples stamp templateId/templateCategory and cache-key on the
+        // template block's hash (a template edit re-drafts exactly its plans).
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+        val templated = sfts.store.values.filter { it.stamp?.templateId != null }
+        assertEquals(templatePlans.size, templated.size)
+        val expectHash =
+            Stage4Generation.templateRow(templateRepo.store.getValue("tpl-ct"), "Asha").hash
+        assertTrue(
+            templated.any {
+                it.stamp?.generatorPromptHash == expectHash &&
+                    it.stamp?.templateCategory == "career-timeline" &&
+                    it.tags.labels.contains("tpl:career-timeline")
+            }
+        )
+    }
+
+    @Test
+    fun `a template edit re-drafts exactly the affected plans (the prompt-bump semantics)`() {
+        seedPublished()
+        templateRepo.save(
+            NotebookTemplate(
+                id = "tpl-ct",
+                category = "career-timeline",
+                title = "Career Timeline",
+                coverageTarget = 1,
+            )
+        )
+        val svc = service()
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+        val before = drafter.requests.size
+
+        // Unchanged re-run: all cache hits, no re-draft.
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+        val second = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, second.id, Stage4RunStatus.JUDGING)
+        assertEquals(before, drafter.requests.size)
+
+        // Template edit: exactly the template's plan re-drafts on the next run.
+        templateRepo.save(
+            templateRepo.store.getValue("tpl-ct").let {
+                it.copy(promptTemplate = "Open on the earliest role.", version = it.version + 1)
+            }
+        )
+        pollUntil(svc, second.id, Stage4RunStatus.REVIEW_WAIT)
+        val third = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, third.id, Stage4RunStatus.JUDGING)
+        assertEquals(before + 1, drafter.requests.size)
+        assertTrue(drafter.requests.last().promptInstructions.contains("Open on the earliest role"))
     }
 
     @Test

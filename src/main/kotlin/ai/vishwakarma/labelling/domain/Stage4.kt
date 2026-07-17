@@ -63,6 +63,8 @@ object Stage4Counters {
     const val PLANS_DEDUPED = "plansDeduped"
     /** PLAN: units dropped by the per-claim fan-out cap (§9.2). */
     const val PLANS_CAPPED = "plansCapped"
+    /** PLAN: units planned from the NotebookTemplate library (VA-88; 0 = the legacy trio ran). */
+    const val PLANS_FROM_TEMPLATES = "plansFromTemplates"
     /** GENERATE: DRAFT examples written (LLM or template-rendered). */
     const val GENERATED = "generated"
     /** GENERATE: plans served from the generation cache without an LLM call (§9.3). */
@@ -99,6 +101,12 @@ data class Stage4Run(
     val cursors: Map<String, String> = emptyMap(),
     /** Verbatim provider error on FAILED (terminal-state failure idiom). */
     val error: String? = null,
+    /**
+     * The VA-88 coverage report, frozen at PLAN: JSON array of `{category, target, planned}` per
+     * template category — hit/missed reads straight off `planned < target`. Null = pre-VA-88 run or
+     * a run planned by the legacy (template-less) trio.
+     */
+    val coverageReport: String? = null,
     /** The `exports` doc that completed this run (REVIEW_WAIT → DONE journal, §9.4/VA-58). */
     val exportRecordId: String? = null,
     val createdBy: String? = null,
@@ -128,6 +136,10 @@ data class Stage4Stamp(
     val personaHash: String? = null,
     /** Short hash of the exact generator prompt row used (ExtractionPrompt idiom). */
     val generatorPromptHash: String? = null,
+    /** The NotebookTemplate that shaped this conversation (VA-88); null = legacy planning. */
+    val templateId: String? = null,
+    /** The template's evaluation-trait category slug — the VA-60 eval axis this example probes. */
+    val templateCategory: String? = null,
 )
 
 /**
@@ -186,6 +198,14 @@ data class VoicingPlan(
     val category: Stage4Category,
     /** False only for row 5 (unexplained CONFIRMED conflict): DPO rejected-side candidate. */
     val sftEligible: Boolean = true,
+    /**
+     * The NotebookTemplate behind this plan (VA-88): the template constrains form at GENERATE —
+     * this plan's constraints still own what may be said (the deterministic-planner contract). Null
+     * = a legacy (trio/probe-bank) plan.
+     */
+    val templateId: String? = null,
+    /** The template's evaluation-trait category slug at plan time. */
+    val templateCategory: String? = null,
 )
 
 /**

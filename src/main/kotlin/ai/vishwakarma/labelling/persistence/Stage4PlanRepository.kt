@@ -51,6 +51,8 @@ class Stage4PlanRepository(private val db: Firestore) {
             "sourceClaimIds" to plan.sourceClaimIds,
             "category" to plan.category.name,
             "sftEligible" to plan.sftEligible,
+            "templateId" to plan.templateId,
+            "templateCategory" to plan.templateCategory,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
 
@@ -72,6 +74,8 @@ class Stage4PlanRepository(private val db: Firestore) {
                     category =
                         Stage4Category.fromOrNull(getString("category")) ?: Stage4Category.QA,
                     sftEligible = getBoolean("sftEligible") ?: true,
+                    templateId = getString("templateId"),
+                    templateCategory = getString("templateCategory"),
                 ),
             createdAt = instant("createdAt"),
         )

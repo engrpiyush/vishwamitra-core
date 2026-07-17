@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.QuestionStatus
 import ai.vishwakarma.labelling.domain.QuestionTrigger
 import ai.vishwakarma.labelling.domain.SubjectQuestion
+import com.google.cloud.firestore.DocumentReference
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
 import org.springframework.stereotype.Repository
@@ -35,6 +36,23 @@ class SubjectQuestionRepository(private val db: Firestore) {
 
     fun save(question: SubjectQuestion) {
         col.document(question.id).set(question.toMap()).await()
+    }
+
+    /**
+     * The §9.4 answer atomicity: the SIDECARED `claim_reviews` row(s) and the ANSWERED flip commit
+     * in one transaction — an answer can never exist without its sidecar or vice versa. The review
+     * docs arrive pre-mapped ([ClaimReviewRepository.docRef]/`docData`) so each collection's
+     * serialization stays in its own repository.
+     */
+    fun saveAnswered(
+        question: SubjectQuestion,
+        reviewDocs: List<Pair<DocumentReference, Map<String, Any?>>>,
+    ) {
+        db.runTransaction { tx ->
+                reviewDocs.forEach { (ref, data) -> tx.set(ref, data) }
+                tx.set(col.document(question.id), question.toMap())
+            }
+            .await()
     }
 
     private fun SubjectQuestion.toMap(): Map<String, Any?> =

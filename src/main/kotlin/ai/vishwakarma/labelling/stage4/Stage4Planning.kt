@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage4
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PlannerPersona
 import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.domain.VoicingPlan
@@ -9,6 +10,9 @@ import ai.vishwakarma.labelling.persistence.SubjectFactRecord
 /** One planned conversation: the guest question PLAN synthesized plus its frozen voicing plan. */
 data class PlannedConversation(val question: String, val plan: VoicingPlan)
 
+/** One template category's VA-88 coverage line: hit = [planned] ≥ [target]. */
+data class CategoryCoverage(val category: String, val target: Int, val planned: Int)
+
 /** What one PLAN tick produced, with the §9.2 drop counts for the run counters. */
 data class PlanningOutcome(
     val planned: List<PlannedConversation>,
@@ -16,6 +20,11 @@ data class PlanningOutcome(
     val deduped: Int,
     /** Units dropped by the per-claim fan-out cap. */
     val capped: Int,
+    /**
+     * VA-88: per template category, coverage targets vs what survived dedupe + cap. Empty when the
+     * run planned template-less (the legacy trio).
+     */
+    val coverage: List<CategoryCoverage> = emptyList(),
 )
 
 /**
@@ -28,6 +37,11 @@ data class PlanningOutcome(
  * Order is part of the contract: categories run in the S4-D7 order (QA, situational, multi-claim,
  * negative, meta), each category's candidates in a documented deterministic sort, and both dedupe
  * and the cap keep the *first* occurrence — so a re-run drops exactly the same units.
+ *
+ * VA-88: when the NotebookTemplate library is non-empty, template × subject-fact units REPLACE the
+ * fact-driven trio (the §14A.6 "not blind generation" contract) and run first, in taxonomy order;
+ * the probe banks still plan in full. The template constrains form at GENERATE — the voicing
+ * planner here still owns what may be said.
  */
 class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPlanner()) {
 
@@ -36,6 +50,8 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         val question: String,
         /** Claim ids the fan-out cap charges this unit against. */
         val claimIds: List<String>,
+        /** The NotebookTemplate that shaped this unit (VA-88); null = trio/probe-bank unit. */
+        val template: NotebookTemplate? = null,
     )
 
     fun plan(
@@ -47,13 +63,28 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         mix: AppProperties.Stage4.Mix,
         maxConversationsPerClaim: Int,
         dedupeJaccardThreshold: Double,
+        /**
+         * The NotebookTemplate library in taxonomy order (VA-88). Non-empty ⇒ the fact-driven trio
+         * is REPLACED by template × fact units; empty ⇒ the legacy trio plans as before.
+         */
+        templates: List<NotebookTemplate> = emptyList(),
     ): PlanningOutcome {
         val byId = eligible.associateBy { it.claim.id }
+        // VA-88: a non-empty template library replaces "blind" fact/claim-driven planning for the
+        // fact-driven trio. The probe banks are exempt either way (QD-5): refusal/injection/
+        // identity coverage is a fixed curriculum, not a template concern.
+        val templateDriven = templates.isNotEmpty()
+        val templateUnits =
+            if (templateDriven) templateCandidates(templates, facts, byId) else emptyList()
         val candidates =
             mapOf(
-                Stage4Category.QA to qaCandidates(eligible),
-                Stage4Category.SITUATIONAL to situationalCandidates(subjectName, facts, byId),
-                Stage4Category.MULTI_CLAIM to multiClaimCandidates(subjectName, facts, byId),
+                Stage4Category.QA to (if (templateDriven) emptyList() else qaCandidates(eligible)),
+                Stage4Category.SITUATIONAL to
+                    (if (templateDriven) emptyList()
+                    else situationalCandidates(subjectName, facts, byId)),
+                Stage4Category.MULTI_CLAIM to
+                    (if (templateDriven) emptyList()
+                    else multiClaimCandidates(subjectName, facts, byId)),
                 Stage4Category.NEGATIVE to negativeCandidates(subjectName, eligible),
                 Stage4Category.META to metaCandidates(subjectName),
             )
@@ -63,26 +94,29 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         // NEGATIVE and META plan their full probe banks regardless — behavioral coverage
         // (refusals, injection defense, identity) is a fixed curriculum, not a fraction of how
         // much evidence the subject happens to have. Their mix dials are recorded in the
-        // snapshot but deliberately not read.
+        // snapshot but deliberately not read. Template-driven runs (VA-88) skip the mix
+        // entirely — per-template coverageTarget is the dial there; the weights stay recorded
+        // in the snapshot but deliberately unread, the QD-5 idiom extended.
         val factDrivenTotal = FACT_DRIVEN_CATEGORIES.sumOf { candidates.getValue(it).size }
         val factDrivenWeightSum = mix.qa + mix.situational + mix.multiClaim
         val allocated =
-            CATEGORY_ORDER.flatMap { category ->
-                val pool = candidates.getValue(category)
-                if (category !in FACT_DRIVEN_CATEGORIES) {
-                    pool
-                } else {
-                    // An all-zero fact-driven trio plans none of it (a banks-only run) — the
-                    // "zero dial plans nothing" semantics, per category and in aggregate.
-                    val weight =
-                        if (factDrivenWeightSum > 0.0) {
-                            mix.weightOf(category) / factDrivenWeightSum
-                        } else {
-                            0.0
-                        }
-                    pool.take(kotlin.math.ceil(weight * factDrivenTotal).toInt())
+            templateUnits +
+                CATEGORY_ORDER.flatMap { category ->
+                    val pool = candidates.getValue(category)
+                    if (category !in FACT_DRIVEN_CATEGORIES) {
+                        pool
+                    } else {
+                        // An all-zero fact-driven trio plans none of it (a banks-only run) — the
+                        // "zero dial plans nothing" semantics, per category and in aggregate.
+                        val weight =
+                            if (factDrivenWeightSum > 0.0) {
+                                mix.weightOf(category) / factDrivenWeightSum
+                            } else {
+                                0.0
+                            }
+                        pool.take(kotlin.math.ceil(weight * factDrivenTotal).toInt())
+                    }
                 }
-            }
 
         // Dedupe before the cap: a unit the cap would drop must not have suppressed a duplicate
         // that survives. Exact Jaccard over word shingles — MinHash is this measure's at-scale
@@ -114,10 +148,104 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         }
 
         val planned =
-            surviving.map {
-                PlannedConversation(it.question, planner.plan(it.unit, persona, personaHash))
+            surviving.map { candidate ->
+                val base = planner.plan(candidate.unit, persona, personaHash)
+                val plan =
+                    candidate.template?.let {
+                        base.copy(templateId = it.id, templateCategory = it.category)
+                    } ?: base
+                PlannedConversation(candidate.question, plan)
             }
-        return PlanningOutcome(planned = planned, deduped = deduped, capped = capped)
+        // Coverage (VA-88): what survived dedupe + cap per template category, against the sum of
+        // that category's coverage targets — hit/missed reads straight off the pair.
+        val coverage =
+            if (!templateDriven) {
+                emptyList()
+            } else {
+                val plannedByCategory =
+                    surviving.mapNotNull { it.template }.groupingBy { it.category }.eachCount()
+                templates
+                    .map { it.category }
+                    .distinct()
+                    .map { category ->
+                        CategoryCoverage(
+                            category = category,
+                            target =
+                                templates
+                                    .filter { it.category == category }
+                                    .sumOf { it.coverageTarget },
+                            planned = plannedByCategory[category] ?: 0,
+                        )
+                    }
+            }
+        return PlanningOutcome(
+            planned = planned,
+            deduped = deduped,
+            capped = capped,
+            coverage = coverage,
+        )
+    }
+
+    // ---- VA-88: template × subject-fact units (replaces the fact-driven trio) ---------------
+
+    /**
+     * One unit per (template × coverage slot): anchors are the subject's evidenced facts, best
+     * belief first; slot j of template i draws anchor (i + j) mod pool — the QD-3 rotation idiom,
+     * so neighbouring templates open on different evidence. The unit is the anchor's fact group
+     * (its member claims), so the voicing planner's group rules govern exactly as for the legacy
+     * multi-claim lane; a single-member anchor plans as a claim unit. No evidenced facts ⇒ no
+     * template units — every category reports missed rather than planning ungrounded conversations.
+     */
+    private fun templateCandidates(
+        templates: List<NotebookTemplate>,
+        facts: List<SubjectFactRecord>,
+        byId: Map<String, EvidencedClaim>,
+    ): List<Candidate> {
+        val anchors =
+            facts
+                .map { fact ->
+                    fact to
+                        fact.memberClaimIds
+                            .mapNotNull { byId[it] }
+                            .sortedBy { it.claim.id }
+                            .take(MAX_TEMPLATE_CLAIMS)
+                }
+                .filter { (_, members) -> members.isNotEmpty() }
+                .sortedWith(
+                    compareByDescending<Pair<SubjectFactRecord, List<EvidencedClaim>>> {
+                            it.first.belief ?: 0.0
+                        }
+                        .thenBy { it.first.factId }
+                )
+        if (anchors.isEmpty()) return emptyList()
+        return templates.flatMapIndexed { index, template ->
+            (0 until template.coverageTarget).map { slot ->
+                val (anchor, members) = anchors[(index + slot) % anchors.size]
+                val unitKey = "tpl:${template.id}:${anchor.factId}"
+                val unit =
+                    if (members.size >= 2) {
+                        PlanUnit.FactGroupUnit(members, unitKey = unitKey)
+                    } else {
+                        PlanUnit.ClaimUnit(members.single(), unitKey = unitKey)
+                    }
+                Candidate(
+                    unit = unit,
+                    question = templateQuestion(template, anchor.label),
+                    claimIds = members.map { it.claim.id },
+                    template = template,
+                )
+            }
+        }
+    }
+
+    /**
+     * The planned guest question for a template unit — deterministic (dedupe substance + display);
+     * the generation prompt lets the drafter voice it naturally within the template's format.
+     */
+    private fun templateQuestion(template: NotebookTemplate, factLabel: String): String {
+        val lens =
+            template.formatSpec.personaLens.takeIf { it.isNotBlank() }?.let { "As $it: " } ?: ""
+        return "$lens${template.title} — can you take me through \"$factLabel\"?"
     }
 
     // ---- Q&A: one unit per eligible claim, best-evidenced first ----------------------------
@@ -471,6 +599,8 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         private const val UNFAVORABLE_BELOW = 0.5
         private const val MAX_CRITICISM_PROBES = 3
         private const val MAX_CHAIN_FACTS = 5
+        /** Member-claim cap per template unit (VA-88) — keeps the evidence block bounded. */
+        private const val MAX_TEMPLATE_CLAIMS = 4
         private const val SHINGLE_SIZE = 3
         private val NON_ALNUM = Regex("[^a-z0-9]+")
 

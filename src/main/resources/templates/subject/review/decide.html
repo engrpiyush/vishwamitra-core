@@ -31,9 +31,29 @@
                         <span class="badge badge--warning" th:if="${row.attention}">worth a look</span>
                     </summary>
                     <div class="review-editor">
-                        <!-- F11 framing slot (W5 inbox ticket): the generated question text
-                             replaces this plain framing when it lands. -->
-                        <p class="panel-lede" th:if="${row.attention and !row.inferred}">
+                        <!-- F11 (VA-35): the row's OPEN question is the framing; answering here
+                             resolves the same subject_questions row as the inbox (§9.3). -->
+                        <th:block th:if="${row.questionId != null}">
+                            <p class="panel-lede" th:text="${row.questionText}">question</p>
+                            <form method="post" class="form" style="max-width:none;"
+                                  th:action="@{/questions/{id}/answer(id=${row.questionId})}">
+                                <input type="hidden" name="from" value="review"/>
+                                <label>Your answer (it rides along with this)
+                                    <textarea name="answer" rows="2"></textarea>
+                                </label>
+                                <div class="row-actions">
+                                    <button type="submit" class="btn--sm">Answer</button>
+                                </div>
+                            </form>
+                            <form method="post" class="inline-form"
+                                  th:action="@{/questions/{id}/skip(id=${row.questionId})}">
+                                <input type="hidden" name="from" value="review"/>
+                                <button type="submit" class="btn btn--secondary btn--sm">
+                                    Skip for now</button>
+                            </form>
+                        </th:block>
+                        <p class="panel-lede"
+                           th:if="${row.attention and !row.inferred and row.questionId == null}">
                             Is there context you'd like your advocate to carry about this?</p>
                         <p class="panel-lede" th:if="${row.inferred}">
                             We read this between the lines — if it isn't right, set it aside.</p>
@@ -42,7 +62,10 @@
                             &ldquo;<span th:text="${row.excerpt}">excerpt</span>&rdquo;</p>
                         <p class="muted" th:unless="${row.excerpt != null}">
                             From <span th:text="${row.source}">source</span></p>
+                        <!-- Answering the question above writes the same note — the plain form
+                             only stays where set-aside is possible (inferred rows). -->
                         <form method="post" class="form" style="max-width:none;"
+                              th:if="${row.questionId == null or row.inferred}"
                               th:action="@{/training/review/claims/{id}/decision(id=${row.id})}">
                             <label th:if="${row.inferred}" class="inline">
                                 <input type="checkbox" name="reject" value="true"

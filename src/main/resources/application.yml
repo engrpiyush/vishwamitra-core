@@ -157,6 +157,9 @@ app:
     # both count) and the per-session send pace.
     max-messages-per-session: ${PRODUCT_MAX_MESSAGES_PER_SESSION:30}
     chat-min-interval: ${PRODUCT_CHAT_MIN_INTERVAL:3s}
+    # F11 (VA-34, LLD §9.2): claims below this favorability draw a clarification question
+    # when review locks.
+    f11-threshold: ${PRODUCT_F11_THRESHOLD:0.4}
     # OIDC audience the /internal/** sweep endpoints require (the Cloud Run URL); blank outside
     # dev = those endpoints fail closed. The invoker pin is the scheduler SA email (optional).
     internal-audience: ${INTERNAL_AUDIENCE:}

@@ -98,7 +98,11 @@ class StageAdminController(
         model.stageCommons(stage, "prompts")
         when (stage) {
             StageKey.STAGE1 -> Unit // Collection has no LLM prompts.
-            StageKey.STAGE2 -> model.addAttribute("groups", extractionPrompts.list())
+            StageKey.STAGE2 -> {
+                model.addAttribute("groups", extractionPrompts.list())
+                // The F11 question generator frames the Stage 2 review, so it edits here (VA-34).
+                model.addAttribute("f11Row", extractionPrompts.listF11())
+            }
             StageKey.STAGE3 -> model.addAttribute("stage3Rows", extractionPrompts.listStage3())
             StageKey.STAGE4 -> model.addAttribute("stage4", extractionPrompts.listStage4())
         }

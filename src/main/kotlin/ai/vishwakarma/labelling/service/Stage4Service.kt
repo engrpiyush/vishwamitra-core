@@ -111,6 +111,7 @@ class Stage4Service(
     private val plans: Stage4PlanRepository,
     private val sftExamples: SftExampleRepository,
     private val dpoPairs: DpoPairRepository,
+    private val notebookTemplates: NotebookTemplateService,
     private val config: StageConfigService,
 ) {
 
@@ -384,6 +385,8 @@ class Stage4Service(
                     mix = params.mix,
                     maxConversationsPerClaim = params.maxConversationsPerClaim,
                     dedupeJaccardThreshold = params.dedupeJaccardThreshold,
+                    // VA-88: the library (taxonomy order) drives planning; empty ⇒ legacy trio.
+                    templates = notebookTemplates.list(),
                 )
             val now = Instant.now()
             outcome.planned.forEach {
@@ -398,13 +401,30 @@ class Stage4Service(
                     )
                 )
             }
+            // The VA-88 coverage report freezes with the plan — hit/missed vs coverage targets.
+            val coverageJson =
+                outcome.coverage
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { rows ->
+                        Json.writeLine(
+                            rows.map {
+                                mapOf(
+                                    "category" to it.category,
+                                    "target" to it.target,
+                                    "planned" to it.planned,
+                                )
+                            }
+                        )
+                    }
             advance(
-                run,
+                run.copy(coverageReport = coverageJson),
                 Stage4RunStatus.GENERATING,
                 mapOf(
                     Stage4Counters.PLANS to outcome.planned.size.toLong(),
                     Stage4Counters.PLANS_DEDUPED to outcome.deduped.toLong(),
                     Stage4Counters.PLANS_CAPPED to outcome.capped.toLong(),
+                    Stage4Counters.PLANS_FROM_TEMPLATES to
+                        outcome.planned.count { it.plan.templateId != null }.toLong(),
                 ),
             )
         }
@@ -432,9 +452,21 @@ class Stage4Service(
                 Stage4Category.entries
                     .filter { it != Stage4Category.META }
                     .associateWith { prompts.resolveStage4Generator(it) }
-            fun promptHashFor(category: Stage4Category): String =
-                if (category == Stage4Category.META) Stage4Generation.META_TEMPLATE_STAMP
-                else promptByCategory.getValue(category).hash
+            // VA-88: a template-shaped plan resolves its instruction block (and cache hash) from
+            // the template itself — an edit re-drafts exactly the affected plans, the prompt-bump
+            // semantics. A deleted template falls back to the plan's category row.
+            val templatesById = notebookTemplates.list().associateBy { it.id }
+            fun rowFor(plan: VoicingPlan): ResolvedExtractionPrompt? {
+                plan.templateId
+                    ?.let { templatesById[it] }
+                    ?.let {
+                        return Stage4Generation.templateRow(it, subjectName)
+                    }
+                return if (plan.category == Stage4Category.META) null
+                else promptByCategory.getValue(plan.category)
+            }
+            fun promptHashFor(plan: VoicingPlan): String =
+                rowFor(plan)?.hash ?: Stage4Generation.META_TEMPLATE_STAMP
 
             val subjectPlans =
                 plans
@@ -476,7 +508,7 @@ class Stage4Service(
                     .groupBy { it.stamp!!.planId!! }
             fun satisfied(p: Stage4Plan): Boolean =
                 liveByPlan[p.plan.planId].orEmpty().any {
-                    it.stamp?.generatorPromptHash == promptHashFor(p.plan.category)
+                    it.stamp?.generatorPromptHash == promptHashFor(p.plan)
                 }
 
             val pending = subjectPlans.filterNot(::satisfied)
@@ -486,15 +518,7 @@ class Stage4Service(
 
             val batch = pending.take(frozenParams(run).generateBatchPerPoll)
             batch.forEach { p ->
-                generateOne(
-                    run,
-                    p,
-                    subjectName,
-                    persona,
-                    presetStyle,
-                    promptByCategory,
-                    evidenceById
-                )
+                generateOne(run, p, subjectName, persona, presetStyle, ::rowFor, evidenceById)
             }
             run.copy(counters = run.counters + generateCounters(run), phaseSince = Instant.now())
                 .also { runs.save(it) }
@@ -507,11 +531,12 @@ class Stage4Service(
         subjectName: String,
         persona: ResolvedPersona,
         presetStyle: String,
-        promptByCategory: Map<Stage4Category, ResolvedExtractionPrompt>,
+        /** The plan's instruction row: template block (VA-88) or category row; null = META. */
+        rowFor: (VoicingPlan) -> ResolvedExtractionPrompt?,
         evidenceById: Map<String, EvidencedClaim>,
     ) {
         val category = p.plan.category
-        val row = promptByCategory[category]
+        val row = rowFor(p.plan)
         val promptHash = row?.hash ?: Stage4Generation.META_TEMPLATE_STAMP
         val now = Instant.now()
 
@@ -559,8 +584,17 @@ class Stage4Service(
                 planId = p.plan.planId,
                 personaHash = run.personaHash,
                 generatorPromptHash = promptHash,
+                templateId = p.plan.templateId,
+                templateCategory = p.plan.templateCategory,
             )
-        val tags = ExampleTags(labels = listOf("stage4:${category.name.lowercase()}"))
+        val tags =
+            ExampleTags(
+                labels =
+                    listOfNotNull(
+                        "stage4:${category.name.lowercase()}",
+                        p.plan.templateCategory?.let { "tpl:$it" },
+                    )
+            )
 
         val (turns, llmModel, createdBy) =
             when {

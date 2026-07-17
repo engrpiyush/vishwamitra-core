@@ -281,7 +281,26 @@
                     <td>plans <strong data-counter="plans" th:text="${run.counters['plans'] ?: '—'}">—</strong>
                         <span class="muted" style="font-size:0.85em;">
                             &middot; deduped <span data-counter="plansDeduped" th:text="${run.counters['plansDeduped'] ?: '0'}">0</span>
-                            &middot; fan-out capped <span data-counter="plansCapped" th:text="${run.counters['plansCapped'] ?: '0'}">0</span></span>
+                            &middot; fan-out capped <span data-counter="plansCapped" th:text="${run.counters['plansCapped'] ?: '0'}">0</span>
+                            &middot; from templates <span data-counter="plansFromTemplates" th:text="${run.counters['plansFromTemplates'] ?: '0'}">0</span></span>
+                        <!-- VA-88: coverage frozen at PLAN — planned vs the library's targets. -->
+                        <details th:if="${!coverage.isEmpty()}" style="margin-top:0.4rem;">
+                            <summary class="muted" style="font-size:0.85em;"
+                                     th:text="|Template coverage: ${#lists.size(coverage) - coverageMissed} hit · ${coverageMissed} missed|">coverage</summary>
+                            <table class="grid" style="margin-top:0.4rem;">
+                                <thead><tr><th>Category</th><th>Planned</th><th>Target</th><th></th></tr></thead>
+                                <tbody>
+                                <tr th:each="c : ${coverage}">
+                                    <td th:text="${c['category']}">category</td>
+                                    <td th:text="${c['planned']}">0</td>
+                                    <td th:text="${c['target']}">1</td>
+                                    <td><span class="badge"
+                                              th:classappend="${c['planned'] >= c['target'] ? 'badge--success' : 'badge--warning'}"
+                                              th:text="${c['planned'] >= c['target'] ? 'hit' : 'missed'}">hit</span></td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </details>
                     </td>
                 </tr>
                 <tr th:if="${phaseIndex >= 2}">

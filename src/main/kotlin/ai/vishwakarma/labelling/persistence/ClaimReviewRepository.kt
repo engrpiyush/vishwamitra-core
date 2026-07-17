@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.ReviewDecision
+import com.google.cloud.firestore.DocumentReference
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
 import org.springframework.stereotype.Repository
@@ -28,6 +29,12 @@ class ClaimReviewRepository(private val db: Firestore) {
     fun save(review: ClaimReview) {
         col.document(review.claimId).set(review.toMap()).await()
     }
+
+    /** The review row's document reference — for cross-collection transactions (F11 §9.4). */
+    fun docRef(claimId: String): DocumentReference = col.document(claimId)
+
+    /** The review row's Firestore map — pairs with [docRef] for transactional writers. */
+    fun docData(review: ClaimReview): Map<String, Any?> = review.toMap()
 
     fun delete(claimId: String) {
         col.document(claimId).delete().await()
