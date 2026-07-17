@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+  VA-45/VA-71: fragments shared by every public-facing surface — the apex world AND the subject
+  world's guest pages. The policy links resolve in both worlds because the host filter rewrites
+  the same external /policies/* path into whichever internal prefix the host lives under.
+-->
+<!--
+  Apex head: vishwakarma.ai-branded (the operator "Vishwamitra" name never shows here) and lean —
+  theme init + stylesheet only, no htmx/app.js (VA-71: static, no JS beyond the shared shell).
+-->
+<head th:fragment="head(title)">
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title th:text="${title} ? |vishwakarma.ai · ${title}| : 'vishwakarma.ai'">vishwakarma.ai</title>
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+        })();
+    </script>
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}"/>
+    <link rel="stylesheet" th:href="@{/css/app.css}"/>
+</head>
+<body>
+
+<!-- The three public policy pages — the one place the link set is defined (LLD §13.3). -->
+<div th:fragment="policylinks" class="policy-links">
+    <a th:href="@{/policies/terms}">Terms</a> ·
+    <a th:href="@{/policies/privacy}">Privacy</a> ·
+    <a th:href="@{/policies/cookies}">Cookies</a>
+</div>
+
+<!-- Footer for guest/public pages: policies only, no tools nav. -->
+<footer th:fragment="publicfoot" class="landing-foot">
+    <div th:replace="~{public/shell :: policylinks}"></div>
+</footer>
+
+<!--
+  §13.3 cookie banner: NOTICE-ONLY (two functional cookies — there is nothing to consent to).
+  Dismissal is a localStorage preference; signed-in members never see it (their acceptance
+  record covers the disclosure), so it rides only guest/public surfaces.
+-->
+<div th:fragment="cookiebar" class="cookie-bar" id="cookieBar" hidden>
+    <span>We use a couple of functional cookies to keep your session working — nothing else.
+        <a th:href="@{/policies/cookies}">Cookie policy</a></span>
+    <button type="button" class="btn btn--secondary" id="cookieBarOk">Got it</button>
+    <script>
+        (function () {
+            var bar = document.getElementById('cookieBar');
+            try {
+                if (!localStorage.getItem('cookieNoticeOk')) bar.hidden = false;
+            } catch (e) { /* storage blocked: stay quiet rather than nag on every view */ }
+            document.getElementById('cookieBarOk').addEventListener('click', function () {
+                try { localStorage.setItem('cookieNoticeOk', '1'); } catch (e) { }
+                bar.hidden = true;
+            });
+        })();
+    </script>
+</div>
+
+</body>
+</html>

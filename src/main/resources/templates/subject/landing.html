@@ -35,10 +35,9 @@
             </div>
         </section>
     </main>
-    <footer class="landing-foot">
-        <a th:href="@{/terms}">Terms &amp; policies</a>
-    </footer>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
 </div>
 
+<div th:replace="~{public/shell :: cookiebar}"></div>
 </body>
 </html>

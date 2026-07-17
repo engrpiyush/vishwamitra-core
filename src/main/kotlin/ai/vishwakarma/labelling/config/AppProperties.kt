@@ -172,6 +172,12 @@ data class AppProperties(
         val machineType: String = "n1-standard-8",
         val acceleratorType: String = "NVIDIA_TESLA_V100",
         val acceleratorCount: Int = 1,
+        /**
+         * §14.1 window $-estimate dial (VA-68): the all-in hourly price of one serving replica
+         * (machine + accelerator — Vertex prediction, n1-standard-8 + 1×V100 in us-central1 ≈
+         * $0.42 + $2.48). The startWindow estimate is preset hours × this; a dial, not a bill.
+         */
+        val hourlyUsd: Double = 2.90,
         /** Container args — the VA-74 float16/Volta pins. */
         val servedModelArgs: List<String> =
             listOf(

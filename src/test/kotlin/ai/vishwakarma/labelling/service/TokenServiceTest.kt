@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateSession
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.AdvocateToken
+import ai.vishwakarma.labelling.domain.OpsCounters
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.SessionKind
 import ai.vishwakarma.labelling.domain.TokenEmailStatus
@@ -15,6 +16,7 @@ import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.AdvocateSessionRepository
 import ai.vishwakarma.labelling.persistence.AdvocateTokenRepository
 import ai.vishwakarma.labelling.persistence.MailBookkeepingRepository
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.UserRepository
 import ai.vishwakarma.labelling.persistence.WallAttemptRepository
 import ai.vishwakarma.labelling.security.SubjectCtx
@@ -133,6 +135,20 @@ private class FakeTokenUserRepo : UserRepository(mock(Firestore::class.java)) {
     override fun findAll(): List<User> = store
 }
 
+/** VA-68: records bumps per counter key (per-subject scoping is not under test here). */
+private class FakeTokenOpsRepo : OpsCounterRepository(mock(Firestore::class.java)) {
+    val counters = mutableMapOf<String, Double>()
+
+    override fun bump(
+        subjectId: String,
+        increments: Map<String, Number>,
+        sets: Map<String, Number>,
+    ) {
+        increments.forEach { (k, v) -> counters.merge(k, v.toDouble(), Double::plus) }
+        sets.forEach { (k, v) -> counters[k] = v.toDouble() }
+    }
+}
+
 private class TokenRecordingTransport : MailTransport {
     val sent = mutableListOf<Triple<String, String, String>>()
     var failWith: Exception? = null
@@ -149,6 +165,7 @@ class TokenServiceTest {
     private val tokens = FakeTokenTokenRepo(sessions)
     private val advocates = FakeTokenAdvocateRepo()
     private val attempts = FakeTokenAttemptRepo()
+    private val ops = FakeTokenOpsRepo()
     private val bookkeeping = FakeTokenBookkeeping()
     private val userRepo = FakeTokenUserRepo()
     private val transport = TokenRecordingTransport()
@@ -171,6 +188,7 @@ class TokenServiceTest {
             sessions = sessions,
             advocates = advocates,
             attempts = attempts,
+            ops = ops,
             mail = MailService(transport, bookkeeping, props),
             bookkeeping = bookkeeping,
             users = UserService(userRepo),
@@ -271,6 +289,20 @@ class TokenServiceTest {
         // Past the 15-minute lockout the bucket resets.
         attempts.now = attempts.now.plusSeconds(15 * 60 + 1)
         assertIs<RedeemOutcome.Invalid>(service.redeem(ctx, "nope8", "9.9.9.9"))
+    }
+
+    @Test
+    fun `redeem writes the §14_1 wall counters at each outcome`() {
+        advocate()
+        service.generate(ctx, "guest@x.com", null)
+        val code = lastEmailedCode()
+        // 6 attempts total: 1 mint + 4 invalids spend the 5/min window, the 6th is refused.
+        assertIs<RedeemOutcome.Minted>(service.redeem(ctx, code, "9.9.9.9"))
+        repeat(4) { assertIs<RedeemOutcome.Invalid>(service.redeem(ctx, "nope$it", "9.9.9.9")) }
+        assertIs<RedeemOutcome.Locked>(service.redeem(ctx, "nope4", "9.9.9.9"))
+        assertEquals(6.0, ops.counters[OpsCounters.WALL_ATTEMPTS])
+        assertEquals(1.0, ops.counters[OpsCounters.WALL_LOCKOUTS])
+        assertEquals(1.0, ops.counters[OpsCounters.REDEMPTIONS])
     }
 
     @Test

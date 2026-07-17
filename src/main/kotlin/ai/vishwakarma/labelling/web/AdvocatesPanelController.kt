@@ -3,9 +3,12 @@ package ai.vishwakarma.labelling.web
 import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.Subject
+import ai.vishwakarma.labelling.domain.SubjectOpsCounters
 import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.VersionStatus
 import ai.vishwakarma.labelling.domain.WindowPreset
+import ai.vishwakarma.labelling.persistence.MailBookkeepingRepository
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.AdvocateChatService
 import ai.vishwakarma.labelling.service.AggregateScoreService
@@ -14,6 +17,8 @@ import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
 import ai.vishwakarma.labelling.service.TokenService
 import ai.vishwakarma.labelling.service.TrainingService
+import java.time.LocalDate
+import java.time.ZoneOffset
 import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -43,6 +48,8 @@ class AdvocatesPanelController(
     private val training: TrainingService,
     private val aggregateScores: AggregateScoreService,
     private val chat: AdvocateChatService,
+    private val opsCounters: OpsCounterRepository,
+    private val mailBookkeeping: MailBookkeepingRepository,
 ) {
 
     /** One panel row per ACTIVE subject — advocate state + token posture side by side. */
@@ -51,6 +58,8 @@ class AdvocatesPanelController(
         val advocate: Advocate?,
         val tokenTotal: Int,
         val tokenActive: Int,
+        /** VA-68 (§14.1): the subject's day-one ops counters — zeros until events happen. */
+        val ops: SubjectOpsCounters = SubjectOpsCounters(),
     ) {
         val startable: Boolean
             get() =
@@ -67,6 +76,7 @@ class AdvocatesPanelController(
     @GetMapping
     fun panel(model: Model): String {
         val advocates = provisioning.all().associateBy { it.subjectId }
+        val allOps = opsCounters.findAll()
         val rows =
             subjects
                 .list()
@@ -81,11 +91,36 @@ class AdvocatesPanelController(
                             tokenRows.count {
                                 it.chip == TokenChip.UNREDEEMED || it.chip == TokenChip.ACTIVE
                             },
+                        ops = allOps[subject.id] ?: SubjectOpsCounters(),
                     )
                 }
         model.addAttribute("pageTitle", "Advocates")
         model.addAttribute("rows", rows)
         model.addAttribute("presets", WindowPreset.entries)
+        // VA-68: app-level tiles — per-subject counters summed + today's mail funnel row.
+        model.addAttribute(
+            "opsTotals",
+            rows
+                .map { it.ops }
+                .fold(SubjectOpsCounters()) { acc, ops ->
+                    acc.copy(
+                        wallAttempts = acc.wallAttempts + ops.wallAttempts,
+                        wallLockouts = acc.wallLockouts + ops.wallLockouts,
+                        redemptions = acc.redemptions + ops.redemptions,
+                        deploysStarted = acc.deploysStarted + ops.deploysStarted,
+                        deploysSucceeded = acc.deploysSucceeded + ops.deploysSucceeded,
+                        deploysFailed = acc.deploysFailed + ops.deploysFailed,
+                        deploySecondsTotal = acc.deploySecondsTotal + ops.deploySecondsTotal,
+                        windowsStarted = acc.windowsStarted + ops.windowsStarted,
+                        windowEstimateUsdTotal =
+                            acc.windowEstimateUsdTotal + ops.windowEstimateUsdTotal,
+                    )
+                },
+        )
+        model.addAttribute(
+            "mailToday",
+            mailBookkeeping.counters(LocalDate.now(ZoneOffset.UTC).toString()),
+        )
         // Register-form helper: READY checkpoints an operator can copy from.
         model.addAttribute(
             "readyVersions",

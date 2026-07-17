@@ -2,21 +2,22 @@
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <!--
   VA-32: shared fragments for the subject world (LLD §8 — subject branding, no operator nav).
-  Pages keep the .landing scaffold; the footer is the one shared slot (policy links land with
-  VA-45 in the same place).
+  Pages keep the .landing scaffold; the footer is the one shared slot. VA-45: the tools nav row
+  carries the three public policy links on a second line — every signed-in page gets them here.
 -->
 <body>
 
-<!-- Signed-in subject pages: tools nav + policies + sign out. -->
+<!-- Signed-in subject pages: tools nav + sign out, the public policy links below. -->
 <footer th:fragment="foot" class="landing-foot">
-    <a th:href="@{/}">Home</a> ·
-    <a th:href="@{/training}">Training space</a> ·
-    <a th:href="@{/tokens}">Access codes</a> ·
-    <!-- Policy links slot (VA-45): terms is the placeholder until the three texts ship. -->
-    <a th:href="@{/terms}">Terms &amp; policies</a> ·
-    <form th:action="@{/logout}" method="post" style="display:inline">
-        <button type="submit" class="linklike">Sign out</button>
-    </form>
+    <div>
+        <a th:href="@{/}">Home</a> ·
+        <a th:href="@{/training}">Training space</a> ·
+        <a th:href="@{/tokens}">Access codes</a> ·
+        <form th:action="@{/logout}" method="post" style="display:inline">
+            <button type="submit" class="linklike">Sign out</button>
+        </form>
+    </div>
+    <div th:replace="~{public/shell :: policylinks}"></div>
 </footer>
 
 </body>

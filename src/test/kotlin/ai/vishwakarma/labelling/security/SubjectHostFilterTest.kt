@@ -141,4 +141,91 @@ class SubjectHostFilterTest {
         filter.doFilter(request, MockHttpServletResponse(), MockFilterChain())
         assertNotNull(request.getAttribute(AuthHost.ATTR))
     }
+
+    // ---- VA-71: the public-apex world (LLD §8.4) -----------------------------
+
+    /** Prod shape: apex ≠ operator, so the apex serves the public world and www redirects. */
+    private val prodFilter =
+        SubjectHostFilter(
+            AppProperties(
+                product =
+                    AppProperties.Product(
+                        baseDomain = "vishwakarma.ai",
+                        operatorDomain = "labelling.vishwakarma.ai",
+                    )
+            ),
+            SubjectDirectory(repo),
+        )
+
+    private fun runProd(host: String, path: String): Triple<Int, HttpServletRequest?, Boolean> {
+        val request = MockHttpServletRequest("GET", path).apply { serverName = host }
+        val response = MockHttpServletResponse()
+        val chain = MockFilterChain()
+        prodFilter.doFilter(request, response, chain)
+        return Triple(response.status, chain.request as? HttpServletRequest, PublicHost.of(request))
+    }
+
+    @Test
+    fun `apex serves the public world rewritten under the internal prefix`() {
+        val (status, forwarded, public) = runProd("vishwakarma.ai", "/")
+        assertEquals(200, status)
+        assertEquals("/p", forwarded!!.requestURI)
+        assertEquals(true, public)
+
+        val (_, policyForwarded, _) = runProd("vishwakarma.ai", "/policies/privacy")
+        assertEquals("/p/policies/privacy", policyForwarded!!.requestURI)
+    }
+
+    @Test
+    fun `apex shares static assets unrewritten and 404s everything else`() {
+        val (status, forwarded, _) = runProd("vishwakarma.ai", "/css/app.css")
+        assertEquals(200, status)
+        assertEquals("/css/app.css", forwarded!!.requestURI)
+        // No subject, operator, chat or internal-prefix route exists on the apex host.
+        listOf("/training", "/admin", "/chat", "/wall", "/s/training", "/p", "/login").forEach {
+            assertEquals(404, runProd("vishwakarma.ai", it).first, "expected $it to 404 on apex")
+        }
+    }
+
+    @Test
+    fun `www permanently redirects to the apex in prod shape`() {
+        val request =
+            MockHttpServletRequest("GET", "/policies/terms").apply {
+                serverName = "www.vishwakarma.ai"
+                queryString = "q=1"
+            }
+        val response = MockHttpServletResponse()
+        prodFilter.doFilter(request, response, MockFilterChain())
+        assertEquals(301, response.status)
+        assertEquals("https://vishwakarma.ai/policies/terms?q=1", response.getHeader("Location"))
+    }
+
+    @Test
+    fun `prod operator host still passes through untouched`() {
+        val (status, forwarded, public) = runProd("labelling.vishwakarma.ai", "/admin/users")
+        assertEquals(200, status)
+        assertEquals("/admin/users", forwarded!!.requestURI)
+        assertEquals(false, public)
+    }
+
+    @Test
+    fun `dev collapse keeps the operator on the bare host and serves the public world on www`() {
+        // base == operator (localhost): the apex branch must NOT claim the operator app…
+        val opRequest = MockHttpServletRequest("GET", "/home").apply { serverName = "localhost" }
+        val opResponse = MockHttpServletResponse()
+        val opChain = MockFilterChain()
+        filter.doFilter(opRequest, opResponse, opChain)
+        assertEquals(200, opResponse.status)
+        assertEquals("/home", (opChain.request as HttpServletRequest).requestURI)
+        assertNull(opRequest.getAttribute(PublicHost.ATTR))
+        // …and www serves the public world directly instead of redirecting into it.
+        val request = MockHttpServletRequest("GET", "/").apply { serverName = "www.localhost" }
+        val response = MockHttpServletResponse()
+        val chain = MockFilterChain()
+        filter.doFilter(request, response, chain)
+        assertEquals(200, response.status)
+        assertEquals("/p", (chain.request as HttpServletRequest).requestURI)
+        assertNotNull(request.getAttribute(PublicHost.ATTR))
+        assertNull(SubjectCtx.of(request))
+    }
 }

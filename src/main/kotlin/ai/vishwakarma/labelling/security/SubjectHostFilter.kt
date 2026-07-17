@@ -11,6 +11,11 @@ import org.springframework.web.filter.OncePerRequestFilter
 /**
  * Host-first routing (VA-30, LLD §2.2 / §4.3), registered ahead of both security chains:
  * - the operator host (or any host outside `*.{base-domain}`) passes through untouched;
+ * - the apex `{base-domain}` (VA-71, LLD §8.4) is the public front door: [PublicHost.ATTR] gets
+ *   stamped and the path rewritten under the internal `/p` prefix — the world is the landing plus
+ *   the §13.3 policy pages, everything else 404s. `www.{base-domain}` 301s to the apex. Dev
+ *   collapse: base == operator (`localhost`), so the operator app keeps the bare host and `www`
+ *   SERVES the public world instead of redirecting (`www.localhost:8080` is the dev door);
  * - `<handle>.{base-domain}` resolves the handle via [SubjectDirectory] (60s cache); unknown or
  *   non-ACTIVE handles 404 — deliberately indistinguishable from a nonexistent site. Reserved
  *   handles never resolve because creation-time validation refuses them (the dev-profile seeded
@@ -37,27 +42,40 @@ class SubjectHostFilter(
         filterChain: FilterChain,
     ) {
         val host = request.serverName.lowercase()
-        val suffix = "." + props.product.baseDomain.lowercase()
-        if (host == props.product.operatorDomain.lowercase() || !host.endsWith(suffix)) {
+        val base = props.product.baseDomain.lowercase()
+        val operator = props.product.operatorDomain.lowercase()
+        val suffix = ".$base"
+        // §8.4 (VA-71): the apex is the public front door. In the dev collapse (base == operator,
+        // `localhost`) the operator app keeps the bare host and the public world moves to www.
+        if (host == base && base != operator) {
+            servePublic(request, response, filterChain)
+            return
+        }
+        if (host == "www.$base") {
+            if (base == operator) {
+                // Dev collapse: a www → apex redirect would land on the operator app, so
+                // `www.localhost:8080` serves the public world directly.
+                servePublic(request, response, filterChain)
+            } else {
+                // §8.4: www is not a subject host — permanent redirect to the canonical apex.
+                response.status = HttpServletResponse.SC_MOVED_PERMANENTLY
+                response.setHeader(
+                    "Location",
+                    "https://" +
+                        base +
+                        request.requestURI +
+                        (request.queryString?.let { "?$it" } ?: ""),
+                )
+            }
+            return
+        }
+        if (host == operator || !host.endsWith(suffix)) {
             filterChain.doFilter(request, response)
             return
         }
         val handle = host.removeSuffix(suffix)
         if (handle.isBlank() || handle.contains('.')) {
             response.sendError(HttpServletResponse.SC_NOT_FOUND)
-            return
-        }
-        // §8.4: www is not a subject host — permanent redirect to the canonical apex (VA-71
-        // design).
-        if (handle == "www") {
-            response.status = HttpServletResponse.SC_MOVED_PERMANENTLY
-            response.setHeader(
-                "Location",
-                "https://" +
-                    props.product.baseDomain.lowercase() +
-                    request.requestURI +
-                    (request.queryString?.let { "?$it" } ?: ""),
-            )
             return
         }
         // VA-70: the central OAuth callback host — login machinery only, never a subject site.
@@ -98,6 +116,28 @@ class SubjectHostFilter(
         }
     }
 
+    /**
+     * §8.4: the public-apex world is two pages — stamp the marker, rewrite onto the internal `/p`
+     * prefix, 404 anything that isn't the landing, a policy page or a shared static asset. No login
+     * machinery, no logout, no subject or operator route exists here.
+     */
+    private fun servePublic(
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+        filterChain: FilterChain,
+    ) {
+        request.setAttribute(PublicHost.ATTR, true)
+        val path = request.requestURI
+        when {
+            path in PUBLIC_EXACT || PUBLIC_PREFIXES.any { path.startsWith(it) } ->
+                filterChain.doFilter(request, response)
+            path == "/" -> filterChain.doFilter(rewritten(request, "/p"), response)
+            path.startsWith("/policies/") ->
+                filterChain.doFilter(rewritten(request, "/p$path"), response)
+            else -> response.sendError(HttpServletResponse.SC_NOT_FOUND)
+        }
+    }
+
     private fun firstSegment(path: String): String = path.removePrefix("/").substringBefore('/')
 
     /**
@@ -122,7 +162,8 @@ class SubjectHostFilter(
                 "provisioning",
                 "questions",
                 "terms",
-                "signin"
+                "signin",
+                "policies"
             )
 
         private val SHARED_EXACT = setOf("/favicon.svg", "/error", "/logout")
@@ -133,5 +174,9 @@ class SubjectHostFilter(
 
         private val AUTH_EXACT = setOf("/auth/start", "/favicon.svg", "/error")
         private val AUTH_PREFIXES = listOf("/css/", "/js/", "/login", "/oauth2/")
+
+        /** VA-71: what exists on the apex besides the rewritten landing + policy pages. */
+        private val PUBLIC_EXACT = setOf("/favicon.svg", "/error")
+        private val PUBLIC_PREFIXES = listOf("/css/", "/js/", "/webjars/")
     }
 }

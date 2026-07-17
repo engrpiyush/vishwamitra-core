@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.service
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateState
+import ai.vishwakarma.labelling.domain.OpsCounters
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.WindowPreset
@@ -10,6 +11,7 @@ import ai.vishwakarma.labelling.gcs.CheckpointLocator
 import ai.vishwakarma.labelling.gcs.ServingStager
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.serving.ServeRequest
 import ai.vishwakarma.labelling.serving.ServingBackend
@@ -40,6 +42,7 @@ class ProvisioningService(
     private val advocates: AdvocateRepository,
     private val subjects: SubjectRepository,
     private val versions: ModelVersionRepository,
+    private val ops: OpsCounterRepository,
     backends: List<ServingBackend>,
     private val locator: CheckpointLocator,
     private val stager: ServingStager,
@@ -157,6 +160,28 @@ class ProvisioningService(
                 lastError = null,
                 updatedAt = now,
             )
+        // VA-68 (§14.1): the window $-estimate at startWindow — preset hours × the hourly dial —
+        // logged and stamped alongside the started counters.
+        val estimateUsd =
+            Math.round(preset.duration().toHours() * props.serving.hourlyUsd * 100) / 100.0
+        log.info(
+            "Window estimate for {}: {}h × {}/h ≈ \${} ({})",
+            subjectId,
+            preset.duration().toHours(),
+            props.serving.hourlyUsd,
+            estimateUsd,
+            preset,
+        )
+        ops.bump(
+            subjectId,
+            increments =
+                mapOf(
+                    OpsCounters.WINDOWS_STARTED to 1,
+                    OpsCounters.DEPLOYS_STARTED to 1,
+                    OpsCounters.WINDOW_ESTIMATE_USD_TOTAL to estimateUsd,
+                ),
+            sets = mapOf(OpsCounters.LAST_WINDOW_ESTIMATE_USD to estimateUsd),
+        )
         if (props.serving.dryRun) {
             val live =
                 window.copy(
@@ -167,6 +192,11 @@ class ProvisioningService(
                     provisioningStartedAt = null,
                 )
             advocates.save(live)
+            ops.bump(
+                subjectId,
+                increments = mapOf(OpsCounters.DEPLOYS_SUCCEEDED to 1),
+                sets = mapOf(OpsCounters.LAST_DEPLOY_SECONDS to 0),
+            )
             sendAdvocateLive(live)
             return live.right()
         }
@@ -182,9 +212,10 @@ class ProvisioningService(
             backend.beginServe(ServeRequest(deployName(subject?.handle, subjectId), modelUri))
         val updated = apply(window.copy(provisioningStartedAt = now), handle)
         advocates.save(updated)
-        return if (handle.state == ServingState.FAILED)
+        return if (handle.state == ServingState.FAILED) {
+            ops.bump(subjectId, increments = mapOf(OpsCounters.DEPLOYS_FAILED to 1))
             DomainError.Invalid("The advocate couldn't start: ${handle.error}").left()
-        else updated.right()
+        } else updated.right()
     }
 
     /**
@@ -331,6 +362,7 @@ class ProvisioningService(
                     updatedAt = Instant.now()
                 )
             advocates.save(live)
+            recordDeploySettled(adv, live)
             sendAdvocateLive(live)
             return live
         }
@@ -354,6 +386,7 @@ class ProvisioningService(
             }
         }
         advocates.save(updated)
+        recordDeploySettled(adv, updated)
         if (updated.state == AdvocateState.LIVE && adv.state != AdvocateState.LIVE)
             sendAdvocateLive(updated)
         if (updated.state == AdvocateState.DEPLOY_FAILED && updated.lastError != null)
@@ -363,6 +396,34 @@ class ProvisioningService(
                 updated.lastError
             )
         return updated
+    }
+
+    /**
+     * VA-68 (§14.1): deploy-duration counters at the moment a poll settles a deploy — LIVE gets
+     * succeeded + measured start→LIVE seconds; DEPLOY_FAILED (LRO error or timeout) gets failed.
+     */
+    private fun recordDeploySettled(before: Advocate, after: Advocate) {
+        if (after.state == AdvocateState.LIVE && before.state != AdvocateState.LIVE) {
+            val seconds =
+                before.provisioningStartedAt?.let {
+                    Duration.between(it, Instant.now()).seconds.coerceAtLeast(0)
+                } ?: 0L
+            ops.bump(
+                before.subjectId,
+                increments =
+                    mapOf(
+                        OpsCounters.DEPLOYS_SUCCEEDED to 1,
+                        OpsCounters.DEPLOY_SECONDS_TOTAL to seconds,
+                    ),
+                sets = mapOf(OpsCounters.LAST_DEPLOY_SECONDS to seconds),
+            )
+        }
+        if (
+            after.state == AdvocateState.DEPLOY_FAILED &&
+                before.state != AdvocateState.DEPLOY_FAILED
+        ) {
+            ops.bump(before.subjectId, increments = mapOf(OpsCounters.DEPLOYS_FAILED to 1))
+        }
     }
 
     private fun advanceDeprovisioning(adv: Advocate): Advocate {

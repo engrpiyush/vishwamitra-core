@@ -25,6 +25,8 @@ class TermsGateInterceptor(private val terms: TermsService) : HandlerInterceptor
         val ctx = SubjectCtx.of(request) ?: return true
         val path = request.requestURI
         if (path == "/s/terms" || path.startsWith("/s/terms/")) return true
+        // VA-45: the public policy pages must be readable MID-GATE — the /terms page links them.
+        if (path.startsWith("/s/policies/")) return true
         if (CurrentUser.role() != Role.SUBJECT) return true
         if (CurrentUser.subjectId() != ctx.subjectId) return true
         val email = CurrentUser.email() ?: return true

@@ -1,7 +1,10 @@
 package ai.vishwakarma.labelling.persistence
 
+import ai.vishwakarma.labelling.domain.MailCounters
 import com.google.cloud.Timestamp
+import com.google.cloud.firestore.FieldValue
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.SetOptions
 import org.springframework.stereotype.Repository
 
 /**
@@ -31,6 +34,29 @@ class MailBookkeepingRepository(private val db: Firestore) {
                 }
             }
             .await()
+
+    /** VA-68 (§14.1): count a transport failure on the day's row (the send was admitted above). */
+    fun markSendFailed(date: String) {
+        col(date).set(mapOf("failed" to FieldValue.increment(1)), SetOptions.merge()).await()
+    }
+
+    /** VA-68 (§14.1): count a send refused at the daily cap. */
+    fun markSendSkipped(date: String) {
+        col(date).set(mapOf("skipped" to FieldValue.increment(1)), SetOptions.merge()).await()
+    }
+
+    /** The day's mail counters — zeros when the doc doesn't exist yet (VA-68 panel read). */
+    fun counters(date: String): MailCounters {
+        val doc = col(date).get().await()
+        if (!doc.exists()) return MailCounters()
+        return MailCounters(
+            counted = doc.getLong("count") ?: 0,
+            failed = doc.getLong("failed") ?: 0,
+            skippedCap = doc.getLong("skipped") ?: 0,
+        )
+    }
+
+    private fun col(date: String) = db.collection(COUNTERS).document(date)
 
     fun digestSent(date: String, subjectId: String): Boolean =
         db.collection(DIGESTS).document("${date}_$subjectId").get().await().exists()

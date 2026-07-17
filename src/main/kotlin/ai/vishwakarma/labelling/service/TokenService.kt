@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.AdvocateSession
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.AdvocateToken
+import ai.vishwakarma.labelling.domain.OpsCounters
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.TokenEmailStatus
 import ai.vishwakarma.labelling.domain.TokenStatus
@@ -11,6 +12,7 @@ import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.AdvocateSessionRepository
 import ai.vishwakarma.labelling.persistence.AdvocateTokenRepository
 import ai.vishwakarma.labelling.persistence.MailBookkeepingRepository
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.WallAttemptRepository
 import ai.vishwakarma.labelling.security.SubjectCtx
 import arrow.core.Either
@@ -83,6 +85,7 @@ class TokenService(
     private val sessions: AdvocateSessionRepository,
     private val advocates: AdvocateRepository,
     private val attempts: WallAttemptRepository,
+    private val ops: OpsCounterRepository,
     private val mail: MailService,
     private val bookkeeping: MailBookkeepingRepository,
     private val users: UserService,
@@ -188,13 +191,18 @@ class TokenService(
      * transactional redeem+mint. The IP is bucketed, never stored raw beyond the hash input.
      */
     fun redeem(ctx: SubjectCtx, rawToken: String, ip: String): RedeemOutcome {
+        // VA-68 (§14.1): every attempt counts; lockout refusals and mints count their own key.
+        ops.bump(ctx.subjectId, increments = mapOf(OpsCounters.WALL_ATTEMPTS to 1))
         val allowed =
             attempts.tryAttempt(
                 bucketKey(ctx.subjectId, ip),
                 props.product.wallAttemptsPerMinute,
                 props.product.wallLockout,
             )
-        if (!allowed) return RedeemOutcome.Locked
+        if (!allowed) {
+            ops.bump(ctx.subjectId, increments = mapOf(OpsCounters.WALL_LOCKOUTS to 1))
+            return RedeemOutcome.Locked
+        }
         val state = advocates.find(ctx.subjectId)?.state ?: AdvocateState.NOT_BUILT
         if (state != AdvocateState.LIVE) return RedeemOutcome.NotLive
         val pepper = pepper().getOrNull() ?: return RedeemOutcome.Invalid
@@ -207,6 +215,7 @@ class TokenService(
                 sessionId = newSessionId(),
                 ttl = props.product.guestSessionTtl,
             ) ?: return RedeemOutcome.Invalid
+        ops.bump(ctx.subjectId, increments = mapOf(OpsCounters.REDEMPTIONS to 1))
         return RedeemOutcome.Minted(session)
     }
 

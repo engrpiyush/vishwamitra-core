@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+  VA-45 (LLD §13.3, D5): the three policy texts, v1 — drafted for owner review. ONE source of
+  truth: the S1 /terms page, the subject-host /policies pages and the apex /policies pages all
+  include these fragments, so the words a subject accepts are exactly the words a guest reads.
+
+  Version discipline (§13.2): these texts ARE TNC_V1 / PRIVACY_V1 / COOKIES_V1. A material edit
+  must bump the matching constant in TermsService.CURRENT_VERSIONS in the same change — the bump
+  re-gates every subject at their next request.
+
+  Consent posture (§13.1): consent is one-time and permanent. These texts disclose that plainly
+  and promise nothing beyond it — the product has no surface for undoing a contribution, and no
+  such promise may be implied here.
+-->
+<body>
+
+<!-- ============================ Terms & conditions (v1) ============================ -->
+<section th:fragment="tnc" class="policy-text">
+    <h2 id="tnc">Terms &amp; conditions</h2>
+    <p class="policy-meta">Version 1</p>
+
+    <h3>What vishwakarma.ai is</h3>
+    <p>vishwakarma.ai builds and hosts <strong>personal advocates</strong> — AI assistants that
+        speak for one person, grounded in evidence that person chose to share and reviewed. Each
+        advocate lives on its own web address and answers questions about the person it
+        represents.</p>
+
+    <h3>Who these terms cover</h3>
+    <p>These terms apply to <strong>members</strong> (people who sign in to build and manage their
+        own advocate) and to <strong>guests</strong> (people invited to talk to an advocate with an
+        access code). By signing in, or by using an access code, you agree to them.</p>
+
+    <h3>Your evidence is a permanent contribution</h3>
+    <p>When you upload recordings, documents or other material, you confirm at the moment of upload
+        that you have the right to share it and that anyone recorded in it agreed to be recorded
+        for this purpose. Everything you upload <strong>permanently becomes part of your
+        advocate's evidence</strong> — it is woven into how your advocate understands and
+        represents you, and the service is built on that permanence. Upload only what you are
+        comfortable contributing on those terms.</p>
+
+    <h3>Talking to an advocate</h3>
+    <p>An advocate is an AI. It is not the person, and it can be imperfect, incomplete or wrong —
+        it speaks <em>for</em> someone, grounded in their evidence, but its answers are generated,
+        not written by them. Don't treat an advocate's answers as the person's own words or as
+        professional advice.</p>
+
+    <h3>Conversations are recorded</h3>
+    <p>Every conversation with an advocate — including guest conversations — is recorded and is
+        visible to the person the advocate represents and to the people who operate the service.
+        Don't share anything in a conversation you wouldn't want them to see.</p>
+
+    <h3>Access codes are personal</h3>
+    <p>A guest access code is issued to you, for you. Don't pass it on — the person who invited
+        you chose who they wanted to talk to their advocate.</p>
+
+    <h3>Fair use</h3>
+    <p>Don't attempt to break, probe or overload the service, to access someone else's advocate or
+        data, to misrepresent an advocate's answers as the person's own statements, or to use the
+        service for anything unlawful. We may suspend access that abuses the service or the people
+        it represents.</p>
+
+    <h3>Changes to these terms</h3>
+    <p>When these terms change materially, members are asked to accept the new version at their
+        next sign-in before continuing.</p>
+
+    <h3>Questions</h3>
+    <p>vishwakarma.ai is run by a small team. For anything about these terms, reply to any email
+        you've received from us, or ask the person who invited you.</p>
+</section>
+
+<!-- ============================== Privacy policy (v1) ============================== -->
+<section th:fragment="privacy" class="policy-text">
+    <h2 id="privacy">Privacy policy</h2>
+    <p class="policy-meta">Version 1</p>
+
+    <h3>What we hold</h3>
+    <ul>
+        <li><strong>Sign-in details</strong> — members sign in with Google; we keep the email
+            address and name Google shares with us. We never see your password.</li>
+        <li><strong>Your evidence</strong> — the recordings, documents and other material a member
+            uploads to build their advocate, and what the service derives from it.</li>
+        <li><strong>Conversations</strong> — every chat with an advocate, kept as part of the
+            advocate's record. Guest conversations are included.</li>
+        <li><strong>Guest emails</strong> — a guest's email address is used to send their access
+            code, and (only if the guest asks us to) to tell the member someone wanted to talk
+            while their advocate was offline.</li>
+    </ul>
+
+    <h3>What it's used for</h3>
+    <p>One thing: building, serving and improving the advocate the material belongs to. We don't
+        sell your information, we don't share it for advertising, and there is no tracking or
+        profiling of visitors.</p>
+
+    <h3>You're talking to an AI</h3>
+    <p>Conversations on this service are with an AI advocate, not with the person it represents.
+        Chats are recorded and visible to that person and to the people who operate the service —
+        this is disclosed on every chat surface, and it is how members hear the questions people
+        bring to their advocate.</p>
+
+    <h3>Evidence is permanent</h3>
+    <p>Uploaded evidence is a permanent contribution to the advocate it belongs to (see the terms).
+        Chat records are kept for as long as the advocate exists so the member can review them.</p>
+
+    <h3>Where it lives</h3>
+    <p>The service runs on Google Cloud. Your material is stored there, protected by the same
+        access controls that keep each advocate's world separate from every other.</p>
+
+    <h3>Questions</h3>
+    <p>For anything about your information, reply to any email you've received from us, or ask the
+        person who invited you.</p>
+</section>
+
+<!-- ============================== Cookie policy (v1) =============================== -->
+<section th:fragment="cookies" class="policy-text">
+    <h2 id="cookies">Cookie policy</h2>
+    <p class="policy-meta">Version 1</p>
+
+    <h3>Two cookies, both functional</h3>
+    <ul>
+        <li><strong>Session cookie</strong> — keeps your visit working: it holds a member's
+            sign-in as they move around their advocate's site, and it protects the forms anyone
+            submits (like entering an access code).</li>
+        <li><strong>Guest session (<code>adv_session</code>)</strong> — set when a guest enters an
+            access code; it keeps the conversation going for the length of the visit.</li>
+    </ul>
+    <p>That's the whole list. There are no analytics cookies, no advertising cookies and no
+        third-party cookies of any kind.</p>
+
+    <h3>On-device preferences</h3>
+    <p>Your browser's local storage remembers small on-device preferences — your light/dark theme
+        choice, and that you've dismissed the cookie notice. These never leave your device.</p>
+
+    <h3>The notice</h3>
+    <p>Because both cookies are strictly functional, the banner you may see is a notice, not a
+        consent form — the service works exactly the same either way.</p>
+</section>
+
+</body>
+</html>

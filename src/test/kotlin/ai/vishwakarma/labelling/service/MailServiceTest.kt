@@ -21,12 +21,22 @@ private class RecordingTransport : MailTransport {
 private class FakeBookkeeping : MailBookkeepingRepository(mock(Firestore::class.java)) {
     val counts = mutableMapOf<String, Int>()
     val digests = mutableSetOf<String>()
+    var failed = 0
+    var skipped = 0
 
     override fun countSendIfBelow(date: String, cap: Int): Boolean {
         val current = counts.getOrDefault(date, 0)
         if (current >= cap) return false
         counts[date] = current + 1
         return true
+    }
+
+    override fun markSendFailed(date: String) {
+        failed++
+    }
+
+    override fun markSendSkipped(date: String) {
+        skipped++
     }
 
     override fun digestSent(date: String, subjectId: String): Boolean =
@@ -65,12 +75,16 @@ class MailServiceTest {
             service.send(MailTemplate.CLAIMS_READY, "c@x.com", model),
         )
         assertEquals(2, transport.sent.size)
+        // VA-68 (§14.1): the cap refusal is counted on the day's row.
+        assertEquals(1, bookkeeping.skipped)
     }
 
     @Test
     fun `a transport failure never throws — it returns FAILED for the caller to mark`() {
         transport.failWith = IllegalStateException("SMTP down")
         assertEquals(MailResult.FAILED, service.send(MailTemplate.SPEAKER_HELP, "s@x.com", model))
+        // VA-68 (§14.1): the failure is counted on the day's row.
+        assertEquals(1, bookkeeping.failed)
     }
 
     @Test

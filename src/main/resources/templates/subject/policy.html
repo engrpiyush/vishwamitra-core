@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-45: one public read-only policy page on a subject host (/policies/{page} — permitAll, no
+  session needed). ${policy} picks which public/policy-texts fragment renders; the guest-facing
+  shell (public footer + cookie notice) frames it.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero policy-page">
+            <span class="brand-mark"></span>
+            <!-- th:replace outranks th:if, so the conditional include needs the th:block wrapper. -->
+            <th:block th:if="${policy == 'tnc'}">
+                <div th:replace="~{public/policy-texts :: tnc}"></div>
+            </th:block>
+            <th:block th:if="${policy == 'privacy'}">
+                <div th:replace="~{public/policy-texts :: privacy}"></div>
+            </th:block>
+            <th:block th:if="${policy == 'cookies'}">
+                <div th:replace="~{public/policy-texts :: cookies}"></div>
+            </th:block>
+        </section>
+    </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
+</div>
+
+<div th:replace="~{public/shell :: cookiebar}"></div>
+</body>
+</html>

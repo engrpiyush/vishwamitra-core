@@ -51,11 +51,7 @@
             </details>
         </section>
     </main>
-    <footer class="landing-foot">
-        <a th:href="@{/}">Home</a> ·
-        <a th:href="@{/training}">Training space</a> ·
-        <a th:href="@{/terms}">Terms &amp; policies</a>
-    </footer>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
 </div>
 
 </body>

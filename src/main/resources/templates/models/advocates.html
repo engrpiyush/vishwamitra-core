@@ -15,6 +15,40 @@
         occupant at a time. Windows deploy on start and undeploy on end; a deployed replica bills
         until torn down.</p>
 
+    <!-- VA-68 (§14.1): day-one ops counters, app-level. Zeros render as zeros — trustworthy on
+         day one; per-subject numbers live in each row's Ops cell. -->
+    <div class="console-cards ops-cards">
+        <div class="card console-card">
+            <h3>Wall</h3>
+            <span class="card-stat" th:text="${opsTotals.wallAttempts}">0</span>
+            <span class="muted" th:text="|attempts · ${opsTotals.wallLockouts} lockout refusals|">attempts</span>
+        </div>
+        <div class="card console-card">
+            <h3>Guest sessions</h3>
+            <span class="card-stat" th:text="${opsTotals.redemptions}">0</span>
+            <span class="muted">codes redeemed</span>
+        </div>
+        <div class="card console-card">
+            <h3>Deploys</h3>
+            <span class="card-stat"
+                  th:text="|${opsTotals.deploysSucceeded} ✓ / ${opsTotals.deploysFailed} ✗|">0 ✓ / 0 ✗</span>
+            <span class="muted"
+                  th:text="${opsTotals.avgDeployMinutes != null} ? |avg ${opsTotals.avgDeployMinutes} min to LIVE| : 'no measured deploys yet'">avg</span>
+        </div>
+        <div class="card console-card">
+            <h3>Window spend (est.)</h3>
+            <span class="card-stat"
+                  th:text="|$${#numbers.formatDecimal(opsTotals.windowEstimateUsdTotal, 1, 2)}|">$0.00</span>
+            <span class="muted" th:text="|across ${opsTotals.windowsStarted} window(s), preset × hourly dial|">windows</span>
+        </div>
+        <div class="card console-card">
+            <h3>Mail today</h3>
+            <span class="card-stat" th:text="${mailToday.counted}">0</span>
+            <span class="muted"
+                  th:text="|sends · ${mailToday.failed} failed · ${mailToday.skippedCap} capped|">sends</span>
+        </div>
+    </div>
+
     <!-- Register: stage a READY checkpoint for a subject → UNPROVISIONED (LLD §7.1). -->
     <section class="panel">
         <h2>Register a trained model</h2>
@@ -48,6 +82,7 @@
             <th>Window</th>
             <th>Score</th>
             <th>Codes</th>
+            <th>Ops</th>
             <th>Actions</th>
         </tr>
         </thead>
@@ -87,6 +122,19 @@
                 </form>
             </td>
             <td><span th:text="|${row.tokenActive}/${row.tokenTotal} active|">0/0</span></td>
+            <!-- VA-68: the row's §14.1 counters, compact. Zeros are real zeros. -->
+            <td class="ops-cell muted">
+                <span th:text="|wall ${row.ops.wallAttempts}/${row.ops.wallLockouts}|"
+                      title="wall attempts / lockout refusals">wall 0/0</span><br/>
+                <span th:text="|redeemed ${row.ops.redemptions}|">redeemed 0</span><br/>
+                <span th:text="|deploys ${row.ops.deploysSucceeded}✓ ${row.ops.deploysFailed}✗|"
+                      title="deploys succeeded / failed">deploys 0✓ 0✗</span><br/>
+                <span th:if="${row.ops.lastDeployMinutes != null}"
+                      th:text="|last deploy ${row.ops.lastDeployMinutes} min|">last</span>
+                <span th:if="${row.ops.lastWindowEstimateUsd != null}"
+                      th:text="|· last window ~$${#numbers.formatDecimal(row.ops.lastWindowEstimateUsd, 1, 2)}|"
+                      title="preset hours × the hourly dial, stamped at start">est</span>
+            </td>
             <td class="actions">
                 <form method="post" th:action="@{/models/advocates/start}" th:if="${row.startable}"
                       class="inline-send"

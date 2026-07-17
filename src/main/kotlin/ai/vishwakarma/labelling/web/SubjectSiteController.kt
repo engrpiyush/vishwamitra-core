@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.server.ResponseStatusException
@@ -72,6 +73,25 @@ class SubjectSiteController(
         return "redirect:/"
     }
 
+    /**
+     * VA-45 (LLD §13.3): public read-only policy pages — reachable logged-out (permitAll, outside
+     * the terms gate), same text fragments the S1 accept page renders.
+     */
+    @GetMapping("/policies/{page}")
+    fun policy(
+        request: HttpServletRequest,
+        @PathVariable page: String,
+        model: Model,
+    ): String {
+        val ctx = ctx(request)
+        val (fragment, title) =
+            POLICY_PAGES[page] ?: throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        model.addAttribute("pageTitle", "$title — ${ctx.displayName}")
+        model.addAttribute("ctx", ctx)
+        model.addAttribute("policy", fragment)
+        return "subject/policy"
+    }
+
     @GetMapping("/terms")
     fun terms(request: HttpServletRequest, model: Model): String {
         val ctx = ctx(request)
@@ -93,5 +113,15 @@ class SubjectSiteController(
         // Targets come from our own interceptor, but stay paranoid about redirect targets.
         val target = saved?.takeIf { it.startsWith("/") && !it.startsWith("//") } ?: "/training"
         return "redirect:$target"
+    }
+
+    companion object {
+        /** URL slug → (policy-texts fragment id, page title) — the §13.3 trio, nothing else. */
+        val POLICY_PAGES: Map<String, Pair<String, String>> =
+            mapOf(
+                "terms" to ("tnc" to "Terms & conditions"),
+                "privacy" to ("privacy" to "Privacy policy"),
+                "cookies" to ("cookies" to "Cookie policy"),
+            )
     }
 }

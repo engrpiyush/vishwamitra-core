@@ -686,3 +686,41 @@ label.attest input { margin-top: 0.2rem; flex: none; }
 .chat-form textarea { flex: 1; resize: none; }
 .score-card .score-dial { font-size: 2rem; font-weight: 750; letter-spacing: -0.02em; margin-bottom: 0.3rem; }
 .score-card .score-dial span { font-size: 1rem; font-weight: 500; color: var(--muted); }
+
+/* ── VA-45: policy pages + cookie notice (LLD §13.3) ── */
+.policy-page { max-width: 720px; text-align: left; }
+.policy-page > h1, .policy-page > .lede, .policy-page > .policy-toc { text-align: center; }
+.policy-toc { color: var(--muted); font-size: 0.9rem; }
+.policy-text { margin-top: 2.25rem; }
+.policy-text + .policy-text { border-top: 1px solid var(--border); padding-top: 1.75rem; }
+.policy-text h2 { font-size: 1.35rem; margin-bottom: 0.15rem; }
+.policy-text h3 { font-size: 1rem; margin: 1.25rem 0 0.35rem; }
+.policy-text p, .policy-text li { color: var(--muted); font-size: 0.92rem; line-height: 1.55; }
+.policy-text ul { padding-left: 1.2rem; margin: 0.4rem 0; }
+.policy-text li { margin-bottom: 0.35rem; }
+.policy-text strong { color: var(--text); }
+.policy-meta { color: var(--muted); font-size: 0.78rem; }
+.policy-accept { margin-top: 2.5rem; padding-top: 1.75rem; border-top: 1px solid var(--border); text-align: center; }
+.policy-links a { color: var(--muted); }
+.cookie-bar {
+    position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 1rem; width: max-content; max-width: min(92vw, 640px);
+    padding: 0.7rem 1rem; background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: var(--shadow-lg); font-size: 0.85rem;
+    color: var(--muted); z-index: 50;
+}
+/* The §8.5 lesson: explicit display rules beat the UA [hidden] default — restate it. */
+.cookie-bar[hidden] { display: none; }
+.cookie-bar .btn { flex: none; }
+
+/* ── VA-71: apex landing capability strip (LLD §8.4) ── */
+.landing-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-top: 2.75rem; text-align: left; }
+.landing-strip h3 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+.landing-strip p { color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
+@media (max-width: 720px) {
+    .landing-strip { grid-template-columns: 1fr; }
+}
+
+/* ── VA-68: Advocates panel ops counters (LLD §14.1) ── */
+.ops-cards { margin: 1rem 0 1.5rem; }
+.ops-cell { font-size: 0.78rem; line-height: 1.5; white-space: nowrap; }

@@ -18,6 +18,7 @@ import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.invoke
+import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository
 import org.springframework.security.web.AuthenticationEntryPoint
@@ -34,12 +35,13 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
  * Host-split security (VA-30, LLD §4.4): [SubjectHostFilter] runs ahead of every chain and stamps
- * subject-host requests with [SubjectCtx] (and auth-host requests with [AuthHost.ATTR]); the chains
- * then split:
+ * subject-host requests with [SubjectCtx] (auth-host requests with [AuthHost.ATTR], public-apex
+ * requests with [PublicHost.ATTR]); the chains then split:
  * - auth-host chain (order 1, VA-70) — the central OAuth callback host `auth.{base-domain}`.
  * - subject chain (order 2) — claims any request carrying the ctx attribute, on BOTH profiles, so
  *   dev exercises the real subject authorization table (`<handle>.localhost:8080`).
- * - operator chains (order 3) — exactly the pre-VA-30 posture: `dev` = OAuth bypassed via
+ * - public-apex chain (order 3, VA-71) — the `{base-domain}` front door, permitAll + stateless.
+ * - operator chains (order 4) — exactly the pre-VA-30 posture: `dev` = OAuth bypassed via
  *   [DevAuthFilter]; others = Google OAuth2 login gated by [AllowlistOidcUserService].
  *
  * Role hierarchy ADMIN ⊃ REVIEWER ⊃ AUTHOR applies to both web and method security; SUBJECT sits
@@ -202,6 +204,8 @@ class SecurityConfig {
                 // rate-limited gate (§6.3).
                 authorize("/s", permitAll)
                 authorize("/s/wall/**", permitAll)
+                // VA-45 (§13.3): the read-only policy pages are public — reachable logged-out.
+                authorize("/s/policies/**", permitAll)
                 // VA-43 (§8.3): the landing's sign-in CTA — authentication is the whole point;
                 // the handler just bounces back to the root, which now renders chat/status.
                 authorize("/s/signin", authenticated)
@@ -267,8 +271,36 @@ class SecurityConfig {
         return http.build()
     }
 
+    /**
+     * The public-apex world (VA-71, LLD §8.4): `{base-domain}` (and its www 301 / dev-collapse
+     * door) — the product front door. [SubjectHostFilter] stamped the marker and already 404'd
+     * everything but the landing, the policy pages and static assets. Deliberately cookieless:
+     * stateless + no CSRF means an anonymous apex visit sets nothing, which is exactly what the
+     * §13.3 cookie policy promises; there is no login machinery here to protect.
+     */
     @Bean
     @Order(3)
+    fun publicSecurityFilterChain(http: HttpSecurity): SecurityFilterChain {
+        http.securityMatcher(RequestMatcher { it.getAttribute(PublicHost.ATTR) != null })
+        http {
+            authorizeHttpRequests {
+                authorize("/css/**", permitAll)
+                authorize("/js/**", permitAll)
+                authorize("/webjars/**", permitAll)
+                authorize("/favicon.svg", permitAll)
+                authorize("/error", permitAll)
+                authorize("/p", permitAll)
+                authorize("/p/policies/**", permitAll)
+                authorize(anyRequest, denyAll)
+            }
+            csrf { disable() }
+            sessionManagement { sessionCreationPolicy = SessionCreationPolicy.STATELESS }
+        }
+        return http.build()
+    }
+
+    @Bean
+    @Order(4)
     @Profile("dev")
     fun devSecurityFilterChain(http: HttpSecurity, props: AppProperties): SecurityFilterChain {
         http {
@@ -287,7 +319,7 @@ class SecurityConfig {
     }
 
     @Bean
-    @Order(3)
+    @Order(4)
     @Profile("!dev")
     fun securityFilterChain(
         http: HttpSecurity,

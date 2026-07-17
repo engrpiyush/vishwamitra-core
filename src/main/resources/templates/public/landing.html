@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{public/shell :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-71 (LLD §8.4): the vishwakarma.ai front door. Friendly capability language only — what the
+  product is and how access works; no operator or subject machinery is reachable from here (the
+  host filter 404s everything else on the apex). The apex sets no cookies, so there is no banner —
+  the policy pages in the footer carry the full story.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero landing-hero--wide">
+            <span class="brand-mark"></span>
+            <h1>vishwakarma.ai</h1>
+            <p class="lede">Personal advocates — an AI that speaks for one person, grounded in
+                real evidence they chose to share and reviewed themselves. Not a profile, not a
+                chatbot persona: an advocate you can question.</p>
+
+            <div class="landing-panels">
+                <div class="landing-panel">
+                    <h2>Invited to talk to one?</h2>
+                    <p class="panel-lede">Every advocate lives at its own address, shared by the
+                        person it represents. You'll need an <strong>access code</strong> from
+                        them — it arrives by email and works on their advocate's own page.</p>
+                    <p class="panel-fineprint">You'll be chatting with an AI advocate, not with
+                        the person directly; conversations are recorded and visible to them.</p>
+                </div>
+                <div class="landing-divider" role="separator"></div>
+                <div class="landing-panel">
+                    <h2>Building your own?</h2>
+                    <p class="panel-lede">Members sign in on their advocate's own address — the
+                        one from their invitation. There they share evidence, review what their
+                        advocate may say, and manage who gets to talk to it.</p>
+                    <p class="panel-fineprint">Access is invitation-only while we build.</p>
+                </div>
+            </div>
+
+            <div class="landing-strip">
+                <div>
+                    <h3>Built from real material</h3>
+                    <p>Recordings, documents and endorsements the person contributes — not
+                        scraped, not imagined.</p>
+                </div>
+                <div>
+                    <h3>Reviewed by the person</h3>
+                    <p>They see what was understood and decide what stands before their advocate
+                        ever says it.</p>
+                </div>
+                <div>
+                    <h3>Honest by construction</h3>
+                    <p>Answers stay grounded in the reviewed evidence — an advocate would rather
+                        say less than make things up.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
+</div>
+
+</body>
+</html>

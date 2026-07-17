@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.BaseKind
 import ai.vishwakarma.labelling.domain.ModelVersion
+import ai.vishwakarma.labelling.domain.OpsCounters
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.Subject
@@ -17,6 +18,7 @@ import ai.vishwakarma.labelling.gcs.ServingStager
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.MailBookkeepingRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.UserRepository
 import arrow.core.Either
@@ -67,6 +69,20 @@ private class ProvUserRepo : UserRepository(mock(Firestore::class.java)) {
     val store = mutableListOf<User>()
 
     override fun findAll(): List<User> = store
+}
+
+/** VA-68: records bumps per counter key (single-subject tests — no per-subject scoping). */
+private class ProvOpsRepo : OpsCounterRepository(mock(Firestore::class.java)) {
+    val counters = mutableMapOf<String, Double>()
+
+    override fun bump(
+        subjectId: String,
+        increments: Map<String, Number>,
+        sets: Map<String, Number>,
+    ) {
+        increments.forEach { (k, v) -> counters.merge(k, v.toDouble(), Double::plus) }
+        sets.forEach { (k, v) -> counters[k] = v.toDouble() }
+    }
 }
 
 private class ProvBookkeeping : MailBookkeepingRepository(mock(Firestore::class.java)) {
@@ -140,6 +156,7 @@ class ProvisioningServiceTest {
     private val advocates = ProvAdvocateRepo()
     private val subjects = ProvSubjectRepo()
     private val versions = ProvVersionRepo()
+    private val ops = ProvOpsRepo()
     private val users = ProvUserRepo()
     private val transport = ProvTransport()
 
@@ -174,6 +191,7 @@ class ProvisioningServiceTest {
             advocates = advocates,
             subjects = subjects,
             versions = versions,
+            ops = ops,
             backends = listOf(backend),
             locator = CheckpointLocator(p),
             stager = ServingStager(p),
@@ -303,6 +321,13 @@ class ProvisioningServiceTest {
         assertNotNull(live.windowEndsAt)
         assertTrue(live.windowEndsAt!! >= before.plus(Duration.ofDays(3)).minusSeconds(5))
         assertEquals(listOf("subj-1@x.com"), transport.sent.map { it.first })
+        // VA-68 (§14.1): started/succeeded counters + the $-estimate (72h × the $2.90 default).
+        assertEquals(1.0, ops.counters[OpsCounters.WINDOWS_STARTED])
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_STARTED])
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_SUCCEEDED])
+        assertEquals(0.0, ops.counters[OpsCounters.LAST_DEPLOY_SECONDS])
+        assertEquals(208.8, ops.counters[OpsCounters.LAST_WINDOW_ESTIMATE_USD]!!, 0.001)
+        assertEquals(208.8, ops.counters[OpsCounters.WINDOW_ESTIMATE_USD_TOTAL]!!, 0.001)
 
         val ended = service(dryRun = true).endWindow("subj-1", "manual", "s").expectRight()
         assertEquals(AdvocateState.UNPROVISIONED, ended.state)
@@ -332,6 +357,9 @@ class ProvisioningServiceTest {
         assertEquals("dm-1", live.servingDeployedModelId)
         assertNull(live.provisioningStartedAt)
         assertEquals(1, transport.sent.size)
+        // VA-68: the deploy settled LIVE — succeeded + a measured (here ~0s) duration.
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_SUCCEEDED])
+        assertNotNull(ops.counters[OpsCounters.LAST_DEPLOY_SECONDS])
 
         val stopping = svc.endWindow("subj-1", "manual", "neo@x.com").expectRight()
         assertEquals(AdvocateState.DEPROVISIONING, stopping.state)
@@ -352,6 +380,9 @@ class ProvisioningServiceTest {
         val adv = advocates.store["subj-1"]!!
         assertEquals(AdvocateState.DEPLOY_FAILED, adv.state)
         assertEquals("boom", adv.lastError)
+        // VA-68: the kicked-off deploy counted, and so did its immediate failure.
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_STARTED])
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_FAILED])
     }
 
     @Test
@@ -377,6 +408,8 @@ class ProvisioningServiceTest {
         val adv = service(ProvBackend(hold = true)).poll("subj-1").expectRight()
         assertEquals(AdvocateState.DEPLOY_FAILED, adv.state)
         assertTrue(adv.lastError!!.contains("gave up"))
+        // VA-68: the timeout flip counts as a failed deploy too.
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_FAILED])
     }
 
     @Test

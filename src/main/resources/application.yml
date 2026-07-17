@@ -100,6 +100,8 @@ app:
     staging-bucket: ${SERVING_STAGING_BUCKET:}
     # PROVISIONING older than this flips to DEPLOY_FAILED (measured cold deploy is 25–35 min).
     deploy-timeout: ${SERVING_DEPLOY_TIMEOUT:60m}
+    # §14.1 window $-estimate dial (VA-68): all-in hourly price of one serving replica.
+    hourly-usd: ${SERVING_HOURLY_USD:2.90}
   # Stage 2 (A/V → Claims): managed transcription + Claude claim extraction.
   stage2:
     # STT batchRecognize writes diarized transcripts here (separate lifecycle from intake media).

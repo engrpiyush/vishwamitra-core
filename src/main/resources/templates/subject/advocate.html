@@ -49,16 +49,19 @@
         </section>
     </main>
 
-    <!-- Guests get the public footer; the subject/operator keeps their tools nav.
+    <!-- Guests get the public footer + cookie notice; the subject/operator keeps their tools nav.
          (th:replace outranks th:if, so the conditional include needs the th:block wrapper.) -->
-    <footer class="landing-foot" th:if="${mode == 'GUEST'}">
-        <a th:href="@{/terms}">Terms &amp; policies</a>
-    </footer>
+    <th:block th:if="${mode == 'GUEST'}">
+        <footer th:replace="~{public/shell :: publicfoot}"></footer>
+    </th:block>
     <th:block th:if="${mode == 'SELF'}">
         <footer th:replace="~{subject/layout :: foot}"></footer>
     </th:block>
 </div>
 
+<th:block th:if="${mode == 'GUEST'}">
+    <div th:replace="~{public/shell :: cookiebar}"></div>
+</th:block>
 <script th:if="${status == null}" th:src="@{/js/advocate-chat.js}" defer></script>
 </body>
 </html>

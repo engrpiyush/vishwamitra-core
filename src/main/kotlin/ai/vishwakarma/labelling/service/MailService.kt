@@ -122,6 +122,8 @@ class MailService(
                     template.id,
                     to,
                 )
+                // VA-68 (§14.1): counting is observability — it must never break the flow.
+                runCatching { bookkeeping.markSendSkipped(today) }
                 return MailResult.SKIPPED_CAP
             }
             transport.send(
@@ -133,6 +135,7 @@ class MailService(
             MailResult.SENT
         } catch (e: Exception) {
             log.warn("Mail send failed ({} to {}): {}", template.id, to, e.message)
+            runCatching { bookkeeping.markSendFailed(today) }
             MailResult.FAILED
         }
     }

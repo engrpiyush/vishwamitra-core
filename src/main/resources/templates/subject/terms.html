@@ -3,32 +3,38 @@
 <head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
 <body>
 
-<!-- VA-30: the gate + accept mechanics. The reviewed policy texts ship with VA-45 (D5). -->
+<!--
+  S1 (VA-30 mechanics + VA-45 texts, LLD §13): the three policies stacked, one accept action for
+  all three. The texts are the public/policy-texts fragments — the same words the read-only
+  /policies pages show, so what's accepted is exactly what's published.
+-->
 <div class="landing">
     <main class="landing-main">
-        <section class="landing-hero">
+        <section class="landing-hero policy-page">
             <span class="brand-mark"></span>
             <h1>Terms &amp; policies</h1>
             <p class="lede">Before using <span th:text="${ctx.displayName}">this subject</span>'s
-                advocate space, please accept the current policies.</p>
+                advocate space, please read and accept the current policies.</p>
+            <nav class="policy-toc">
+                <a href="#tnc">Terms &amp; conditions</a> ·
+                <a href="#privacy">Privacy</a> ·
+                <a href="#cookies">Cookies</a>
+            </nav>
 
-            <p class="lede"><strong>Terms &amp; conditions</strong>
-                (<span th:text="${versions['tnc']}">v1</span>) — policy text under review; final
-                wording ships before go-live.</p>
-            <p class="lede"><strong>Privacy policy</strong>
-                (<span th:text="${versions['privacy']}">v1</span>) — covers chat retention, guest
-                email handling and the advocate disclosure.</p>
-            <p class="lede"><strong>Cookie policy</strong>
-                (<span th:text="${versions['cookies']}">v1</span>) — two functional cookies only:
-                your login session and the guest chat session.</p>
+            <div th:replace="~{public/policy-texts :: tnc}"></div>
+            <div th:replace="~{public/policy-texts :: privacy}"></div>
+            <div th:replace="~{public/policy-texts :: cookies}"></div>
 
-            <p th:if="${accepted}" class="lede">You've accepted the current versions — you're all
-                set.</p>
-            <form th:unless="${accepted}" th:action="@{/terms/accept}" method="post">
-                <button type="submit" class="landing-cta">I accept all three policies</button>
-            </form>
+            <div class="policy-accept">
+                <p th:if="${accepted}" class="lede">You've accepted the current versions — you're
+                    all set.</p>
+                <form th:unless="${accepted}" th:action="@{/terms/accept}" method="post">
+                    <button type="submit" class="landing-cta">I accept all three policies</button>
+                </form>
+            </div>
         </section>
     </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
 </div>
 
 </body>
