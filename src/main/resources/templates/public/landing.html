@@ -7,7 +7,9 @@
   VA-71 (LLD §8.4): the vishwakarma.ai front door. Friendly capability language only — what the
   product is and how access works; no operator or subject machinery is reachable from here (the
   host filter 404s everything else on the apex). The apex sets no cookies, so there is no banner —
-  the policy pages in the footer carry the full story.
+  the policy pages in the footer carry the full story. One deliberate JS exception to the
+  static-page posture: the find-your-advocate box below is client-side only (normalize a handle,
+  navigate to that subject world) — no cookies, no requests from this page.
 -->
 <div class="landing">
     <main class="landing-main">
@@ -21,19 +23,33 @@
             <div class="landing-panels">
                 <div class="landing-panel">
                     <h2>Invited to talk to one?</h2>
-                    <p class="panel-lede">Every advocate lives at its own address, shared by the
-                        person it represents. You'll need an <strong>access code</strong> from
-                        them — it arrives by email and works on their advocate's own page.</p>
+                    <p class="panel-lede">Every advocate lives at its own address — it looks like
+                        <strong>theirname.vishwakarma.ai</strong>. <strong>Open the link from
+                        your invitation email</strong>: your <strong>access code</strong> works
+                        on their advocate's page, not here.</p>
+                    <form class="form" id="findAdvocate">
+                        <label for="findHandle">Know their handle? Go straight there
+                            <input type="text" id="findHandle" placeholder="theirname"
+                                   autocomplete="off" spellcheck="false"
+                                   aria-describedby="findHint"/>
+                        </label>
+                        <button type="submit">Find their advocate &rarr;</button>
+                        <p class="panel-fineprint" id="findHint" hidden>Just the name from the
+                            address — letters, numbers and dashes.</p>
+                    </form>
                     <p class="panel-fineprint">You'll be chatting with an AI advocate, not with
                         the person directly; conversations are recorded and visible to them.</p>
                 </div>
                 <div class="landing-divider" role="separator"></div>
                 <div class="landing-panel">
                     <h2>Building your own?</h2>
-                    <p class="panel-lede">Members sign in on their advocate's own address — the
-                        one from their invitation. There they share evidence, review what their
-                        advocate may say, and manage who gets to talk to it.</p>
-                    <p class="panel-fineprint">Access is invitation-only while we build.</p>
+                    <p class="panel-lede"><strong>Open the link from your invitation email and
+                        sign in there</strong> — on your advocate's own address you share
+                        evidence, review what your advocate may say, and manage who gets to talk
+                        to it.</p>
+                    <p class="panel-fineprint">Access is invitation-only while we build — you can
+                        <a th:href="@{/#contact}">ask for an invitation</a> from the main
+                        page.</p>
                 </div>
             </div>
 
@@ -59,5 +75,29 @@
     <footer th:replace="~{public/shell :: publicfoot}"></footer>
 </div>
 
+<script>
+    (function () {
+        var form = document.getElementById('findAdvocate');
+        var input = document.getElementById('findHandle');
+        var hint = document.getElementById('findHint');
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            // Accept a bare handle, @handle, or a pasted address/URL — reduce to the first
+            // label. No existence check here: the subject world owns unknown-handle handling,
+            // and this page stays request-free.
+            var raw = (input.value || '').trim().toLowerCase()
+                .replace(/^https?:\/\//, '').replace(/^@/, '');
+            var handle = raw.split(/[/.\s]/)[0];
+            if (!/^[a-z0-9-]+$/.test(handle)) {
+                hint.hidden = false;
+                input.focus();
+                return;
+            }
+            // The apex host minus any www. prefix IS the base domain (dev: localhost:8080).
+            var base = window.location.host.replace(/^www\./, '');
+            window.location.href = window.location.protocol + '//' + handle + '.' + base + '/';
+        });
+    })();
+</script>
 </body>
 </html>
