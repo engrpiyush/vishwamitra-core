@@ -35,6 +35,10 @@ class BaseModelRepository(private val db: Firestore) {
             "family" to family,
             "active" to active,
             "tunable" to tunable,
+            "hostable" to hostable,
+            "servingImage" to servingImage,
+            "acceleratorSpec" to acceleratorSpec,
+            "serveVerified" to serveVerified,
             "updatedBy" to updatedBy,
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
         )
@@ -49,6 +53,12 @@ class BaseModelRepository(private val db: Firestore) {
             // Legacy rows (pre-tunable) default true so nothing silently disappears from the
             // picker.
             tunable = getBoolean("tunable") ?: true,
+            // Legacy rows (pre-hostable) default FALSE — host capability is claimed, not assumed
+            // (the seeder reconcile marks the VA-74-probed families).
+            hostable = getBoolean("hostable") ?: false,
+            servingImage = getString("servingImage") ?: "",
+            acceleratorSpec = getString("acceleratorSpec") ?: "",
+            serveVerified = getBoolean("serveVerified") ?: false,
             updatedBy = getString("updatedBy"),
             updatedAt = instant("updatedAt"),
         )

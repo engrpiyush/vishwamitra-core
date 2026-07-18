@@ -76,15 +76,29 @@ class DataSeeder {
         // them. Trade-off: a deleted family reappears on restart; deactivate instead of deleting.
         val existing = baseModels.list().map { it.family.lowercase() }.toSet()
         var seeded = 0
+        // VA-86: hostable = deployable on the held V100 endpoint (VA-74 probe pins). The image
+        // stays blank — the global `app.serving.image` pin serves every verified family today.
+        val v100Spec = "1× V100 16GB · n1-standard-8 · float16 (SM70)"
         fun ensure(
             publisherModel: String,
             displayName: String,
             family: String,
             active: Boolean,
             tunable: Boolean = true,
+            hostable: Boolean = false,
         ) {
             if (family.lowercase() in existing) return
-            baseModels.create(publisherModel, displayName, family, active, "seed", tunable)
+            baseModels.create(
+                publisherModel,
+                displayName,
+                family,
+                active,
+                "seed",
+                tunable,
+                hostable = hostable,
+                acceleratorSpec = if (hostable) v100Spec else "",
+                serveVerified = hostable,
+            )
             seeded++
         }
         // The tune picker's curated allowlist (2026-07-13): only the two advocate targets we've
@@ -107,7 +121,15 @@ class DataSeeder {
             tunable = false,
         )
         // Stage 4 advocate targets (S4-D6; catalog ids live-verified 2026-07-12, VA-59).
-        ensure("qwen/qwen3@qwen3-4b", "Qwen3 4B", "qwen3-4b", active = true, tunable = true)
+        // Serve-probed live on the V100 endpoint (VA-74: 75 tok/s) → hostable.
+        ensure(
+            "qwen/qwen3@qwen3-4b",
+            "Qwen3 4B",
+            "qwen3-4b",
+            active = true,
+            tunable = true,
+            hostable = true,
+        )
         ensure(
             "qwen/qwen3-5@qwen3.5-9b",
             "Qwen 3.5 9B",
@@ -123,20 +145,27 @@ class DataSeeder {
             "qwen3-1-7b",
             active = true,
             tunable = false,
+            hostable = true,
         )
         // Llama 3.2 3B — alt advocate lineage. Catalog id live-verified us-central1 2026-07-13
-        // (needs TUNING_REGION=us-central1); serve-verified VA-74. Tune acceptance owner-accepted.
+        // (needs TUNING_REGION=us-central1); serve-verified VA-74 (88 tok/s). Tune acceptance
+        // owner-accepted.
         ensure(
             "meta/llama3-2@llama-3.2-3b",
             "Llama 3.2 3B",
             "llama-3-2-3b",
             active = true,
             tunable = true,
+            hostable = true,
         )
         if (seeded > 0) log.info("Seeded {} base model(s)", seeded)
         // Apply the curated allowlist to rows that predate the `tunable` flag (idempotent).
         val reconciled = baseModels.reconcileTunable(setOf("qwen3-4b", "llama-3-2-3b"))
         if (reconciled > 0) log.info("Reconciled tunable flag on {} base model(s)", reconciled)
+        // Backfill the hostable dimension on pre-VA-86 rows (additive — admin edits win after).
+        val hostReconciled =
+            baseModels.reconcileHostable(setOf("qwen3-4b", "qwen3-1-7b", "llama-3-2-3b"))
+        if (hostReconciled > 0) log.info("Backfilled hostable on {} base model(s)", hostReconciled)
     }
 
     private fun seedTaxonomy(taxonomyRepo: TaxonomyRepository) {

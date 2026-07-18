@@ -7,6 +7,7 @@ import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.service.ProviderService
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -117,7 +118,7 @@ class GeminiStage4RejectedDrafter(
 ) : Stage4RejectedDrafter {
 
     override val model: String?
-        get() = gemini.modelId()
+        get() = gemini.modelId(ProviderService.PIN_STAGE4)
 
     override fun draft(request: Stage4DpoRequest): String =
         Stage4DpoGeneration.parse(
@@ -125,6 +126,7 @@ class GeminiStage4RejectedDrafter(
                 Stage4DpoGeneration.buildPrompt(request),
                 maxTokens = maxTokens,
                 thinkingBudget = thinkingBudget,
+                pin = ProviderService.PIN_STAGE4,
             )
         )
 }

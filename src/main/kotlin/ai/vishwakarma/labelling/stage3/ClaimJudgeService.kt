@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.persistence.Stage3EdgeRepository
 import ai.vishwakarma.labelling.persistence.Stage3EdgeVerdict
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.StageConfigService
 import java.security.MessageDigest
 import java.time.Instant
@@ -296,7 +297,7 @@ class GeminiJudgeSampler(
         get() = prompts.resolveKey(PROMPT_KEY).let { "gemini:${it.version}:${it.hash}" }
 
     override val modelId: String
-        get() = gemini.modelId() ?: "gemini"
+        get() = gemini.modelId(ProviderService.PIN_STAGE3) ?: "gemini"
 
     override fun sample(
         pairs: List<PairToJudge>,
@@ -318,6 +319,7 @@ class GeminiJudgeSampler(
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
                 temperature = config.stage3().ensembleTemperature,
+                pin = ProviderService.PIN_STAGE3,
             )
         // The stated posture ("a dropped pair casts no vote"), applied to the whole sample: a
         // response that defeats the fence/truncation tolerances (e.g. a temperature-0.7

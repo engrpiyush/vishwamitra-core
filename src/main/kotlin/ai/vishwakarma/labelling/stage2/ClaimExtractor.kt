@@ -10,6 +10,7 @@ import ai.vishwakarma.labelling.domain.claimProvenance
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
 import java.time.Instant
 import java.time.LocalDate
@@ -50,6 +51,7 @@ class ClaimExtractor(
                     prompt(asset, chunk, subjectName, resolved, speakerRoles),
                     maxTokens = MAX_TOKENS,
                     thinkingBudget = THINKING_BUDGET,
+                    pin = ProviderService.PIN_STAGE2,
                 )
             parseClaims(raw).mapNotNull {
                 it.toClaim(subjectId, asset, now, resolved, speakerRoles)
@@ -82,6 +84,7 @@ class ClaimExtractor(
                 bytes,
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
+                pin = ProviderService.PIN_STAGE2,
             )
         // Documents have no diarized speakers → no binding; provenance stays asset-level.
         return parseClaims(raw).mapNotNull { it.toClaim(subjectId, asset, now, resolved, null) }

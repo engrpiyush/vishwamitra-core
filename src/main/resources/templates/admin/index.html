@@ -52,7 +52,8 @@
         <section class="panel console-card">
             <h3>Base models</h3>
             <span class="card-stat"><span th:text="${baseModelsActive}">0</span><span class="muted"> / </span><span th:text="${baseModelsTotal}">0</span></span>
-            <p class="muted">models active · <span th:text="${baseModelsTunable}">0</span> tunable.
+            <p class="muted">models active · <span th:text="${baseModelsTunable}">0</span> tunable ·
+                <span th:text="${baseModelsHostable}">0</span> hostable.
                 The hostable dimension (serving image, accelerator, serve-verified) lands with VA-86.</p>
             <div class="card-links">
                 <a th:href="@{/admin/base-models}">Base models</a>

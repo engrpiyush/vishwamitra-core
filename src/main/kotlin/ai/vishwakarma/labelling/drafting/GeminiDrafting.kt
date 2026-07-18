@@ -13,9 +13,12 @@ import org.springframework.stereotype.Component
 
 /**
  * Gemini drafting/generation for every consumer (tuning drafts, Stage 2 extraction, Stage 3 entity
- * extraction + judge). The model comes from the `gemini` provider catalog row; the HTTP door comes
- * from `app.gcp.gemini-transport` (2026-07-11): `vertex` (ADC, DSQ shared pool — the default) or
- * `gemini-api` (Developer API, fixed paid-tier quotas, `GEMINI_API_KEY`) — see [GeminiTransport].
+ * extraction + judge, Stage 4 generation). Model + door + thinking semantics resolve per call
+ * through the VA-76 stage pins: the caller's pin row (`stage2-extraction` | `stage3-judge` |
+ * `stage4-generate`, each field inherit-when-blank) over the base `gemini` catalog row, with the
+ * door falling back to the `app.gcp.gemini-transport` boot default — `vertex` (ADC, DSQ shared
+ * pool) or `gemini-api` (Developer API, fixed paid-tier quotas, `GEMINI_API_KEY`); see
+ * [GeminiTransport]. Unpinned consumers (SFT drafting, F11 questions) run the base row.
  */
 @Component
 class GeminiDrafting(
@@ -25,16 +28,48 @@ class GeminiDrafting(
 
     override val id = "gemini"
 
-    private val transport: GeminiTransport =
-        if (props.gcp.geminiTransport.equals("gemini-api", ignoreCase = true))
-            GeminiApiTransport(props)
-        else VertexGeminiTransport(props)
+    // Both doors are built once; the resolved pin picks between them per call (VA-76).
+    private val vertexTransport = VertexGeminiTransport(props)
+    private val apiTransport = GeminiApiTransport(props)
+
+    private fun transportFor(name: String?): GeminiTransport =
+        when {
+            name.equals("gemini-api", ignoreCase = true) -> apiTransport
+            name.equals("vertex", ignoreCase = true) -> vertexTransport
+            props.gcp.geminiTransport.equals("gemini-api", ignoreCase = true) -> apiTransport
+            else -> vertexTransport
+        }
+
+    private data class Resolved(
+        val model: String,
+        val transport: GeminiTransport,
+        val thinking: String?,
+    )
+
+    /**
+     * Effective {model, door, thinking} for [pin]: pin field → base `gemini` row → boot default.
+     */
+    private fun resolve(pin: String?): Resolved {
+        val base = providers.get(id)
+        val pinned = pin?.let { providers.get(it) }
+        return Resolved(
+            model = pinned?.model?.takeIf { it.isNotBlank() } ?: base?.model.orEmpty(),
+            transport =
+                transportFor(
+                    pinned?.transport?.takeIf { it.isNotBlank() }
+                        ?: base?.transport?.takeIf { it.isNotBlank() }
+                ),
+            thinking =
+                pinned?.thinking?.takeIf { it.isNotBlank() }
+                    ?: base?.thinking?.takeIf { it.isNotBlank() },
+        )
+    }
 
     override fun available(): Boolean =
         providers.get(id)?.let { it.enabled && it.model.isNotBlank() } ?: false
 
-    /** The configured model id (the `gemini` provider row) — Stage 3 stamps it on verdicts. */
-    fun modelId(): String? = providers.get(id)?.model?.takeIf { it.isNotBlank() }
+    /** The effective model id for [pin] — Stage 3/4 stamp it on verdicts and runs. */
+    fun modelId(pin: String? = null): String? = resolve(pin).model.takeIf { it.isNotBlank() }
 
     /**
      * One-shot text completion against the configured gemini provider row (Vertex, ADC).
@@ -50,8 +85,15 @@ class GeminiDrafting(
         maxTokens: Int? = null,
         thinkingBudget: Int? = null,
         temperature: Double? = null,
+        pin: String? = null,
     ): String =
-        generateContent(listOf(mapOf("text" to prompt)), maxTokens, thinkingBudget, temperature)
+        generateContent(
+            listOf(mapOf("text" to prompt)),
+            maxTokens,
+            thinkingBudget,
+            temperature,
+            pin
+        )
 
     /**
      * Multimodal one-shot: [bytes] ride inline (base64 `inlineData` part, placed before the text
@@ -65,6 +107,7 @@ class GeminiDrafting(
         bytes: ByteArray,
         maxTokens: Int? = null,
         thinkingBudget: Int? = null,
+        pin: String? = null,
     ): String =
         generateContent(
             listOf(
@@ -79,6 +122,7 @@ class GeminiDrafting(
             ),
             maxTokens,
             thinkingBudget,
+            pin = pin,
         )
 
     private fun generateContent(
@@ -86,14 +130,18 @@ class GeminiDrafting(
         maxTokens: Int?,
         thinkingBudget: Int?,
         temperature: Double? = null,
+        pin: String? = null,
     ): String {
-        val cfg = providers.get(id) ?: error("gemini not configured")
-        val model = cfg.model.ifBlank { error("gemini model not set") }
+        val resolved = resolve(pin)
+        val model = resolved.model.ifBlank { error("gemini model not set") }
         val body = buildMap {
             put("contents", listOf(mapOf("role" to "user", "parts" to parts)))
             val generationConfig = buildMap {
                 maxTokens?.let { put("maxOutputTokens", it) }
-                thinkingBudget?.let { put("thinkingConfig", mapOf("thinkingBudget" to it)) }
+                // VA-76: the pin's thinking directive picks the knob (2.5 budget vs 3.x level).
+                GeminiThinking.config(resolved.thinking, model, thinkingBudget)?.let {
+                    put("thinkingConfig", it)
+                }
                 temperature?.let { put("temperature", it) }
             }
             if (generationConfig.isNotEmpty()) put("generationConfig", generationConfig)
@@ -104,9 +152,9 @@ class GeminiDrafting(
         val response =
             VertexBackoff.retrying(
                 props.gcp.vertexBackoffMs,
-                "generateContent $model (${transport.label})",
+                "generateContent $model (${resolved.transport.label})",
             ) {
-                transport.post(model, body)
+                resolved.transport.post(model, body)
             }
         return extractText(response)
     }

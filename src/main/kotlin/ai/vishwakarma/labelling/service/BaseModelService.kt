@@ -17,6 +17,10 @@ class BaseModelService(private val baseModels: BaseModelRepository) {
 
     fun get(id: String): BaseModel? = baseModels.findById(id)
 
+    /** The capability row for a lineage — serving surfaces key on `ModelVersion.family` (VA-86). */
+    fun byFamily(family: String): BaseModel? =
+        baseModels.findAll().firstOrNull { it.family.equals(family, ignoreCase = true) }
+
     fun create(
         publisherModel: String,
         displayName: String,
@@ -24,6 +28,9 @@ class BaseModelService(private val baseModels: BaseModelRepository) {
         active: Boolean,
         actor: String?,
         tunable: Boolean = true,
+        hostable: Boolean = false,
+        acceleratorSpec: String = "",
+        serveVerified: Boolean = false,
     ): Either<DomainError, BaseModel> {
         if (publisherModel.isBlank() || family.isBlank()) {
             return DomainError.Invalid("publisherModel and family are required").left()
@@ -39,11 +46,39 @@ class BaseModelService(private val baseModels: BaseModelRepository) {
                 family = family.trim(),
                 active = active,
                 tunable = tunable,
+                hostable = hostable,
+                acceleratorSpec = acceleratorSpec.trim(),
+                serveVerified = serveVerified,
                 updatedBy = actor,
                 updatedAt = Instant.now(),
             )
         baseModels.save(model)
         return model.right()
+    }
+
+    /** VA-86: the hostable/serving dimension — ADMIN-edited on the base-models page. */
+    fun updateHosting(
+        id: String,
+        hostable: Boolean,
+        servingImage: String,
+        acceleratorSpec: String,
+        serveVerified: Boolean,
+        actor: String?,
+    ): Either<DomainError, BaseModel> {
+        val existing =
+            baseModels.findById(id)
+                ?: return DomainError.NotFound("Base model $id not found").left()
+        val updated =
+            existing.copy(
+                hostable = hostable,
+                servingImage = servingImage.trim(),
+                acceleratorSpec = acceleratorSpec.trim(),
+                serveVerified = serveVerified,
+                updatedBy = actor,
+                updatedAt = Instant.now(),
+            )
+        baseModels.save(updated)
+        return updated.right()
     }
 
     /**
@@ -60,6 +95,24 @@ class BaseModelService(private val baseModels: BaseModelRepository) {
             val shouldTune = model.family.lowercase() in wanted
             if (model.tunable != shouldTune) {
                 baseModels.save(model.copy(tunable = shouldTune))
+                changed++
+            }
+        }
+        return changed
+    }
+
+    /**
+     * Backfill the hostable dimension on rows that predate it: families in [verifiedFamilies] were
+     * serve-probed live (VA-74) and gain `hostable + serveVerified`. Additive ONLY — unlike
+     * [reconcileTunable] this never strips a flag, because hostable is an ADMIN-edited field
+     * (§14A.4(4)) and a startup sweep must not fight the admin page. Idempotent.
+     */
+    fun reconcileHostable(verifiedFamilies: Set<String>): Int {
+        val wanted = verifiedFamilies.map { it.lowercase() }.toSet()
+        var changed = 0
+        baseModels.findAll().forEach { model ->
+            if (model.family.lowercase() in wanted && !(model.hostable && model.serveVerified)) {
+                baseModels.save(model.copy(hostable = true, serveVerified = true))
                 changed++
             }
         }

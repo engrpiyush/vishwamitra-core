@@ -81,13 +81,14 @@ private class F11PromptRepo : ExtractionPromptRepository(mock(Firestore::class.j
 private open class F11Gemini : GeminiDrafting(AppProperties(), mock(ProviderService::class.java)) {
     var canned: String = "[]"
 
-    override fun modelId(): String? = "gemini-test"
+    override fun modelId(pin: String?): String? = "gemini-test"
 
     override fun generate(
         prompt: String,
         maxTokens: Int?,
         thinkingBudget: Int?,
         temperature: Double?,
+        pin: String?,
     ): String = canned
 }
 
@@ -192,6 +193,7 @@ class QuestionServiceTest {
                     maxTokens: Int?,
                     thinkingBudget: Int?,
                     temperature: Double?,
+                    pin: String?,
                 ): String = error("vertex is down")
             }
         val props = AppProperties().run { copy(stage2 = stage2.copy(dryRun = false)) }

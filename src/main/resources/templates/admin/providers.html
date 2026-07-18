@@ -15,6 +15,41 @@
             <span class="provider-name" th:text="${p.id}">provider</span>
             <label class="inline"><input type="checkbox" name="enabled" value="true" th:checked="${p.enabled}"/> Enabled</label>
             <label>Model <input type="text" name="model" th:value="${p.model}" placeholder="model id"/></label>
+            <label th:if="${p.id == 'gemini'}">Transport
+                <select name="transport">
+                    <option value="" th:selected="${p.transport == ''}">boot default</option>
+                    <option value="vertex" th:selected="${p.transport == 'vertex'}">vertex</option>
+                    <option value="gemini-api" th:selected="${p.transport == 'gemini-api'}">gemini-api</option>
+                </select>
+            </label>
+            <button type="submit">Save</button>
+        </form>
+    </div>
+
+    <!-- VA-76: per-stage pins — each consumer lane resolves {model, transport, thinking} through
+         its pin row, inheriting any blank field from the base gemini row above. -->
+    <h2 style="margin-top:2rem;">Per-stage pins</h2>
+    <p class="muted">Stage-scoped overrides of the <code>gemini</code> row — blank fields inherit.
+        <strong>Repinning a stage's model is a calibration event</strong>: prompt rows and Stage 3
+        judge thresholds were tuned per model — never silently repoint a stage that has published
+        scores.</p>
+
+    <div th:each="p : ${stagePins}" class="provider-card">
+        <form method="post" th:action="@{'/admin/providers/' + ${p.id}}" class="form-row">
+            <span class="provider-name" th:text="${p.id}">pin</span>
+            <label>Model <input type="text" name="model" th:value="${p.model}" placeholder="inherit"/></label>
+            <label>Transport
+                <select name="transport">
+                    <option value="" th:selected="${p.transport == ''}">inherit</option>
+                    <option value="vertex" th:selected="${p.transport == 'vertex'}">vertex</option>
+                    <option value="gemini-api" th:selected="${p.transport == 'gemini-api'}">gemini-api</option>
+                </select>
+            </label>
+            <label>Thinking
+                <input type="text" name="thinking" th:value="${p.thinking}"
+                       placeholder="derive · budget · level:low · level:high"
+                       title="How the caller's thinking budget maps onto the request: blank derives from the model generation (2.5 → thinkingBudget, 3.x → thinkingLevel); 'budget' forces the 2.5 knob; 'level:<x>' pins the 3.x level."/>
+            </label>
             <button type="submit">Save</button>
         </form>
     </div>

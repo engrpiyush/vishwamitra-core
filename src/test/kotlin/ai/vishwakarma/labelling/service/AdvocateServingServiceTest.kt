@@ -4,11 +4,13 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Advocate
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.BaseKind
+import ai.vishwakarma.labelling.domain.BaseModel
 import ai.vishwakarma.labelling.domain.ModelVersion
 import ai.vishwakarma.labelling.domain.ServingState
 import ai.vishwakarma.labelling.domain.TuningMethod
 import ai.vishwakarma.labelling.domain.VersionStatus
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
+import ai.vishwakarma.labelling.persistence.BaseModelRepository
 import ai.vishwakarma.labelling.persistence.ModelVersionRepository
 import ai.vishwakarma.labelling.serving.ChatRequest
 import ai.vishwakarma.labelling.serving.Deployment
@@ -41,6 +43,18 @@ private class FakeAdvocateRepo : AdvocateRepository(mock(Firestore::class.java))
     val store = linkedMapOf<String, Advocate>()
 
     override fun findAll(): List<Advocate> = store.values.toList()
+}
+
+private class FakeBaseModelRepo : BaseModelRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, BaseModel>()
+
+    override fun findById(id: String): BaseModel? = store[id]
+
+    override fun findAll(): List<BaseModel> = store.values.toList()
+
+    override fun save(model: BaseModel) {
+        store[model.id] = model
+    }
 }
 
 /**
@@ -83,6 +97,7 @@ class AdvocateServingServiceTest {
 
     private val versions = FakeVersionRepo()
     private val advocates = FakeAdvocateRepo()
+    private val baseModelRepo = FakeBaseModelRepo()
 
     private fun props(enabled: Boolean = true, dryRun: Boolean = false) =
         AppProperties(
@@ -105,7 +120,8 @@ class AdvocateServingServiceTest {
             versions,
             advocates,
             listOf(FakeBackend(failServe = failServe)),
-            props(enabled, dryRun)
+            props(enabled, dryRun),
+            BaseModelService(baseModelRepo),
         )
 
     private fun seedReady(
@@ -135,6 +151,26 @@ class AdvocateServingServiceTest {
     private fun <T> Either<DomainError, T>.err(): DomainError? = fold({ it }, { null })
 
     // ---- guards -----------------------------------------------------------------
+
+    @Test
+    fun `serve is gated by the family row's hostable flag (VA-86)`() {
+        seedReady()
+        baseModelRepo.store["bm"] =
+            BaseModel(
+                id = "bm",
+                publisherModel = "qwen/qwen3@qwen3-4b",
+                displayName = "Qwen3 4B",
+                family = "qwen3-4b",
+                hostable = false,
+            )
+        val err = service().serve("v1").err()
+        assertIs<DomainError.Invalid>(err)
+        assertTrue(err.message.contains("not hostable"))
+
+        // Flipping the row on unblocks the same version; a family with no row also passes.
+        baseModelRepo.store["bm"] = baseModelRepo.store["bm"]!!.copy(hostable = true)
+        assertEquals(ServingState.DEPLOYING, service().serve("v1").expectRight().servingState)
+    }
 
     @Test
     fun `serve requires enabled, READY status, and a checkpoint`() {

@@ -47,7 +47,13 @@ class TrainingService(
 
     fun version(id: String): ModelVersion? = versions.findById(id)
 
-    fun serveCommand(version: ModelVersion): String = ServeCommand.build(version)
+    fun serveCommand(version: ModelVersion): String =
+        ServeCommand.build(
+            version,
+            baseModels.findAll().firstOrNull {
+                it.family.equals(version.family, ignoreCase = true)
+            },
+        )
 
     /** Versions grouped by base family, each lineage sorted by (major, minor). */
     fun versionsByFamily(): Map<String, List<ModelVersion>> =

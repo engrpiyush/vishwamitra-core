@@ -45,6 +45,7 @@ private open class StubGemini(private val canned: String) :
         maxTokens: Int?,
         thinkingBudget: Int?,
         temperature: Double?,
+        pin: String?,
     ): String {
         lastPrompt = prompt
         return canned
@@ -56,6 +57,7 @@ private open class StubGemini(private val canned: String) :
         bytes: ByteArray,
         maxTokens: Int?,
         thinkingBudget: Int?,
+        pin: String?,
     ): String {
         lastPrompt = prompt
         lastMime = mimeType

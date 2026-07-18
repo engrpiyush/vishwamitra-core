@@ -29,10 +29,10 @@ class VertexServingBackend(
         val endpointId = props.serving.endpointId
         if (endpointId.isBlank())
             return failed("No serving endpoint configured (app.serving.endpoint-id)")
-        if (props.serving.image.isBlank())
-            return failed("No serving image configured (app.serving.image)")
+        val image = req.imageOverride?.takeIf { it.isNotBlank() } ?: props.serving.image
+        if (image.isBlank()) return failed("No serving image configured (app.serving.image)")
         return try {
-            val op = client.uploadModel(req.displayName, req.artifactUri)
+            val op = client.uploadModel(req.displayName, req.artifactUri, image)
             ServingHandle(
                 state = ServingState.DEPLOYING,
                 endpointId = endpointId,

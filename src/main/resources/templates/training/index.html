@@ -23,7 +23,7 @@
             <select name="baseModelId" id="baseModelId">
                 <option value="">—</option>
                 <option th:each="b : ${baseModels}" th:value="${b.id}" th:disabled="${!b.tunable}"
-                        th:text="${b.displayName + ' (' + b.family + ')' + (b.tunable ? '' : ' — support coming')}">base</option>
+                        th:text="${b.displayName + ' (' + b.family + ')' + (b.tunable ? '' : ' — support coming') + (b.hostable ? '' : ' · not hostable')}">base</option>
             </select>
             <small class="muted">Only verified models are selectable; more enable as support lands.</small>
         </label>

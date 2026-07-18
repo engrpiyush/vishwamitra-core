@@ -11,6 +11,7 @@ import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.StageConfigService
 import java.security.MessageDigest
 import org.slf4j.LoggerFactory
@@ -250,7 +251,7 @@ class GeminiStage4Judge(
         get() = prompts.resolveKey(PROMPT_KEY).version
 
     override val modelId: String
-        get() = gemini.modelId() ?: "gemini"
+        get() = gemini.modelId(ProviderService.PIN_STAGE4) ?: "gemini"
 
     override fun sample(request: Stage4JudgeRequest, sampleIndex: Int): Map<JudgeAxis, AxisVote>? {
         check(gemini.available()) {
@@ -263,6 +264,7 @@ class GeminiStage4Judge(
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
                 temperature = ENSEMBLE_TEMPERATURE,
+                pin = ProviderService.PIN_STAGE4,
             )
         return runCatching { Stage4Judging.parse(raw) }
             .getOrElse {

@@ -11,6 +11,7 @@ import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.DraftPrompts
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
 import java.security.MessageDigest
 import org.slf4j.LoggerFactory
@@ -246,14 +247,19 @@ class GeminiStage4Drafter(
     private val log = LoggerFactory.getLogger(GeminiStage4Drafter::class.java)
 
     override val model: String?
-        get() = gemini.modelId()
+        get() = gemini.modelId(ProviderService.PIN_STAGE4)
 
     override fun draft(request: Stage4GenerationRequest): List<Turn> {
         val prompt = Stage4Generation.buildPrompt(request)
         var lastError: String? = null
         repeat(ATTEMPTS) { attempt ->
             val raw =
-                gemini.generate(prompt, maxTokens = maxTokens, thinkingBudget = thinkingBudget)
+                gemini.generate(
+                    prompt,
+                    maxTokens = maxTokens,
+                    thinkingBudget = thinkingBudget,
+                    pin = ProviderService.PIN_STAGE4,
+                )
             runCatching {
                     return Stage4Generation.parse(raw)
                 }

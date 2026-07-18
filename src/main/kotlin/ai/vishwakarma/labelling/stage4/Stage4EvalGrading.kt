@@ -7,6 +7,7 @@ import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -141,7 +142,7 @@ class GeminiStage4EvalGrader(
 ) : Stage4EvalGrader {
 
     override val model: String
-        get() = gemini.modelId() ?: "gemini"
+        get() = gemini.modelId(ProviderService.PIN_STAGE4) ?: "gemini"
 
     override fun grade(request: Stage4EvalGradeRequest): EvalGrade {
         check(gemini.available()) {
@@ -153,6 +154,7 @@ class GeminiStage4EvalGrader(
                 Stage4EvalGrading.buildPrompt(request, rubric),
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
+                pin = ProviderService.PIN_STAGE4,
             )
         return Stage4EvalGrading.parse(raw, request.expectedBehavior)
     }

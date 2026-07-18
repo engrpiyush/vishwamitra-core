@@ -33,6 +33,7 @@ private open class AttribStubGemini(private val canned: String, private val avai
         maxTokens: Int?,
         thinkingBudget: Int?,
         temperature: Double?,
+        pin: String?,
     ): String {
         called = true
         return canned

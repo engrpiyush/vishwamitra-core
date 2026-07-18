@@ -26,6 +26,8 @@ class ProviderRepository(private val db: Firestore) {
         mapOf(
             "enabled" to enabled,
             "model" to model,
+            "transport" to transport,
+            "thinking" to thinking,
             "updatedBy" to updatedBy,
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
         )
@@ -35,6 +37,8 @@ class ProviderRepository(private val db: Firestore) {
             id = id,
             enabled = getBoolean("enabled") ?: false,
             model = getString("model") ?: "",
+            transport = getString("transport") ?: "",
+            thinking = getString("thinking") ?: "",
             updatedBy = getString("updatedBy"),
             updatedAt = instant("updatedAt"),
         )

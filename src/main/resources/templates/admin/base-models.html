@@ -8,16 +8,23 @@
     <div th:replace="~{fragments/common :: flash}"></div>
 
     <h1>Base models</h1>
-    <p class="muted">Supported OSS bases for foundation tunes. <code>family</code> keys an independent version lineage.</p>
+    <p class="muted">Supported OSS bases — one registry row states both tune and host capability
+        (§14A.4(4)). <code>family</code> keys an independent version lineage; <em>hostable</em>
+        gates the §7 serving endpoint deploy.</p>
 
     <table class="grid">
-        <thead><tr><th>Display name</th><th>Publisher model</th><th>Family</th><th>Active</th><th></th></tr></thead>
+        <thead><tr><th>Display name</th><th>Publisher model</th><th>Family</th><th>Active</th><th>Tunable</th><th>Hostable</th><th></th></tr></thead>
         <tbody>
         <tr th:each="m : ${baseModels}">
             <td th:text="${m.displayName}">name</td>
             <td><code th:text="${m.publisherModel}">pub</code></td>
             <td><code th:text="${m.family}">family</code></td>
             <td><span class="badge" th:classappend="${m.active} ? 'badge--success' : 'badge--muted'" th:text="${m.active} ? 'active' : 'inactive'">yes</span></td>
+            <td><span class="badge" th:classappend="${m.tunable} ? 'badge--success' : 'badge--muted'" th:text="${m.tunable} ? 'tunable' : 'no'">yes</span></td>
+            <td>
+                <span class="badge" th:classappend="${m.hostable} ? 'badge--success' : 'badge--muted'" th:text="${m.hostable} ? 'hostable' : 'no'">yes</span>
+                <span class="badge badge--info" th:if="${m.serveVerified}" title="Probed live end-to-end on the held serving quota">verified</span>
+            </td>
             <td>
                 <div class="row-actions">
                     <form method="post" th:action="@{'/admin/base-models/' + ${m.id} + '/active'}">
@@ -30,9 +37,24 @@
                         <button class="btn--danger btn--sm" type="submit">Delete</button>
                     </form>
                 </div>
+                <details style="margin-top:0.3rem;">
+                    <summary><span class="link">Serving…</span></summary>
+                    <form method="post" th:action="@{'/admin/base-models/' + ${m.id} + '/hosting'}"
+                          class="form" style="max-width:none; margin-top:0.5rem;">
+                        <label class="inline"><input type="checkbox" name="hostable" value="true" th:checked="${m.hostable}"/> Hostable on the serving endpoint</label>
+                        <label>Serving image <span class="muted">(blank = the global <code>app.serving.image</code> pin)</span>
+                            <input type="text" name="servingImage" th:value="${m.servingImage}" placeholder="…-docker.pkg.dev/…/vllm:tag"/>
+                        </label>
+                        <label>Accelerator requirements <span class="muted">(operator guidance)</span>
+                            <input type="text" name="acceleratorSpec" th:value="${m.acceleratorSpec}" placeholder="1× V100 16GB · n1-standard-8 · float16"/>
+                        </label>
+                        <label class="inline"><input type="checkbox" name="serveVerified" value="true" th:checked="${m.serveVerified}"/> Serve-verified (probed live end-to-end)</label>
+                        <button type="submit" class="secondary btn--sm">Save serving capability</button>
+                    </form>
+                </details>
             </td>
         </tr>
-        <tr th:if="${baseModels.isEmpty()}"><td colspan="5"><div class="empty-state">No base models yet — add one below.</div></td></tr>
+        <tr th:if="${baseModels.isEmpty()}"><td colspan="7"><div class="empty-state">No base models yet — add one below.</div></td></tr>
         </tbody>
     </table>
 

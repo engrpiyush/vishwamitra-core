@@ -58,6 +58,7 @@
 <main class="container wide console">
     <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
+    <nav th:replace="~{fragments/common :: usernav(${data.subjectId}, 'stage3')}"></nav>
 
     <div class="row-between">
         <h1>Authenticity <span class="muted">·</span> <span th:text="${data.subjectName}">Name</span></h1>

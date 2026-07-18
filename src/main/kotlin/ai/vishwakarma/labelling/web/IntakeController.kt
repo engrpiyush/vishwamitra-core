@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.domain.SubjectStatus
 import ai.vishwakarma.labelling.domain.splitLabels
+import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
 import ai.vishwakarma.labelling.security.CurrentUser
@@ -16,8 +17,11 @@ import ai.vishwakarma.labelling.service.AssetPatch
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.LinkRegistration
+import ai.vishwakarma.labelling.service.ProvisioningService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
+import ai.vishwakarma.labelling.service.TokenChip
+import ai.vishwakarma.labelling.service.TokenService
 import java.time.LocalDate
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -44,6 +48,9 @@ class IntakeController(
     private val stage2: Stage2Service,
     private val subjectScores: SubjectScoreRepository,
     private val personas: SubjectPersonaRepository,
+    private val provisioning: ProvisioningService,
+    private val tokens: TokenService,
+    private val opsCounters: OpsCounterRepository,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -54,7 +61,7 @@ class IntakeController(
         val subjects = subjectService.list()
         val manifests: Map<String, IntakeManifest> =
             subjects.associate { it.id to intake.manifest(it.id) }
-        model.addAttribute("pageTitle", "Intake")
+        model.addAttribute("pageTitle", "Users / Members")
         model.addAttribute("subjects", subjects)
         model.addAttribute("manifests", manifests)
         return "intake/list"
@@ -118,6 +125,32 @@ class IntakeController(
         model.addAttribute("stage4Ready", subjectScores.find(id) != null)
         model.addAttribute("personaStored", personas.findBySubject(id) != null)
         return "intake/detail"
+    }
+
+    /**
+     * VA-85: the Hosting tab — the subject's §7 serving state as one read-only view (the
+     * Advocates-panel row scoped to this member). Actions stay on `/models/advocates` — one POST
+     * surface for the runbook verbs, no route collisions.
+     */
+    @GetMapping("/{id}/hosting")
+    fun hosting(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
+        val subject =
+            subjectService.get(id)
+                ?: run {
+                    ra.addFlashAttribute("error", "Subject not found")
+                    return "redirect:/intake"
+                }
+        val tokenRows = tokens.dashboard(id)
+        model.addAttribute("pageTitle", "Hosting — ${subject.displayName}")
+        model.addAttribute("subject", subject)
+        model.addAttribute("advocate", provisioning.advocate(id))
+        model.addAttribute("tokenTotal", tokenRows.size)
+        model.addAttribute(
+            "tokenActive",
+            tokenRows.count { it.chip == TokenChip.UNREDEEMED || it.chip == TokenChip.ACTIVE },
+        )
+        model.addAttribute("ops", opsCounters.find(id))
+        return "intake/hosting"
     }
 
     @PostMapping("/{id}/edit")

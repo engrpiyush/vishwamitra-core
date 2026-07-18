@@ -12,6 +12,7 @@ import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.security.CurrentUser
 import ai.vishwakarma.labelling.service.AdvocateChatService
 import ai.vishwakarma.labelling.service.AggregateScoreService
+import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.ProvisioningService
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
@@ -50,6 +51,7 @@ class AdvocatesPanelController(
     private val chat: AdvocateChatService,
     private val opsCounters: OpsCounterRepository,
     private val mailBookkeeping: MailBookkeepingRepository,
+    private val baseModels: BaseModelService,
 ) {
 
     /** One panel row per ACTIVE subject — advocate state + token posture side by side. */
@@ -121,11 +123,17 @@ class AdvocatesPanelController(
             "mailToday",
             mailBookkeeping.counters(LocalDate.now(ZoneOffset.UTC).toString()),
         )
-        // Register-form helper: READY checkpoints an operator can copy from.
+        // Register-form helper: READY checkpoints an operator can copy from. VA-86: families the
+        // registry explicitly marks non-hostable are excluded — same semantics as the serve gate
+        // (a family with no row carries no claim and stays listed).
+        val blockedFamilies =
+            baseModels.list().filter { !it.hostable }.map { it.family.lowercase() }.toSet()
         model.addAttribute(
             "readyVersions",
             training.versionsByFamily().values.flatten().filter {
-                it.status == VersionStatus.READY && !it.gcsCheckpointUri.isNullOrBlank()
+                it.status == VersionStatus.READY &&
+                    !it.gcsCheckpointUri.isNullOrBlank() &&
+                    it.family.lowercase() !in blockedFamilies
             },
         )
         return "models/advocates"

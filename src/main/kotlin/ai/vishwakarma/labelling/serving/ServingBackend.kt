@@ -2,8 +2,16 @@ package ai.vishwakarma.labelling.serving
 
 import ai.vishwakarma.labelling.domain.ServingState
 
-/** What to serve: the tuned checkpoint dir + a display name for the deployed resources. */
-data class ServeRequest(val displayName: String, val artifactUri: String)
+/**
+ * What to serve: the tuned checkpoint dir + a display name for the deployed resources.
+ * [imageOverride] is the family's `BaseModel.servingImage` when set (VA-86) — a per-lineage serving
+ * container replacing the global `app.serving.image` pin; null/blank = global.
+ */
+data class ServeRequest(
+    val displayName: String,
+    val artifactUri: String,
+    val imageOverride: String? = null,
+)
 
 /**
  * Backend-agnostic snapshot of a serving deployment. The service persists this onto the

@@ -4,6 +4,7 @@ import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -96,6 +97,7 @@ class GeminiEntityMentionExtractor(
                 mentionPrompt(claims, resolved.instructions),
                 maxTokens = MAX_TOKENS,
                 thinkingBudget = THINKING_BUDGET,
+                pin = ProviderService.PIN_STAGE3,
             )
         val byIndex = parseMentionResponse(raw)
         // Claims the model skipped resolve to "no mentions" — they must still be stamped, or the

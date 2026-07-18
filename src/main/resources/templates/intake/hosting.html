@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+<nav th:replace="~{fragments/common :: nav}"></nav>
+<main class="container wide console">
+    <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
+    <div th:replace="~{fragments/common :: flash}"></div>
+    <nav th:replace="~{fragments/common :: usernav(${subject.id}, 'hosting')}"></nav>
+
+    <div class="row-between">
+        <h1>Hosting <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>
+        <a th:href="@{/models/advocates}" class="btn btn--sm">Manage on the Advocates panel &rarr;</a>
+    </div>
+    <p class="muted">The advocate's §7.3 serving state, read-only. Register / window / retry /
+        sweep actions live on the Advocates panel — one runbook surface for every subject.</p>
+
+    <div th:if="${advocate == null}" class="empty-state">
+        No advocate registered yet — tune a model for this member, then register its READY
+        checkpoint on the <a th:href="@{/models/advocates}">Advocates panel</a>.
+    </div>
+
+    <div th:if="${advocate != null}" class="editor-grid">
+        <section class="editor-main">
+            <div class="panel">
+                <h3>Advocate</h3>
+                <div class="row-actions" style="margin-top:0.4rem;">
+                    <span class="badge"
+                          th:classappend="'badge--' + ${#strings.replace(#strings.toLowerCase(advocate.state),'_','-')}"
+                          th:text="${advocate.state}">LIVE</span>
+                    <span th:if="${advocate.evidenceStrength != null}"
+                          th:text="|Evidence strength ${advocate.evidenceStrength}/100 (${advocate.scoredClaimCount} claims)|">86/100</span>
+                </div>
+                <p class="muted" th:if="${advocate.modelUri != null}" style="margin:0.6rem 0 0;">
+                    Checkpoint <code class="copyable" th:text="${advocate.modelUri}">gs://…</code>
+                </p>
+                <p class="error" th:if="${advocate.lastError != null}" th:text="${advocate.lastError}">err</p>
+
+                <p class="muted" style="margin:1rem 0 0.3rem;">Serving window</p>
+                <span th:if="${advocate.windowEndsAt != null}">
+                    <span th:text="${advocate.windowPreset}">D1</span> until
+                    <time class="js-ts" th:datetime="${advocate.windowEndsAt}" th:text="${advocate.windowEndsAt}">when</time>
+                    <span class="muted" th:if="${advocate.windowSetBy}" th:text="|by ${advocate.windowSetBy}|">by</span>
+                </span>
+                <span class="muted" th:unless="${advocate.windowEndsAt != null}">No window scheduled.</span>
+
+                <div class="row-actions" style="margin-top:1rem;">
+                    <a class="link" th:href="@{/models/advocates/{id}/transcripts(id=${subject.id})}">Chat transcripts &rarr;</a>
+                </div>
+            </div>
+        </section>
+
+        <aside class="editor-side">
+            <div class="panel">
+                <h3>Guest access</h3>
+                <div class="tiles" style="margin-top:0.5rem; grid-template-columns:1fr 1fr;">
+                    <div class="tile">
+                        <span class="tile-value" th:text="${tokenActive}">0</span>
+                        <span class="tile-label">tokens active</span>
+                    </div>
+                    <div class="tile">
+                        <span class="tile-value" th:text="${tokenTotal}">0</span>
+                        <span class="tile-label">tokens total</span>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <h3>Ops counters</h3>
+                <table class="grid" style="margin-top:0.5rem;">
+                    <tbody>
+                    <tr><td class="muted">Wall attempts / lockouts</td><td th:text="|${ops.wallAttempts} / ${ops.wallLockouts}|">0 / 0</td></tr>
+                    <tr><td class="muted">Redemptions</td><td th:text="${ops.redemptions}">0</td></tr>
+                    <tr><td class="muted">Deploys ok / failed</td><td th:text="|${ops.deploysSucceeded} / ${ops.deploysFailed}|">0 / 0</td></tr>
+                    <tr><td class="muted">Windows started</td><td th:text="${ops.windowsStarted}">0</td></tr>
+                    <tr><td class="muted">Window est. USD</td><td th:text="${#numbers.formatDecimal(ops.windowEstimateUsdTotal, 1, 2)}">0.00</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </aside>
+    </div>
+</main>
+</body>
+</html>

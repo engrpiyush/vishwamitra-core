@@ -242,13 +242,14 @@ class ClaimJudgeServiceTest {
 
         override fun available() = true
 
-        override fun modelId(): String? = "gemini-test"
+        override fun modelId(pin: String?): String? = "gemini-test"
 
         override fun generate(
             prompt: String,
             maxTokens: Int?,
             thinkingBudget: Int?,
             temperature: Double?,
+            pin: String?,
         ): String {
             prompts += prompt
             temperatures += temperature

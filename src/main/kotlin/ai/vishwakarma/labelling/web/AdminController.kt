@@ -91,6 +91,7 @@ class AdminController(
         model.addAttribute("baseModelsTotal", baseModelList.size)
         model.addAttribute("baseModelsActive", baseModelList.count { it.active })
         model.addAttribute("baseModelsTunable", baseModelList.count { it.tunable })
+        model.addAttribute("baseModelsHostable", baseModelList.count { it.hostable })
         model.addAttribute("templatesCount", templateList.size)
         model.addAttribute("categoriesCount", notebookTemplates.taxonomy().categories.size)
         // Operators only — member (SUBJECT) logins are counted with Members, not Team (VA-31).
@@ -203,6 +204,25 @@ class AdminController(
         return "redirect:/admin/base-models"
     }
 
+    /** VA-86: the hostable/serving dimension — one registry row states tune + host capability. */
+    @PostMapping("/base-models/{id}/hosting")
+    fun updateBaseModelHosting(
+        @PathVariable id: String,
+        @RequestParam(required = false, defaultValue = "false") hostable: Boolean,
+        @RequestParam(required = false, defaultValue = "") servingImage: String,
+        @RequestParam(required = false, defaultValue = "") acceleratorSpec: String,
+        @RequestParam(required = false, defaultValue = "false") serveVerified: Boolean,
+        ra: RedirectAttributes,
+    ): String {
+        baseModels
+            .updateHosting(id, hostable, servingImage, acceleratorSpec, serveVerified, actor())
+            .fold(
+                { ra.notify(it) },
+                { ra.addFlashAttribute("ok", "Serving capability for '${it.family}' saved") },
+            )
+        return "redirect:/admin/base-models"
+    }
+
     @PostMapping("/base-models/{id}/delete")
     fun deleteBaseModel(@PathVariable id: String, ra: RedirectAttributes): String {
         baseModels.delete(id)
@@ -276,7 +296,7 @@ class AdminController(
     // ---- Users (Operators / Team) -------------------------------------------
     @GetMapping("/users")
     fun users(model: Model): String {
-        model.addAttribute("pageTitle", "Users")
+        model.addAttribute("pageTitle", "Operators / Team")
         model.addAttribute("section", "users")
         // Operator rows only: member (SUBJECT) logins carry a binding and live on the Members
         // page (VA-31) — mixing them here invites accidental role flips.
@@ -303,7 +323,7 @@ class AdminController(
                 )
             else -> {
                 users.upsert(normalized, parsedRole, actor())
-                ra.addFlashAttribute("ok", "User saved")
+                ra.addFlashAttribute("ok", "Operator saved")
             }
         }
         return "redirect:/admin/users"
@@ -316,14 +336,14 @@ class AdminController(
         ra: RedirectAttributes
     ): String {
         users.setActive(email, active)
-        ra.addFlashAttribute("ok", "User updated")
+        ra.addFlashAttribute("ok", "Operator updated")
         return "redirect:/admin/users"
     }
 
     @PostMapping("/users/{email}/delete")
     fun deleteUser(@PathVariable email: String, ra: RedirectAttributes): String {
         users.remove(email)
-        ra.addFlashAttribute("ok", "User removed")
+        ra.addFlashAttribute("ok", "Operator removed")
         return "redirect:/admin/users"
     }
 
@@ -401,6 +421,7 @@ class AdminController(
         model.addAttribute("pageTitle", "Providers")
         model.addAttribute("section", "providers")
         model.addAttribute("providers", providers.list())
+        model.addAttribute("stagePins", providers.listStagePins())
         return "admin/providers"
     }
 
@@ -409,10 +430,25 @@ class AdminController(
         @PathVariable id: String,
         @RequestParam(required = false, defaultValue = "false") enabled: Boolean,
         @RequestParam(required = false, defaultValue = "") model: String,
+        @RequestParam(required = false, defaultValue = "") transport: String,
+        @RequestParam(required = false, defaultValue = "") thinking: String,
         ra: RedirectAttributes,
     ): String {
-        providers.update(id, enabled, model, actor())
-        ra.addFlashAttribute("ok", "Provider '$id' updated")
+        val t = transport.trim()
+        val th = thinking.trim()
+        when {
+            t !in setOf("", "vertex", "gemini-api") ->
+                ra.addFlashAttribute("error", "Transport must be blank, vertex or gemini-api")
+            th.isNotEmpty() && th != "budget" && !th.startsWith("level:") ->
+                ra.addFlashAttribute(
+                    "error",
+                    "Thinking must be blank (derive), 'budget' or 'level:<x>'",
+                )
+            else -> {
+                providers.update(id, enabled, model, actor(), transport = t, thinking = th)
+                ra.addFlashAttribute("ok", "Provider '$id' updated")
+            }
+        }
         return "redirect:/admin/providers"
     }
 

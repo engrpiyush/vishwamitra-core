@@ -32,6 +32,7 @@ class AdvocateServingService(
     private val advocates: AdvocateRepository,
     backends: List<ServingBackend>,
     private val props: AppProperties,
+    private val baseModels: BaseModelService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -55,6 +56,16 @@ class AdvocateServingService(
         val checkpoint =
             v.gcsCheckpointUri?.takeIf { it.isNotBlank() }
                 ?: return DomainError.Invalid("Version has no checkpoint to serve").left()
+        // VA-86: the registry row states host capability per family. An explicit `hostable=false`
+        // blocks BEFORE the 25–35 min deploy burns GPU time (e.g. Gemma lineage on the V100);
+        // a family with no row carries no claim either way and passes through.
+        val registry = baseModels.byFamily(v.family)
+        if (registry != null && !registry.hostable)
+            return DomainError.Invalid(
+                    "Family '${v.family}' is not hostable on the serving endpoint " +
+                        "(base-models registry) — flip it on /admin/base-models if proven"
+                )
+                .left()
         if (v.servingState in OCCUPYING)
             return DomainError.Conflict("Version is already ${v.servingState}").left()
         versions
@@ -100,7 +111,10 @@ class AdvocateServingService(
                         "No serving backend '${props.serving.backend}' available"
                     )
                     .left()
-        val handle = backend.beginServe(ServeRequest(v.displayName, checkpoint))
+        val handle =
+            backend.beginServe(
+                ServeRequest(v.displayName, checkpoint, imageOverride = registry?.servingImage)
+            )
         val updated = apply(v.copy(servedAt = null), handle)
         versions.save(updated)
         return if (handle.state == ServingState.FAILED)

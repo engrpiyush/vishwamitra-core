@@ -6,6 +6,7 @@
 <main class="container wide console">
     <nav th:replace="~{fragments/common :: consolenav('intake')}"></nav>
     <div th:replace="~{fragments/common :: flash}"></div>
+    <nav th:replace="~{fragments/common :: usernav(${subject.id}, 'stage2')}"></nav>
 
     <div class="row-between">
         <h1>Stage 2 <span class="muted">·</span> <span th:text="${subject.displayName}">Name</span></h1>

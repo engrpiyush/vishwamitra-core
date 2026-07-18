@@ -61,6 +61,19 @@
 </div>
 
 <!--
+  VA-85 (LLD §14A.4(3)): the member-detail lifecycle nav — one shell across every per-subject
+  surface: Stage 1 profile/intake → Stage 2 claims → Stage 3 scores → Stage 4 notebooks →
+  Hosting. Links always render; a stage that hasn't been reached shows its own readiness state.
+-->
+<nav th:fragment="usernav(id, active)" class="subnav">
+    <a th:href="@{/intake/{id}(id=${id})}" th:classappend="${active == 'profile'} ? 'active'">Profile &amp; Stage 1</a>
+    <a th:href="@{/intake/{id}/stage2(id=${id})}" th:classappend="${active == 'stage2'} ? 'active'">Stage 2 · Claims</a>
+    <a th:href="@{/intake/{id}/stage3(id=${id})}" th:classappend="${active == 'stage3'} ? 'active'">Stage 3 · Scores</a>
+    <a th:href="@{/intake/{id}/stage4(id=${id})}" th:classappend="${active == 'stage4'} ? 'active'">Stage 4 · Notebooks</a>
+    <a th:href="@{/intake/{id}/hosting(id=${id})}" th:classappend="${active == 'hosting'} ? 'active'">Hosting</a>
+</nav>
+
+<!--
   VA-82/VA-89 console left-nav (LLD §14A.1–14A.2): the shell for EVERY role. Groups are
   role-filtered with sec:authorize — config sections are ADMIN-only; work surfaces show at their
   page's minimum role (URL + method security still enforce independently). Pages call

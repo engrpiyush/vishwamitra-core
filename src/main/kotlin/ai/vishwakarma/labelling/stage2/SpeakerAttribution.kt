@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.SpeakerAssignment
 import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.service.ProviderService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
@@ -59,6 +60,7 @@ class SpeakerAttribution(private val gemini: GeminiDrafting) {
                     prompt(asset, transcript, subjectName, distinct),
                     maxTokens = MAX_TOKENS,
                     thinkingBudget = THINKING_BUDGET,
+                    pin = ProviderService.PIN_STAGE2,
                 )
             } catch (e: Exception) {
                 log.warn("Speaker attribution call failed for asset {}: {}", asset.id, e.message)

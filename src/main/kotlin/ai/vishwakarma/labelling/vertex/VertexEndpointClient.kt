@@ -53,11 +53,12 @@ class VertexEndpointClient(private val props: AppProperties) {
     private fun parent() = "projects/${props.gcp.projectId}/locations/${region()}"
 
     /**
-     * Upload a serving model wrapping [artifactUri] (the tuned checkpoint dir) with the configured
-     * vLLM container. Returns the `uploadModel` operation name; poll [operation] until done, then
-     * read `model` for the registered resource.
+     * Upload a serving model wrapping [artifactUri] (the tuned checkpoint dir) with the [image]
+     * vLLM container (the backend resolves family override vs the global pin, VA-86). Returns the
+     * `uploadModel` operation name; poll [operation] until done, then read `model` for the
+     * registered resource.
      */
-    fun uploadModel(displayName: String, artifactUri: String): String {
+    fun uploadModel(displayName: String, artifactUri: String, image: String): String {
         val s = props.serving
         val body =
             mapOf(
@@ -67,7 +68,7 @@ class VertexEndpointClient(private val props: AppProperties) {
                         "artifactUri" to artifactUri,
                         "containerSpec" to
                             mapOf(
-                                "imageUri" to s.image,
+                                "imageUri" to image,
                                 "args" to s.servedModelArgs,
                                 "ports" to listOf(mapOf("containerPort" to 8080)),
                                 "predictRoute" to "/v1/chat/completions",
