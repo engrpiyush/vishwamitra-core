@@ -9,6 +9,7 @@ import com.google.cloud.firestore.Firestore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.mockito.Mockito.mock
 
@@ -71,6 +72,27 @@ class UserServiceTest {
     fun `refuses a malformed email`() {
         val result = service.createSubjectLogin("not-an-email", subject(), null)
         assertIs<DomainError.Invalid>(result.swap().getOrNull())
+    }
+
+    @Test
+    fun `precheck passes a fresh email with a handle`() {
+        assertNull(service.precheckSubjectLogin("new@x.com", "neo"))
+    }
+
+    @Test
+    fun `precheck refuses a blank handle`() {
+        assertIs<DomainError.Invalid>(service.precheckSubjectLogin("new@x.com", " "))
+    }
+
+    @Test
+    fun `precheck refuses a malformed email`() {
+        assertIs<DomainError.Invalid>(service.precheckSubjectLogin("not-an-email", "neo"))
+    }
+
+    @Test
+    fun `precheck refuses an already-allowlisted email, case-insensitively`() {
+        repo.store["op@x.com"] = User(email = "op@x.com", role = Role.REVIEWER)
+        assertIs<DomainError.Invalid>(service.precheckSubjectLogin(" OP@X.com ", "neo"))
     }
 
     @Test

@@ -30,6 +30,24 @@ class UserService(private val users: UserRepository) {
     fun list(): List<User> = users.findAll()
 
     /**
+     * Fail-fast validation for a new member (SUBJECT) login, callable before the Subject exists:
+     * the intake create-with-email form runs this first so a bad email or missing handle never
+     * leaves a subject behind without its login. Null = OK to bind.
+     */
+    fun precheckSubjectLogin(email: String, handle: String?): DomainError? {
+        val normalized = email.trim().lowercase()
+        if (!EMAIL_REGEX.matches(normalized))
+            return DomainError.Invalid("A valid email is required")
+        if (handle.isNullOrBlank())
+            return DomainError.Invalid(
+                "A handle is required to bind a member login — the handle is the member's host"
+            )
+        return users.findByEmail(normalized)?.let {
+            DomainError.Invalid("$normalized is already allowlisted (${it.role})")
+        }
+    }
+
+    /**
      * VA-31 (LLD §4.5 step 2): provision a member (SUBJECT) login bound to a subject. Fails when
      * the email is already allowlisted (an email is one `users` doc — one person cannot be both
      * operator and subject on the same address), when the subject is ARCHIVED, or when it has no
@@ -40,25 +58,17 @@ class UserService(private val users: UserRepository) {
         subject: Subject,
         addedBy: String?,
     ): Either<DomainError, User> {
-        val normalized = email.trim().lowercase()
-        if (!EMAIL_REGEX.matches(normalized))
-            return DomainError.Invalid("A valid email is required").left()
-        users.findByEmail(normalized)?.let {
-            return DomainError.Invalid("$normalized is already allowlisted (${it.role})").left()
+        precheckSubjectLogin(email, subject.handle)?.let {
+            return it.left()
         }
         if (subject.status == SubjectStatus.ARCHIVED)
             return DomainError.Invalid(
                     "${subject.displayName} is archived — reactivate before binding a login"
                 )
                 .left()
-        if (subject.handle.isNullOrBlank())
-            return DomainError.Invalid(
-                    "${subject.displayName} needs a handle first — the handle is the member's host"
-                )
-                .left()
         val user =
             User(
-                email = normalized,
+                email = email.trim().lowercase(),
                 role = Role.SUBJECT,
                 active = true,
                 subjectId = subject.id,

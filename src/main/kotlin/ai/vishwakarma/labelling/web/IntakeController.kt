@@ -22,6 +22,7 @@ import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
 import ai.vishwakarma.labelling.service.TokenService
+import ai.vishwakarma.labelling.service.UserService
 import java.time.LocalDate
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -50,6 +51,7 @@ class IntakeController(
     private val personas: SubjectPersonaRepository,
     private val provisioning: ProvisioningService,
     private val tokens: TokenService,
+    private val users: UserService,
     private val opsCounters: OpsCounterRepository,
 ) {
 
@@ -67,25 +69,60 @@ class IntakeController(
         return "intake/list"
     }
 
+    /**
+     * Create a member. With [email] this also binds the member's SUBJECT login in the same submit —
+     * intake is REVIEWER-gated, so this is deliberately the one provisioning verb reachable below
+     * ADMIN (the Members page stays ADMIN-only). The login precheck runs before anything is
+     * created: a bad email or missing handle must not leave a subject behind without its login.
+     */
     @PostMapping
     fun createSubject(
         @RequestParam displayName: String,
         @RequestParam(required = false) handle: String?,
+        @RequestParam(required = false) email: String?,
         @RequestParam(required = false) notes: String?,
         ra: RedirectAttributes,
-    ): String =
-        subjectService
+    ): String {
+        val memberEmail = email?.trim()?.takeIf { it.isNotBlank() }
+        memberEmail
+            ?.let { users.precheckSubjectLogin(it, handle) }
+            ?.let {
+                flashError(ra, it)
+                return "redirect:/intake"
+            }
+        return subjectService
             .create(actor(), displayName, handle, notes ?: "")
             .fold(
                 {
                     flashError(ra, it)
                     "redirect:/intake"
                 },
-                {
-                    ra.addFlashAttribute("ok", "Created ${it.displayName}")
-                    "redirect:/intake/${it.id}"
+                { subject ->
+                    if (memberEmail == null) {
+                        ra.addFlashAttribute("ok", "Created ${subject.displayName}")
+                    } else {
+                        users
+                            .createSubjectLogin(memberEmail, subject, actor())
+                            .fold(
+                                { err ->
+                                    ra.addFlashAttribute(
+                                        "error",
+                                        "Created ${subject.displayName}, but the member login " +
+                                            "was not bound: ${err.message}",
+                                    )
+                                },
+                                {
+                                    ra.addFlashAttribute(
+                                        "ok",
+                                        "Created ${subject.displayName} · member login ${it.email}",
+                                    )
+                                },
+                            )
+                    }
+                    "redirect:/intake/${subject.id}"
                 },
             )
+    }
 
     @GetMapping("/{id}")
     fun detail(@PathVariable id: String, model: Model, ra: RedirectAttributes): String {
