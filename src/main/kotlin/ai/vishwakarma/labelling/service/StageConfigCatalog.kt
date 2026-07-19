@@ -331,6 +331,22 @@ object StageConfigCatalog {
                 "Matching & blocking",
                 "Similarity above which a pair auto-classifies REPEATS without the judge.",
             ),
+            ConfigField(
+                "coMentionHubShare",
+                "Co-mention hub share",
+                DOUBLE,
+                "Matching & blocking",
+                "A co-mention pair whose best shared entity exceeds this DF share loses the " +
+                    "rung-1 floor bypass (VA-77 B3).",
+            ),
+            ConfigField(
+                "judgeCandidatesPerClaim",
+                "Judge candidates / claim",
+                INT,
+                "Matching & blocking",
+                "Per-claim cap on sim-ranked judge candidates; human-asserted and structural " +
+                    "pairs are quota-exempt. 0 = uncapped (VA-77 B2).",
+            ),
             // -- Judge ensemble --
             ConfigField(
                 "ensembleK",
@@ -380,6 +396,14 @@ object StageConfigCatalog {
                 INT,
                 "Judge ensemble",
                 "Concurrent sampler calls per tick — keep low; bursts 429-starve the DSQ share.",
+            ),
+            ConfigField(
+                "judgeThinkingBudget",
+                "Judge thinking budget",
+                INT,
+                "Judge ensemble",
+                "Thinking-token cap per sampler call (VA-77 B1); not part of the verdict-cache " +
+                    "key — changing it is a calibration event.",
             ),
             // -- Scoring dynamics --
             ConfigField(

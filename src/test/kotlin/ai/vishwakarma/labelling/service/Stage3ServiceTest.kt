@@ -47,6 +47,7 @@ import ai.vishwakarma.labelling.stage3.ClaimToAssemble
 import ai.vishwakarma.labelling.stage3.ClaimToEmbed
 import ai.vishwakarma.labelling.stage3.ClaimToMatch
 import ai.vishwakarma.labelling.stage3.ClaimToResolve
+import ai.vishwakarma.labelling.stage3.CoMentionPair
 import ai.vishwakarma.labelling.stage3.ContradictionEdgeRef
 import ai.vishwakarma.labelling.stage3.ContradictionSide
 import ai.vishwakarma.labelling.stage3.ContradictionView
@@ -856,7 +857,7 @@ private class FakeGraphRepo(props: AppProperties) :
     override fun claimKnnPairs(subjectId: String, k: Int, simFloor: Double): List<ScoredPair> =
         knnPairs.filter { it.sim >= simFloor }
 
-    override fun coMentionPairs(subjectId: String, idfFloor: Double): List<ClaimPair> =
+    override fun coMentionPairs(subjectId: String, idfFloor: Double): List<CoMentionPair> =
         mentionLinks
             .groupBy { "${it.entityType}|${it.canonicalKey}" }
             .values
@@ -869,6 +870,8 @@ private class FakeGraphRepo(props: AppProperties) :
                 }
             }
             .distinct()
+            // Discriminative share by construction — the fake never exercises the hub gate.
+            .map { CoMentionPair(it, minShare = 0.0) }
 
     override fun humanAssertedPairs(subjectId: String): List<ClaimPair> =
         projections

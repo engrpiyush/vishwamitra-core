@@ -248,6 +248,10 @@
                     <td>candidates <strong data-counter="pairsCandidate" th:text="${run.counters['pairsCandidate'] ?: '—'}">—</strong>
                         &middot; auto-resolved <strong data-counter="pairsAutoResolved" th:text="${run.counters['pairsAutoResolved'] ?: '—'}">—</strong>
                         &middot; discarded <strong data-counter="pairsDiscarded" th:text="${run.counters['pairsDiscarded'] ?: '—'}">—</strong>
+                        <span class="muted" th:if="${(run.counters['pairsIdfGated'] ?: 0) > 0}">
+                            &middot; IDF-gated <strong data-counter="pairsIdfGated" th:text="${run.counters['pairsIdfGated']}">0</strong></span>
+                        <span class="muted" th:if="${(run.counters['pairsCapped'] ?: 0) > 0}">
+                            &middot; capped <strong data-counter="pairsCapped" th:text="${run.counters['pairsCapped']}">0</strong></span>
                         &middot; queued for judge <strong data-counter="pairsQueued" th:text="${run.counters['pairsQueued'] ?: '—'}">—</strong>
                         <br/><span class="muted" style="font-size:0.85em;">arms:
                             kNN <span data-counter="pairsKnn" th:text="${run.counters['pairsKnn'] ?: '—'}">—</span>

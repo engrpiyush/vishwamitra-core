@@ -30,6 +30,10 @@ class Stage3PropertiesTest {
         assertEquals(0.93, s3.simAutoRepeat)
         assertEquals(0.85, s3.entityMergeThreshold)
         assertEquals(0.25, s3.entityIdfFloor)
+        // VA-77 dials: hub gate + per-claim cap (owner-signed replay value) + thinking budget.
+        assertEquals(0.30, s3.coMentionHubShare)
+        assertEquals(80, s3.judgeCandidatesPerClaim)
+        assertEquals(512, s3.judgeThinkingBudget)
         assertEquals(5, s3.ensembleK)
         assertEquals(0.7, s3.ensembleTemperature)
         assertEquals("ALTERNATE", s3.ensembleOrderings)
@@ -78,6 +82,8 @@ class Stage3PropertiesTest {
                     "app.stage3.dry-run" to "true",
                     "app.stage3.matching-mode" to "exhaustive",
                     "app.stage3.episode-window-years" to "3",
+                    "app.stage3.judge-thinking-budget" to "1024",
+                    "app.stage3.judge-candidates-per-claim" to "40",
                 )
             )
         val bound =
@@ -92,6 +98,8 @@ class Stage3PropertiesTest {
         // The mode flag is case-insensitive (config files say "exhaustive", code asks the flag).
         assertEquals(true, bound.exhaustiveMatching)
         assertEquals(3.0, bound.episodeWindowYears)
+        assertEquals(1024, bound.judgeThinkingBudget)
+        assertEquals(40, bound.judgeCandidatesPerClaim)
         // Untouched keys keep their constructor defaults.
         assertEquals(5, bound.ensembleK)
     }

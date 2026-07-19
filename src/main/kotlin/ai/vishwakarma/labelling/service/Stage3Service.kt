@@ -515,11 +515,18 @@ class Stage3Service(
             if (s3.exhaustiveMatching) emptyList()
             else graph.coMentionPairs(run.subjectId, s3.entityIdfFloor)
         val human = graph.humanAssertedPairs(run.subjectId)
-        val candidates = ClaimMatcher.candidates(claims, knn, coMention, human, s3)
+        val candidates = ClaimMatcher.candidates(claims, knn, coMention.map { it.pair }, human, s3)
         // kNN already scored its arm; every other candidate pair gets an exact cosine.
         val knnSims = knn.associate { it.pair to it.sim }
         val sims = knnSims + graph.pairSimilarities(run.subjectId, candidates.keys - knnSims.keys)
-        val outcome = ClaimMatcher.cascade(claims, candidates, sims, s3)
+        val outcome =
+            ClaimMatcher.cascade(
+                claims,
+                candidates,
+                sims,
+                s3,
+                coMention.associate { it.pair to it.minShare },
+            )
         graph.applyMatchOutcome(run.subjectId, outcome)
         log.info(
             "Run {}: MATCH {} candidates → {} auto-resolved, {} discarded, {} queued ({})",
@@ -541,6 +548,8 @@ class Stage3Service(
                 Stage3Counters.PAIRS_CANDIDATE to outcome.counters.pairsCandidate,
                 Stage3Counters.PAIRS_AUTO_RESOLVED to outcome.counters.pairsAutoResolved,
                 Stage3Counters.PAIRS_DISCARDED to outcome.counters.pairsDiscarded,
+                Stage3Counters.PAIRS_IDF_GATED to outcome.counters.pairsIdfGated,
+                Stage3Counters.PAIRS_CAPPED to outcome.counters.pairsCapped,
                 Stage3Counters.PAIRS_QUEUED to outcome.counters.pairsQueued,
             ),
         )

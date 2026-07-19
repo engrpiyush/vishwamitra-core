@@ -1114,9 +1114,11 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
     /**
      * The §21 A.2 co-mention blocking query with the `entity-idf-floor` inlined: entities mentioned
      * by more than (1 − floor) of the subject's claims are stopword-like (the subject himself,
-     * "software") and produce no pairs.
+     * "software") and produce no pairs. Each pair also reports the DF share of its most
+     * discriminative admitted shared entity — the VA-77 B3 hub signal the cascade's rung-1 gate
+     * reads (a pair linked only through employer/university-class hubs faces the sim floor).
      */
-    fun coMentionPairs(subjectId: String, idfFloor: Double): List<ClaimPair> =
+    fun coMentionPairs(subjectId: String, idfFloor: Double): List<CoMentionPair> =
         driver.session(sessionConfig()).use { s ->
             s.executeRead { tx ->
                 tx.run(
@@ -1129,13 +1131,19 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                         MATCH (a:Claim {subjectId: ${'$'}subjectId})-[:MENTIONS]->(e)
                               <-[:MENTIONS]-(b:Claim {subjectId: ${'$'}subjectId})
                         WHERE a.claimId < b.claimId
-                        RETURN DISTINCT a.claimId AS a, b.claimId AS b
+                        RETURN a.claimId AS a, b.claimId AS b,
+                               min(toFloat(mentioners) / total) AS minShare
                         ORDER BY a, b
                         """
                             .trimIndent(),
                         mapOf("subjectId" to subjectId, "floor" to idfFloor),
                     )
-                    .list { r -> ClaimPair(r["a"].asString(), r["b"].asString()) }
+                    .list { r ->
+                        CoMentionPair(
+                            pair = ClaimPair(r["a"].asString(), r["b"].asString()),
+                            minShare = r["minShare"].asDouble(0.0),
+                        )
+                    }
             }
         }
 

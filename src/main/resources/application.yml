@@ -142,6 +142,8 @@ app:
     # processed globally). Same version stamp either way — switching never re-embeds.
     embedding-transport: ${STAGE3_EMBEDDING_TRANSPORT:vertex}
     gemini-api-key: ${GEMINI_API_KEY:}
+    # VA-77 B1: thinking-token cap per judge sampler call (was 4096 hardcoded).
+    judge-thinking-budget: ${STAGE3_JUDGE_THINKING_BUDGET:512}
     dry-run: ${STAGE3_DRY_RUN:false}
   # vishwakarma.ai product face (LLD §17.1): subject hosts <handle>.{base-domain} split from the
   # operator app by host-first routing (VA-30); product mail + internal-endpoint auth (VA-41).

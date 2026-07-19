@@ -333,4 +333,84 @@ class ClaimMatcherTest {
         // Ranks are contiguous from 0 in queue order — the VA-15 judgeCursor contract.
         assertEquals(a.queue.indices.toList(), a.queue.map { it.rank })
     }
+
+    // ---- VA-77 B3: the entity-IDF gate on the co-mention arm --------------------------
+
+    @Test
+    fun `rung 1 gates hub-only co-mention pairs below the floor and counts them apart`() {
+        val claims = listOf(claim("c1"), claim("c2"), claim("c3"), claim("c4"))
+        val candidates =
+            mapOf(
+                pair("c1", "c2") to setOf(BlockSource.CO_MENTION), // hub link, low sim → gated
+                pair("c1", "c3") to setOf(BlockSource.CO_MENTION), // discriminative → bypass holds
+                pair("c1", "c4") to setOf(BlockSource.CO_MENTION), // hub link but above floor
+            )
+        val sims = mapOf(pair("c1", "c2") to 0.2, pair("c1", "c3") to 0.2, pair("c1", "c4") to 0.7)
+        val shares =
+            mapOf(pair("c1", "c2") to 0.5, pair("c1", "c3") to 0.1, pair("c1", "c4") to 0.5)
+        val outcome = ClaimMatcher.cascade(claims, candidates, sims, props, shares)
+        assertEquals(
+            setOf(pair("c1", "c3"), pair("c1", "c4")),
+            outcome.queue.map { it.pair }.toSet()
+        )
+        assertEquals(1L, outcome.counters.pairsIdfGated)
+        assertEquals(0L, outcome.counters.pairsDiscarded)
+    }
+
+    // ---- VA-77 B2: the per-claim candidate cap ----------------------------------------
+
+    @Test
+    fun `per-claim cap keeps top-N by sim, union across endpoints, exempt lanes untouched`() {
+        val capped = AppProperties.Stage3(judgeCandidatesPerClaim = 1)
+        val claims = listOf(claim("c1"), claim("c2"), claim("c3"), claim("c4"), claim("c5"))
+        val candidates =
+            mapOf(
+                pair("c1", "c2") to setOf(BlockSource.KNN),
+                pair("c1", "c3") to setOf(BlockSource.KNN),
+                pair("c1", "c4") to setOf(BlockSource.KNN),
+                pair("c3", "c4") to setOf(BlockSource.KNN), // loses both endpoints' slots
+                pair("c1", "c5") to setOf(BlockSource.HUMAN), // quota lane: never ranked
+                pair("c2", "c5") to setOf(BlockSource.STRUCTURAL), // quota lane: never ranked
+            )
+        val sims =
+            mapOf(
+                pair("c1", "c2") to 0.90,
+                pair("c1", "c3") to 0.80,
+                pair("c1", "c4") to 0.70,
+                pair("c3", "c4") to 0.65,
+                pair("c1", "c5") to 0.10,
+                pair("c2", "c5") to 0.65,
+            )
+        val outcome = ClaimMatcher.cascade(claims, candidates, sims, capped)
+        // c1 keeps (c1,c2); (c1,c3)/(c1,c4) ride c3's/c4's own top-1 — the union keeps a
+        // pair while EITHER endpoint wants it. (c3,c4) is second on both sides → capped.
+        assertEquals(
+            setOf(
+                pair("c1", "c2"),
+                pair("c1", "c3"),
+                pair("c1", "c4"),
+                pair("c1", "c5"),
+                pair("c2", "c5"),
+            ),
+            outcome.queue.map { it.pair }.toSet(),
+        )
+        assertEquals(1L, outcome.counters.pairsCapped)
+        // The human-asserted pair still ranks first (the queue-order contract is untouched).
+        assertEquals(pair("c1", "c5"), outcome.queue.first().pair)
+    }
+
+    @Test
+    fun `cap of zero leaves the queue uncapped`() {
+        val uncapped = AppProperties.Stage3(judgeCandidatesPerClaim = 0)
+        val claims = listOf(claim("c1"), claim("c2"), claim("c3"))
+        val candidates =
+            mapOf(
+                pair("c1", "c2") to setOf(BlockSource.KNN),
+                pair("c1", "c3") to setOf(BlockSource.KNN),
+            )
+        val sims = mapOf(pair("c1", "c2") to 0.8, pair("c1", "c3") to 0.7)
+        val outcome = ClaimMatcher.cascade(claims, candidates, sims, uncapped)
+        assertEquals(2L, outcome.counters.pairsQueued)
+        assertEquals(0L, outcome.counters.pairsCapped)
+    }
 }

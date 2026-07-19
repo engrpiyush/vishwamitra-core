@@ -239,6 +239,7 @@ class ClaimJudgeServiceTest {
     private class FakeGemini : GeminiDrafting(AppProperties(), mock(ProviderService::class.java)) {
         val prompts = mutableListOf<String>()
         val temperatures = mutableListOf<Double?>()
+        val thinkingBudgets = mutableListOf<Int?>()
 
         override fun available() = true
 
@@ -253,6 +254,7 @@ class ClaimJudgeServiceTest {
         ): String {
             prompts += prompt
             temperatures += temperature
+            thinkingBudgets += thinkingBudget
             return """[{"i":1,"relation":"NEUTRAL","confidence":0.9,"rationale":"ok",""" +
                 """"temporalNote":null}]"""
         }
@@ -290,7 +292,9 @@ class ClaimJudgeServiceTest {
         assertTrue(evenPrompt.contains("THE RUBRIC"))
         assertTrue(evenPrompt.indexOf("AAA-text") < evenPrompt.indexOf("BBB-text"))
         assertTrue(oddPrompt.indexOf("BBB-text") < oddPrompt.indexOf("AAA-text"))
-        // The ensemble samples at the configured diversity temperature.
+        // The ensemble samples at the configured diversity temperature and thinking budget
+        // (VA-77 B1 — the 512 default replaced the hardcoded 4096).
         assertEquals(props.stage3.ensembleTemperature, gemini.temperatures[0])
+        assertEquals(512, gemini.thinkingBudgets[0])
     }
 }

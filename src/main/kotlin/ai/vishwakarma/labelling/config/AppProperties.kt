@@ -370,6 +370,21 @@ data class AppProperties(
         val entityMergeThreshold: Double = 0.85,
         /** Entities mentioned by more than (1 − floor) of a subject's claims are stopword-like. */
         val entityIdfFloor: Double = 0.25,
+        /**
+         * VA-77 B3: a co-mention-only pair whose best (lowest-DF) shared entity is still mentioned
+         * by more than this share of the subject's claims is hub-linked (employer/university-class)
+         * and loses the co-mention bypass of the rung-1 similarity floor.
+         */
+        val coMentionHubShare: Double = 0.30,
+        /**
+         * VA-77 B2: per-claim judge-candidate cap — each claim keeps its top-N queued candidates by
+         * embedding similarity; a pair queues while either endpoint keeps it. Human-asserted and
+         * STRUCTURAL-arm pairs (the CONTRADICTS lane) ride a guaranteed quota outside the ranking;
+         * 0 = uncapped, PRUNED mode only. 80 = the owner-signed 2026-07-19 operating value: the
+         * measured 12,208-pair run replays at 98.5% CORROBORATES-majority / 99.4% contributing-pair
+         * retention with zero published fact edges lost (scripts/stage3_dials_replay.py).
+         */
+        val judgeCandidatesPerClaim: Int = 80,
         /** Judge samples per pair (self-consistency ensemble, LLD §11.6). */
         val ensembleK: Int = 5,
         val ensembleTemperature: Double = 0.7,
@@ -381,6 +396,11 @@ data class AppProperties(
         val judgePairsPerPoll: Int = 40,
         /** Pairs per Gemini call (the ensemble runs k calls per batch). */
         val judgeBatchSize: Int = 8,
+        /**
+         * VA-77 B1: thinking-token cap per judge sampler call (was the hardcoded 4096 — thinking is
+         * ~60% of the judge bill). Env `STAGE3_JUDGE_THINKING_BUDGET`.
+         */
+        val judgeThinkingBudget: Int = 512,
         /**
          * Cap on concurrent sampler calls within a tick (2026-07-11): the full chunk×k fan-out
          * (~25) demanded more than the project's DSQ share of the judge model and 429-starved the

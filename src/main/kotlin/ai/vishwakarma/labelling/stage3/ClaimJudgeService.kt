@@ -317,7 +317,7 @@ class GeminiJudgeSampler(
             gemini.generate(
                 judgePrompt(shuffled, resolved.instructions, withContext, flip),
                 maxTokens = MAX_TOKENS,
-                thinkingBudget = THINKING_BUDGET,
+                thinkingBudget = config.stage3().judgeThinkingBudget,
                 temperature = config.stage3().ensembleTemperature,
                 pin = ProviderService.PIN_STAGE3,
             )
@@ -347,8 +347,10 @@ class GeminiJudgeSampler(
         const val PROMPT_KEY = "STAGE3_JUDGE"
         /** 8 pairs × ~120 tokens of verdict JSON leaves a wide margin at 8k. */
         const val MAX_TOKENS = 8_192
-        /** Relation judging is the reasoning-heavy call — a larger cap than extraction's. */
-        const val THINKING_BUDGET = 4_096
+        // Thinking budget is `judge-thinking-budget` config since VA-77 B1 (was 4096 hardcoded —
+        // thinking tokens were ~60% of the judge bill). NOTE: it is not part of the verdict-cache
+        // key (the §9.5 posture, same as judgeModel) — changing it is a calibration event that
+        // re-judges nothing retroactively.
     }
 }
 

@@ -46,6 +46,14 @@ enum class BlockSource {
 /** One kNN blocking hit ([Stage3GraphRepository.claimKnnPairs]) — carries the cosine similarity. */
 data class ScoredPair(val pair: ClaimPair, val sim: Double)
 
+/**
+ * One co-mention blocking hit ([Stage3GraphRepository.coMentionPairs]): [minShare] is the
+ * document-frequency share of the pair's most discriminative (lowest-DF) admitted shared entity —
+ * the VA-77 B3 hub signal. A pair whose best link is still a hub (share > `co-mention-hub-share`)
+ * loses the co-mention bypass of rung 1's similarity floor.
+ */
+data class CoMentionPair(val pair: ClaimPair, val minShare: Double)
+
 /** A rung-2/3 auto-resolution: `REPEATS {method: AUTO}` written without ever calling the judge. */
 data class AutoRepeatEdge(val pair: ClaimPair, val rung: Int, val sim: Double)
 
@@ -89,6 +97,10 @@ data class MatchCounters(
     val pairsAutoResolved: Long,
     /** Rungs 1 and 4 — never judged. */
     val pairsDiscarded: Long,
+    /** VA-77 B3: rung-1 discards that only the hub-entity co-mention bypass used to save. */
+    val pairsIdfGated: Long,
+    /** VA-77 B2: queue candidates dropped by the per-claim cap (neither endpoint kept them). */
+    val pairsCapped: Long,
     val pairsQueued: Long,
 )
 
@@ -179,12 +191,15 @@ object ClaimMatcher {
         candidates: Map<ClaimPair, Set<BlockSource>>,
         sims: Map<ClaimPair, Double>,
         props: AppProperties.Stage3,
+        /** Pair → its most discriminative shared entity's DF share ([CoMentionPair.minShare]). */
+        coMentionShares: Map<ClaimPair, Double> = emptyMap(),
     ): MatchOutcome {
         val byId = claims.associateBy { it.claimId }
         val pruned = !props.exhaustiveMatching
         val autoRepeats = mutableListOf<AutoRepeatEdge>()
         val queued = sortedMapOf<ClaimPair, QueuedPair>(PAIR_ORDER)
         var discarded = 0L
+        var idfGated = 0L
         var sameFactCollapsed = 0L
 
         val ordered =
@@ -201,10 +216,13 @@ object ClaimMatcher {
             val sharedEntity = BlockSource.CO_MENTION in sources
 
             // Rung 1 — similarity floor. kNN hits arrive pre-floored; this prunes the low-sim tail
-            // of the structural arm (and any floor-straddling co-mention pair loses only when it
-            // shares no discriminative entity, which co-mention membership rules out).
-            if (pruned && !human && !sharedEntity && sim < props.simFloor) {
-                discarded++
+            // of the structural arm. The co-mention bypass only counts when the shared entity is
+            // discriminative: a pair whose best link is a hub (DF share > co-mention-hub-share)
+            // faces the floor like everyone else (VA-77 B3 — the employer/university hubs are what
+            // make the co-mention arm quadratic).
+            val hubOnly = sharedEntity && (coMentionShares[pair] ?: 0.0) > props.coMentionHubShare
+            if (pruned && !human && (!sharedEntity || hubOnly) && sim < props.simFloor) {
+                if (sharedEntity) idfGated++ else discarded++
                 continue
             }
             // Rung 2 — same source + near-identical normalized text: a duplicate, not evidence.
@@ -257,6 +275,43 @@ object ClaimMatcher {
         // on a pair rung 2/3 already settled).
         autoRepeats.forEach { queued.remove(it.pair) }
 
+        // VA-77 B2 — per-claim candidate cap: every claim keeps its top-N surviving candidates by
+        // blockScore; a pair stays queued while EITHER endpoint keeps it (the recall-preserving
+        // union). Human-asserted and STRUCTURAL-arm pairs never compete for slots — contradicting
+        // claims are often semantically dissimilar, so the CONTRADICTS lane rides a guaranteed
+        // quota outside the ranking (PLAN-stage3-cost-cut B2). PRUNED-only, like rungs 1/4 —
+        // EXHAUSTIVE is the §13 blocking-recall oracle and must stay uncapped.
+        var capped = 0L
+        if (pruned && props.judgeCandidatesPerClaim > 0) {
+            val rankable =
+                queued.filterValues { !it.humanAsserted && BlockSource.STRUCTURAL !in it.sources }
+            val perClaim = mutableMapOf<String, MutableList<Pair<ClaimPair, Double>>>()
+            rankable.forEach { (pair, q) ->
+                perClaim.getOrPut(pair.a) { mutableListOf() } += pair to q.blockScore
+                perClaim.getOrPut(pair.b) { mutableListOf() } += pair to q.blockScore
+            }
+            val keptByClaim =
+                perClaim.mapValues { (_, scored) ->
+                    scored
+                        .sortedWith(
+                            compareByDescending<Pair<ClaimPair, Double>> { it.second }
+                                .thenBy { it.first.a }
+                                .thenBy { it.first.b }
+                        )
+                        .take(props.judgeCandidatesPerClaim)
+                        .map { it.first }
+                        .toSet()
+                }
+            rankable.keys
+                .filter { pair ->
+                    pair !in keptByClaim.getValue(pair.a) && pair !in keptByClaim.getValue(pair.b)
+                }
+                .forEach { pair ->
+                    queued.remove(pair)
+                    capped++
+                }
+        }
+
         val queue =
             queued.entries
                 .sortedWith(
@@ -284,6 +339,8 @@ object ClaimMatcher {
                 pairsCandidate = candidates.size.toLong(),
                 pairsAutoResolved = autoRepeats.size + sameFactCollapsed,
                 pairsDiscarded = discarded,
+                pairsIdfGated = idfGated,
+                pairsCapped = capped,
                 pairsQueued = queue.size.toLong(),
             )
         return MatchOutcome(autoRepeats = autoRepeats, queue = queue, counters = counters)

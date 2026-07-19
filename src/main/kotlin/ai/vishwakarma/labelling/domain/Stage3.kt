@@ -66,6 +66,10 @@ object Stage3Counters {
     /** …and its outcomes: auto-REPEATS/same-fact (rungs 2/3/5), discards (1/4), judge queue. */
     const val PAIRS_AUTO_RESOLVED = "pairsAutoResolved"
     const val PAIRS_DISCARDED = "pairsDiscarded"
+    /** VA-77 B3: rung-1 discards that only the hub-entity co-mention bypass used to save. */
+    const val PAIRS_IDF_GATED = "pairsIdfGated"
+    /** VA-77 B2: queue candidates dropped by the per-claim cap (neither endpoint kept them). */
+    const val PAIRS_CAPPED = "pairsCapped"
     const val PAIRS_QUEUED = "pairsQueued"
     /** JUDGE progress: queue entries flipped to JUDGED (authoritative graph count, VA-15). */
     const val PAIRS_JUDGED = "pairsJudged"
