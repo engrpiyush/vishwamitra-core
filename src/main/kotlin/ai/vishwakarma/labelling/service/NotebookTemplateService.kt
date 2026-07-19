@@ -50,6 +50,10 @@ class NotebookTemplateService(
         promptTemplate: String,
         coverageTarget: Int,
         actor: String?,
+        facets: String = "",
+        evidenceGate: String = "",
+        requiredClaimTypes: List<ClaimType> = emptyList(),
+        outcomes: List<String> = emptyList(),
     ): Either<DomainError, NotebookTemplate> =
         validate(category, title, coverageTarget) {
             val template =
@@ -60,6 +64,10 @@ class NotebookTemplateService(
                     formatSpec = formatSpec.clean(),
                     promptTemplate = promptTemplate.trim(),
                     coverageTarget = coverageTarget,
+                    facets = facets.trim(),
+                    evidenceGate = evidenceGate.trim(),
+                    requiredClaimTypes = requiredClaimTypes,
+                    outcomes = outcomes.map { it.trim() }.filter { it.isNotBlank() },
                     version = 1,
                     updatedBy = actor,
                     updatedAt = Instant.now(),
@@ -76,6 +84,10 @@ class NotebookTemplateService(
         promptTemplate: String,
         coverageTarget: Int,
         actor: String?,
+        facets: String = "",
+        evidenceGate: String = "",
+        requiredClaimTypes: List<ClaimType> = emptyList(),
+        outcomes: List<String> = emptyList(),
     ): Either<DomainError, NotebookTemplate> {
         val existing =
             templates.findById(id) ?: return DomainError.NotFound("Template not found").left()
@@ -87,6 +99,10 @@ class NotebookTemplateService(
                     formatSpec = formatSpec.clean(),
                     promptTemplate = promptTemplate.trim(),
                     coverageTarget = coverageTarget,
+                    facets = facets.trim(),
+                    evidenceGate = evidenceGate.trim(),
+                    requiredClaimTypes = requiredClaimTypes,
+                    outcomes = outcomes.map { it.trim() }.filter { it.isNotBlank() },
                     version = existing.version + 1,
                     updatedBy = actor,
                     updatedAt = Instant.now(),
@@ -118,6 +134,8 @@ class NotebookTemplateService(
             intent = intent.trim(),
             personaLens = personaLens.trim(),
             expectedBehaviours = expectedBehaviours.map { it.trim() }.filter { it.isNotBlank() },
+            openingProbe = openingProbe.trim(),
+            failureModes = failureModes.map { it.trim() }.filter { it.isNotBlank() },
         )
 
     // ---- Taxonomy ----------------------------------------------------------

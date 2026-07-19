@@ -219,8 +219,25 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                 )
         if (anchors.isEmpty()) return emptyList()
         return templates.flatMapIndexed { index, template ->
+            // Evidence gate (VA-87 safety): a template that asserts a negative/aspiration only
+            // draws
+            // against subject facts whose member claims cover every required claim type. An empty
+            // gate keeps the legacy pool (fires for every subject). A gated template with no
+            // eligible
+            // anchor plans zero units and is recorded `missed` in the coverage report — this is
+            // what
+            // stops the drafter inventing an ungrounded defect about a real person.
+            val eligible =
+                if (template.requiredClaimTypes.isEmpty()) anchors
+                else
+                    anchors.filter { (_, members) ->
+                        template.requiredClaimTypes.all { req ->
+                            members.any { it.claim.claimType == req }
+                        }
+                    }
+            if (eligible.isEmpty()) return@flatMapIndexed emptyList()
             (0 until template.coverageTarget).map { slot ->
-                val (anchor, members) = anchors[(index + slot) % anchors.size]
+                val (anchor, members) = eligible[(index + slot) % eligible.size]
                 val unitKey = "tpl:${template.id}:${anchor.factId}"
                 val unit =
                     if (members.size >= 2) {

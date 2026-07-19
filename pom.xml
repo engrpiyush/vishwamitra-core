@@ -17,6 +17,10 @@
 	<properties>
 		<java.version>17</java.version>
 		<kotlin.version>2.3.21</kotlin.version>
+		<!-- VA-106: the byte-for-byte gatekeeper contract fixtures live in the sibling lakshmana-core
+		     repo (an independent git repo, not a submodule). GatekeeperContractTest reads them from
+		     here; override -Dlakshmana.contracts.dir=... if the checkout is elsewhere. -->
+		<lakshmana.contracts.dir>${project.basedir}/../lakshmana-core/contracts</lakshmana.contracts.dir>
 		<!-- External (non-Boot-managed) dependency versions -->
 		<gcp-libraries-bom.version>26.83.0</gcp-libraries-bom.version>
 		<arrow.version>2.1.2</arrow.version>
@@ -107,7 +111,8 @@
 			<artifactId>arrow-core</artifactId>
 		</dependency>
 
-		<!-- Google Cloud: Firestore (datastore), GCS (export), auth (Vertex bearer token) -->
+		<!-- Google Cloud: Firestore (datastore), GCS (export), Pub/Sub (the gatekeeper trigger —
+		     VA-106; the ONLY message this app publishes), auth (Vertex bearer token) -->
 		<dependency>
 			<groupId>com.google.cloud</groupId>
 			<artifactId>google-cloud-firestore</artifactId>
@@ -115,6 +120,10 @@
 		<dependency>
 			<groupId>com.google.cloud</groupId>
 			<artifactId>google-cloud-storage</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.google.cloud</groupId>
+			<artifactId>google-cloud-pubsub</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>com.google.auth</groupId>
@@ -216,6 +225,18 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<!-- Surefire is otherwise inherited from the Boot parent (version managed there — do NOT
+			     pin it). This override adds only the VA-106 contract-fixtures path as a system
+			     property so GatekeeperContractTest can find the sibling repo. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<lakshmana.contracts.dir>${lakshmana.contracts.dir}</lakshmana.contracts.dir>
+					</systemPropertyVariables>
+				</configuration>
 			</plugin>
 			<!-- Container image build (no Dockerfile). `./mvnw jib:build` pushes to Artifact Registry. -->
 			<plugin>

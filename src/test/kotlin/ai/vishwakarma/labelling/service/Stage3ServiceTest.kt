@@ -23,6 +23,10 @@ import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimAuthenticityRow
 import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
+import ai.vishwakarma.labelling.persistence.GatekeeperEdgeKey
+import ai.vishwakarma.labelling.persistence.GatekeeperEdgeRepository
+import ai.vishwakarma.labelling.persistence.GatekeeperEdgeRow
+import ai.vishwakarma.labelling.persistence.GatekeeperRunRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.PublishContract
 import ai.vishwakarma.labelling.persistence.Stage2JobRepository
@@ -89,6 +93,16 @@ import ai.vishwakarma.labelling.stage3.Stage3GraphRepository
 import ai.vishwakarma.labelling.stage3.TimelineFact
 import ai.vishwakarma.labelling.stage3.TimelineSucceeds
 import ai.vishwakarma.labelling.stage3.TimelineView
+import ai.vishwakarma.labelling.stage3.gatekeeper.Gate
+import ai.vishwakarma.labelling.stage3.gatekeeper.GateState
+import ai.vishwakarma.labelling.stage3.gatekeeper.GateView
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperPublisher
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperRunRequest
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperRunState
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperRunView
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperService
+import ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode
+import ai.vishwakarma.labelling.stage3.gatekeeper.RunMode
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
@@ -397,6 +411,10 @@ private class FakeGraphRepo(props: AppProperties) :
 
     override fun countJudgeQueue(subjectId: String, status: String): Long =
         judgeQueue.values.count { it.status == status }.toLong()
+
+    override fun markJudgeEscalated(subjectId: String, pairs: List<ClaimPair>) {
+        pairs.forEach { judgeQueue[it]?.status = "ESCALATED" }
+    }
 
     override fun applyJudgeOutcome(subjectId: String, judged: List<JudgedPair>) {
         if (failJudgeWrite) throw IllegalStateException("Neo4j write failed: judge tx aborted")
@@ -961,6 +979,41 @@ private class FakeJudgeEdgeRepo : Stage3EdgeRepository(mock(Firestore::class.jav
     }
 }
 
+/** Records publishes; a switch to make the next publish throw (the PUBLISH_FAILED path). */
+private class FakeGatekeeperPublisher : GatekeeperPublisher {
+    val published = mutableListOf<GatekeeperRunRequest>()
+    var failNext = false
+
+    override val posture = "TEST"
+
+    override fun publish(request: GatekeeperRunRequest): String {
+        if (failNext) throw IllegalStateException("pubsub unavailable")
+        published += request
+        return "msg-${request.runRequestId}"
+    }
+}
+
+/** In-memory gatekeeper_runs: a test seeds a view keyed by runRequestId and by intake. */
+private class FakeGatekeeperRunStore : GatekeeperRunRepository(mock(Firestore::class.java)) {
+    val byRequest = linkedMapOf<String, GatekeeperRunView>()
+
+    override fun findByRunRequestId(runRequestId: String): GatekeeperRunView? =
+        byRequest[runRequestId]
+
+    override fun findLatestByIntake(intakeId: String): GatekeeperRunView? =
+        byRequest.values.lastOrNull { it.intakeId == intakeId }
+}
+
+/** In-memory GK stage3_edges rows, keyed by (pair, variant). */
+private class FakeGatekeeperEdgeStore : GatekeeperEdgeRepository(mock(Firestore::class.java)) {
+    val rows = linkedMapOf<GatekeeperEdgeKey, GatekeeperEdgeRow>()
+
+    override fun findAll(pairs: Collection<ClaimPair>): Map<GatekeeperEdgeKey, GatekeeperEdgeRow> {
+        val wanted = pairs.toSet()
+        return rows.filterKeys { it.pair in wanted }
+    }
+}
+
 /** Scriptable extractor: canned per-claim mentions, observable batches, a failure switch. */
 private class ScriptedExtractor(var mentionsByClaim: Map<String, ExtractedMentions> = emptyMap()) :
     EntityMentionExtractor {
@@ -1043,7 +1096,18 @@ class Stage3ServiceTest {
     private val subjectFacts = FakeSubjectFactRepo()
     private val advocates = FakeS3AdvocateRepo()
 
-    private fun service(embeddings: EmbeddingService = PseudoEmbeddingService(8)) =
+    // VA-106: the gatekeeper collaborator. The fake publisher records what would be published and
+    // can be told to fail; the fake run/edge stores let a test script a cascade's progress and its
+    // verdicts. LLM-mode tests never touch any of them.
+    private val gkPublisher = FakeGatekeeperPublisher()
+    private val gkRuns = FakeGatekeeperRunStore()
+    private val gkEdges = FakeGatekeeperEdgeStore()
+    private val gatekeeperService = GatekeeperService(gkPublisher, gkRuns, gkEdges)
+
+    private fun service(
+        embeddings: EmbeddingService = PseudoEmbeddingService(8),
+        svcProps: AppProperties = props,
+    ) =
         Stage3Service(
             runs,
             manifests,
@@ -1055,15 +1119,21 @@ class Stage3ServiceTest {
             graph,
             embeddings,
             extractor,
-            EntityResolver(graph, embeddings, liveConfig(props)),
-            ClaimJudgeService(judgeSampler, judgeEdges, liveConfig(props)),
+            EntityResolver(graph, embeddings, liveConfig(svcProps)),
+            ClaimJudgeService(judgeSampler, judgeEdges, liveConfig(svcProps)),
             judgeEdges,
             claims,
             subjectScores,
             subjectFacts,
             AggregateScoreService(claims, advocates),
-            liveConfig(props),
+            gatekeeperService,
+            liveConfig(svcProps),
+            svcProps,
         )
+
+    /** A service whose runs freeze [mode] into paramsSnapshot — the split-brain leg (VA-106). */
+    private fun serviceInMode(mode: String): Stage3Service =
+        service(svcProps = props.copy(stage3 = props.stage3.copy(judgeMode = mode)))
 
     private fun seedSubject(reviewSubmitted: Boolean = true, claimCount: Int = 2) {
         subjects.store[subjectId] = Subject(id = subjectId, displayName = "Asha")
@@ -1640,6 +1710,252 @@ class Stage3ServiceTest {
         assertEquals("test:1:judgehash", judged.promptStamp)
         // Both variants cached under distinct keys.
         assertEquals(setOf(false, true), judgeEdges.store.values.map { it.withContext }.toSet())
+    }
+
+    // ---- VA-106: the gatekeeper judge mode + split-brain guard -------------------------
+
+    /** Seed the cascade's run doc (and, for a decided run, its verdict rows) for [run]. */
+    private fun seedCascade(
+        run: Stage3Run,
+        state: GatekeeperRunState,
+        verdicts: Map<ClaimPair, JudgeRelation?> = emptyMap(),
+        gates: List<GateView> = emptyList(),
+    ) {
+        val rid = run.gkRunRequestId!!
+        gkRuns.byRequest[rid] =
+            GatekeeperRunView(
+                runRequestId = rid,
+                intakeId = run.subjectId,
+                stage3RunId = run.id,
+                judgeMode = JudgeMode.GATEKEEPER,
+                state = state,
+                supersededBy = null,
+                gates = gates,
+                totals = mapOf("pairsSeen" to 2L, "decidedByGates" to verdicts.size.toLong()),
+                llmSpendUsd = 0.0,
+                errorCode = null,
+                errorDetail = null,
+                createdAt = null,
+                updatedAt = null,
+            )
+        verdicts.forEach { (pair, rel) ->
+            gkEdges.rows[GatekeeperEdgeKey(pair, false)] =
+                GatekeeperEdgeRow(
+                    pair = pair,
+                    withContext = false,
+                    relation = rel,
+                    confidence = 0.9,
+                    method = "GK_G1_NLI",
+                    judgeModel = "modernbert-base-nli@v1",
+                    rationale = null,
+                    temporalNote = null,
+                    escalationReason = if (rel == null) "LOW_CONFIDENCE" else null,
+                    truncated = false,
+                    gkRunRequestId = rid,
+                )
+        }
+    }
+
+    @Test
+    fun `GATEKEEPER mode never runs the ensemble and applies the cascade's verdicts`() {
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        var run = queueTwoPairs(svc)
+        assertEquals(0, judgeSampler.calls) // nothing sampled yet — MATCH only
+
+        // First JUDGE tick publishes G1 and, with no run doc yet, waits.
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.JUDGING, run.status)
+        assertNotNull(run.gkRunRequestId)
+        assertEquals("PUBLISHED", run.gkPublishState)
+        val g1 = gkPublisher.published.single()
+        assertEquals(Gate.G1_NEUTRAL, g1.gate)
+        assertEquals(RunMode.FULL, g1.mode)
+        assertEquals(subjectId, g1.intakeId)
+        assertEquals(run.id, g1.stage3RunId)
+
+        // The cascade finishes and writes its verdicts; the poll drains them.
+        seedCascade(
+            run,
+            GatekeeperRunState.SUCCEEDED,
+            verdicts =
+                mapOf(
+                    ClaimPair.of("c1", "c2") to JudgeRelation.CORROBORATES,
+                    ClaimPair.of("c1", "c3") to JudgeRelation.NEUTRAL,
+                ),
+        )
+        run = pollTo(svc, run.id, Stage3RunStatus.ASSEMBLING)
+
+        // THE GUARD: the ensemble sampler was never called, not once.
+        assertEquals(0, judgeSampler.calls)
+        // Only one trigger was ever published, despite several JUDGE ticks.
+        assertEquals(1, gkPublisher.published.size)
+        // The cascade's verdicts reached the graph through the normal applyJudgeOutcome path.
+        val judged = graph.judgeQueue[ClaimPair.of("c1", "c2")]!!.judged!!
+        assertEquals(JudgeRelation.CORROBORATES, judged.bare.relation)
+        assertEquals("modernbert-base-nli@v1", judged.judgeModel)
+        assertEquals("GK", judged.promptStamp)
+    }
+
+    @Test
+    fun `GATEKEEPER marks human-escalated pairs ESCALATED instead of defaulting them NEUTRAL`() {
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        var run = queueTwoPairs(svc)
+        run = svc.poll(run.id).valueOrNull()!! // publish + wait
+
+        // One pair decided, one escalated to a human (relation == null).
+        seedCascade(
+            run,
+            GatekeeperRunState.SUCCEEDED,
+            verdicts =
+                mapOf(
+                    ClaimPair.of("c1", "c2") to JudgeRelation.CORROBORATES,
+                    ClaimPair.of("c1", "c3") to null,
+                ),
+        )
+        run = pollTo(svc, run.id, Stage3RunStatus.ASSEMBLING)
+
+        assertEquals(0, judgeSampler.calls)
+        assertEquals("JUDGED", graph.judgeQueue[ClaimPair.of("c1", "c2")]!!.status)
+        // The escalated pair was NOT written as a verdict, but it DID leave the QUEUED window (so
+        // the phase can drain) — it is ESCALATED for the human queue, never defaulted NEUTRAL.
+        assertEquals("ESCALATED", graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.status)
+        assertNull(graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.judged)
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_AWAITING_HUMAN])
+    }
+
+    @Test
+    fun `a low-rank all-escalated batch does not abandon decided pairs behind it`() {
+        // The regression the review caught: when the lowest-rank judgePairsPerPoll pairs are all
+        // human-escalated, an early advance-on-empty-batch would strand the decided pairs behind
+        // them and publish a hollow graph. With judge-pairs-per-poll = 1, pair c1↔c2 (rank 0) is
+        // escalated and c1↔c3 (rank 1) is decided — the escalated front must not end the phase.
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        var run = queueTwoPairs(svc) // knn 0.80/0.70 → c1↔c2 rank 0, c1↔c3 rank 1
+        run = svc.poll(run.id).valueOrNull()!! // publish + wait
+        seedCascade(
+            run,
+            GatekeeperRunState.SUCCEEDED,
+            verdicts =
+                mapOf(
+                    ClaimPair.of("c1", "c2") to null, // rank 0, escalated — the blocking front
+                    ClaimPair.of("c1", "c3") to JudgeRelation.CORROBORATES, // rank 1, decided
+                ),
+        )
+        run = pollTo(svc, run.id, Stage3RunStatus.ASSEMBLING)
+
+        // The decided pair behind the escalated front WAS judged, not abandoned.
+        assertEquals("JUDGED", graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.status)
+        assertEquals(
+            JudgeRelation.CORROBORATES,
+            graph.judgeQueue[ClaimPair.of("c1", "c3")]!!.judged!!.bare.relation,
+        )
+        assertEquals("ESCALATED", graph.judgeQueue[ClaimPair.of("c1", "c2")]!!.status)
+        assertEquals(1L, run.counters[Stage3Counters.PAIRS_AWAITING_HUMAN])
+    }
+
+    @Test
+    fun `a cascade that never completes fails the run at the cascade-timeout`() {
+        seedSubject(claimCount = 3)
+        // phase-timeout stays large so the §12.7 reclaim can't be what fires — the cascade bound is
+        // the only thing that can fail this run.
+        val gkProps =
+            props.copy(
+                stage3 =
+                    props.stage3.copy(judgeMode = "GATEKEEPER", phaseTimeout = Duration.ofHours(1)),
+                gatekeeper = props.gatekeeper.copy(cascadeTimeout = Duration.ofMinutes(30)),
+            )
+        val svc = service(svcProps = gkProps)
+        var run = queueTwoPairs(svc)
+        run =
+            svc.poll(run.id).valueOrNull()!! // publish; gkTriggeredAt set, cascade stays REQUESTED
+        assertNotNull(runs.store[run.id]!!.gkTriggeredAt)
+        assertEquals(Stage3RunStatus.JUDGING, run.status) // still waiting — well inside 30m
+
+        // Backdate the trigger past the timeout while keeping phaseSince recent. This is the
+        // regression guard: if cascadeOverdue anchored on phaseSince (the dead-code bug) it would
+        // read 'not overdue' and hang; anchored on gkTriggeredAt it fires.
+        runs.store[run.id] =
+            runs.store[run.id]!!.copy(
+                gkTriggeredAt = Instant.now().minus(Duration.ofHours(1)),
+                phaseSince = Instant.now(),
+            )
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertTrue(run.error!!.contains("has not completed within"))
+        assertEquals(0, judgeSampler.calls)
+    }
+
+    @Test
+    fun `a failed publish parks the run FAILED with PUBLISH_FAILED, never touching the ensemble`() {
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        var run = queueTwoPairs(svc)
+        gkPublisher.failNext = true
+
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertEquals("PUBLISH_FAILED", run.gkPublishState)
+        assertTrue(run.error!!.contains("could not be published"))
+        assertEquals(0, judgeSampler.calls)
+        assertTrue(gkPublisher.published.isEmpty())
+    }
+
+    @Test
+    fun `a cascade gate failure fails the Stage 3 run with the gate's errorCode`() {
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        var run = queueTwoPairs(svc)
+        run = svc.poll(run.id).valueOrNull()!! // publish + wait
+
+        seedCascade(
+            run,
+            GatekeeperRunState.FAILED,
+            gates =
+                listOf(
+                    GateView(
+                        gate = Gate.G3_CONTRADICTION,
+                        state = GateState.FAILED,
+                        attempt = 1,
+                        sweepAttempt = 0,
+                        startedAt = null,
+                        endedAt = null,
+                        counters = emptyMap(),
+                        errorCode = "GK_E_MODEL_FETCH",
+                        errorDetail = "sha256 mismatch on deberta-mnli-fever-anli@v1",
+                    )
+                ),
+        )
+        run = svc.poll(run.id).valueOrNull()!!
+        assertEquals(Stage3RunStatus.FAILED, run.status)
+        assertTrue(run.error!!.contains("GK_E_MODEL_FETCH"))
+        assertTrue(run.error!!.contains("G3_CONTRADICTION"))
+        assertEquals(0, judgeSampler.calls)
+    }
+
+    @Test
+    fun `LLM mode judges with the ensemble and never publishes a gatekeeper request`() {
+        seedSubject(claimCount = 3)
+        val svc = service() // default judgeMode = LLM
+        var run = queueTwoPairs(svc)
+        run = pollTo(svc, run.id, Stage3RunStatus.AWAITING_REVIEW)
+
+        assertTrue(judgeSampler.calls > 0)
+        assertTrue(gkPublisher.published.isEmpty())
+        assertNull(runs.store[run.id]!!.gkRunRequestId)
+    }
+
+    @Test
+    fun `the run's frozen judgeMode survives a mid-run config flip`() {
+        seedSubject(claimCount = 3)
+        val svc = serviceInMode("GATEKEEPER")
+        val run = queueTwoPairs(svc)
+        // The run was submitted under GATEKEEPER; its paramsSnapshot pins that.
+        assertTrue(run.paramsSnapshot!!.contains("\"judgeMode\":\"GATEKEEPER\""))
+        // Even reading through a service configured for LLM, the run keeps its frozen mode.
+        assertEquals(JudgeMode.GATEKEEPER, service().frozenJudgeMode(run))
     }
 
     // ---- ASSEMBLE (VA-16) --------------------------------------------------------------

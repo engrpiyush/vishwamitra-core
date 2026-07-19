@@ -34,6 +34,13 @@ class Stage3PropertiesTest {
         assertEquals(0.30, s3.coMentionHubShare)
         assertEquals(80, s3.judgeCandidatesPerClaim)
         assertEquals(512, s3.judgeThinkingBudget)
+        // VA-106: the judge-mode dial defaults to the legacy ensemble; the typed accessor parses
+        // it.
+        assertEquals("LLM", s3.judgeMode)
+        assertEquals(
+            ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode.LLM,
+            s3.judgeModeOrDefault,
+        )
         assertEquals(5, s3.ensembleK)
         assertEquals(0.7, s3.ensembleTemperature)
         assertEquals("ALTERNATE", s3.ensembleOrderings)

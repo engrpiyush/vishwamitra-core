@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.config
 
+import ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode
 import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -15,6 +16,7 @@ data class AppProperties(
     val gcp: Gcp = Gcp(),
     val tuning: Tuning = Tuning(),
     val serving: Serving = Serving(),
+    val gatekeeper: Gatekeeper = Gatekeeper(),
     val auth: Auth = Auth(),
     val intake: Intake = Intake(),
     val stage2: Stage2 = Stage2(),
@@ -188,6 +190,45 @@ data class AppProperties(
         val evalTransport: String = "endpoint",
         /** Base URL of the dev vLLM serve (e.g. `http://10.0.0.5:8000`); required for `vllm`. */
         val evalVllmBaseUrl: String = "",
+    )
+
+    /**
+     * The Lakshmana gatekeeper transport (VA-106; Gatekeeper LLD §5, §14) — the Pub/Sub topic this
+     * app publishes gate-transition requests to, and the dials around that one call.
+     *
+     * **Restart-bound by design.** The live-editable config store covers only the STAGE1..STAGE4
+     * blocks ([StageConfigCatalog]), so everything here is env/yml and takes effect on deploy — the
+     * same posture as [Tuning] and [Serving]. Note the deliberate asymmetry that creates:
+     * `app.stage3.judge-mode` IS live-editable, while the transport underneath it is not. Flipping
+     * the mode to GATEKEEPER on a deployment whose publisher is still dry-run is therefore
+     * possible, and the no-op publisher logs a WARN naming both flags rather than failing quietly.
+     */
+    data class Gatekeeper(
+        /**
+         * Dev/test: log the payload instead of publishing it. The dev profile sets this true, and a
+         * blank [topic] is an independent hard no-op — a misconfigured box cannot publish even with
+         * the flag flipped off.
+         */
+        val dryRun: Boolean = false,
+        /** Pub/Sub topic id (LLD §5: `gatekeeper-requests`). Blank = publishing disabled. */
+        val topic: String = "",
+        /**
+         * Project hosting the topic. Blank → [Gcp.projectId]; both services share one project
+         * today, so the override exists only so they need not.
+         */
+        val projectId: String = "",
+        /** Bounded publish retry (gax `RetrySettings`) — a terminal failure is operator-visible. */
+        val publishTimeout: Duration = Duration.ofSeconds(20),
+        val publishMaxAttempts: Int = 5,
+        val publishInitialBackoff: Duration = Duration.ofMillis(500),
+        val publishMaxBackoff: Duration = Duration.ofSeconds(10),
+        /**
+         * How long a GATEKEEPER-mode JUDGE phase waits for the cascade before the run is failed as
+         * stuck. Generous on purpose: §16 puts the reference subject at 25–35 min and a 1,000-claim
+         * intake at 1.5–2.5 h, and the phase's own `phase-timeout` cannot govern here — the JUDGE
+         * tick legitimately makes no local progress while the cascade works.
+         */
+        val cascadeTimeout: Duration = Duration.ofHours(6),
     )
 
     data class Auth(
@@ -402,6 +443,16 @@ data class AppProperties(
          */
         val judgeThinkingBudget: Int = 512,
         /**
+         * VA-106: which judge decides — `LLM` | `GATEKEEPER` | `SHADOW`
+         * ([ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode]). Frozen into the run's
+         * `paramsSnapshot` at submit and read back from there for the rest of the run, so a
+         * mid-flight edit can never make two judges act on one run. Rollback from the cascade is
+         * this one value going back to `LLM` — the ensemble path is untouched by the integration.
+         * Typed as String because live-config rebinding produces Strings for STRING-kind fields;
+         * [judgeModeOrDefault] is the typed accessor.
+         */
+        val judgeMode: String = "LLM",
+        /**
          * Cap on concurrent sampler calls within a tick (2026-07-11): the full chunk×k fan-out
          * (~25) demanded more than the project's DSQ share of the judge model and 429-starved the
          * ladder. Fewer lanes with natural queuing beat a burst the provider keeps refusing.
@@ -496,6 +547,14 @@ data class AppProperties(
     ) {
         val exhaustiveMatching: Boolean
             get() = matchingMode.equals("EXHAUSTIVE", ignoreCase = true)
+
+        /**
+         * [judgeMode] parsed, falling back to LLM on anything unrecognised. Lenient in the same
+         * direction as [exhaustiveMatching]: an unreadable value keeps the legacy ensemble running
+         * rather than silently handing the verdict pen to a service that may not be deployed.
+         */
+        val judgeModeOrDefault: JudgeMode
+            get() = JudgeMode.fromOrNull(judgeMode) ?: JudgeMode.LLM
 
         /** Effective per-leg dry-run switches — explicit override wins, else the master flag. */
         val embeddingsDryRun: Boolean

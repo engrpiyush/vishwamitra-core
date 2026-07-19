@@ -94,6 +94,13 @@ class Stage3Controller(
             "queueSize",
             run?.counters?.get(Stage3Counters.CONTRADICTION_QUEUE) ?: 0L,
         )
+        // VA-106: the gatekeeper cascade's live view (gate chips + failure card), null in LLM mode
+        // or before the run first triggers. The judgeMode chip reads the run's own frozen mode.
+        model.addAttribute("gatekeeper", run?.let { stage3.gatekeeperView(it) })
+        model.addAttribute(
+            "judgeMode",
+            run?.let { stage3.frozenJudgeMode(it).name } ?: config.stage3().judgeModeOrDefault.name,
+        )
         // Live server posture (props, not the run's snapshot): a stubbed leg makes a run useless
         // on a real subject, so surface it before Run — not after (2026-07-11 testing lesson).
         model.addAttribute(
@@ -486,6 +493,33 @@ class Stage3Controller(
                                 "Fresh re-run created — the subject's graph is rebuilt from the " +
                                     "reviewed claims"
                             else "Re-run created — cached judge verdicts are reused",
+                        )
+                    },
+                )
+        }
+
+    /**
+     * VA-106: operator retrigger of the gatekeeper cascade — a failed gate (`gate` set) re-enters
+     * FROM_GATE keeping earlier work, or the whole run restarts FROM_START (`gate` blank, new id).
+     */
+    @PostMapping("/stage3/runs/{runId}/gatekeeper/retrigger")
+    fun retriggerGatekeeper(
+        @PathVariable runId: String,
+        @RequestParam(required = false) gate: String?,
+        ra: RedirectAttributes,
+    ): String =
+        runAction(runId, ra) {
+            val target = ai.vishwakarma.labelling.stage3.gatekeeper.Gate.fromOrNull(gate)
+            stage3
+                .retriggerGatekeeper(runId, target)
+                .fold(
+                    { ra.addFlashAttribute("error", it.message) },
+                    {
+                        ra.addFlashAttribute(
+                            "ok",
+                            if (target == null)
+                                "Gatekeeper restarted from the beginning (FROM_START)"
+                            else "Gatekeeper re-triggered from ${target.shortLabel} (FROM_GATE)",
                         )
                     },
                 )

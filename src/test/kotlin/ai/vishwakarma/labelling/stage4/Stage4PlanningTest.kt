@@ -40,13 +40,14 @@ class Stage4PlanningTest {
         favorability: Double? = null,
         factLabel: String? = null,
         attestorKind: String? = null,
+        claimType: ClaimType = ClaimType.EPISODE,
     ) =
         EvidencedClaim(
             Claim(
                 id = id,
                 subjectId = "s1",
                 assetId = "a1",
-                claimType = ClaimType.EPISODE,
+                claimType = claimType,
                 text = text,
                 authenticityScore = score,
                 authenticityScoreBare = score,
@@ -117,6 +118,7 @@ class Stage4PlanningTest {
         title: String = id,
         coverageTarget: Int = 1,
         personaLens: String = "",
+        requiredClaimTypes: List<ClaimType> = emptyList(),
     ) =
         NotebookTemplate(
             id = id,
@@ -124,6 +126,7 @@ class Stage4PlanningTest {
             title = title,
             formatSpec = FormatSpec(personaLens = personaLens),
             coverageTarget = coverageTarget,
+            requiredClaimTypes = requiredClaimTypes,
         )
 
     // ---- mix weights (QA-3, QD-5) -----------------------------------------------------------
@@ -411,6 +414,65 @@ class Stage4PlanningTest {
         val byCategory = outcome.coverage.associateBy { it.category }
         assertEquals(CategoryCoverage("career-timeline", 1, 1), byCategory["career-timeline"])
         assertEquals(CategoryCoverage("peer", 2, 1), byCategory["peer"])
+    }
+
+    @Test
+    fun `evidence gate skips a template when no anchor carries a required claim type`() {
+        // Subject has only a SKILL fact — no WEAKNESS anywhere in the ledger.
+        val eligible = listOf(claim("c1", claimType = ClaimType.SKILL))
+        val facts = listOf(fact("f1", members = listOf("c1"), label = "backend depth"))
+        val templates =
+            listOf(
+                // Gated: must draw against a WEAKNESS anchor, of which there are none.
+                template(
+                    "tpl-weak",
+                    category = "weaknesses",
+                    requiredClaimTypes = listOf(ClaimType.WEAKNESS),
+                ),
+                // Ungated: fires against any anchor (legacy behaviour).
+                template("tpl-open", category = "career-timeline"),
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        // The gated template plans NOTHING — this is the invented-defect guard.
+        assertTrue(outcome.planned.none { it.plan.templateCategory == "weaknesses" })
+        assertEquals(
+            CategoryCoverage("weaknesses", 1, 0),
+            outcome.coverage.first { it.category == "weaknesses" }
+        )
+        // The ungated template still fires against the SKILL fact.
+        assertTrue(outcome.planned.any { it.plan.templateCategory == "career-timeline" })
+    }
+
+    @Test
+    fun `evidence gate draws only the anchor that satisfies the required claim type`() {
+        // Two facts; only f-weak carries the WEAKNESS claim the template requires.
+        val eligible =
+            listOf(
+                claim("c1", claimType = ClaimType.SKILL),
+                claim("c2", claimType = ClaimType.WEAKNESS),
+            )
+        val facts =
+            listOf(
+                fact("f-skill", members = listOf("c1"), label = "backend depth"),
+                fact("f-weak", members = listOf("c2"), label = "owns a gap", belief = 0.8),
+            )
+        val templates =
+            listOf(
+                template(
+                    "tpl-weak",
+                    category = "weaknesses",
+                    requiredClaimTypes = listOf(ClaimType.WEAKNESS),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val weak = outcome.planned.filter { it.plan.templateCategory == "weaknesses" }
+        assertEquals(1, weak.size)
+        // It drew the weakness claim, never the skill one — the gate constrains the anchor.
+        assertEquals(listOf("c2"), weak.single().plan.sourceClaimIds)
     }
 
     @Test

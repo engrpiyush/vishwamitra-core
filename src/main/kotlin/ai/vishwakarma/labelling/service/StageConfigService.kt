@@ -98,6 +98,12 @@ class StageConfigService(
                     errors += "${f.label}: ${e.message ?: "invalid value"}"
                     continue
                 }
+            // Closed value sets are enforced here, not in parseForm — that helper sees only the
+            // kind, never the field, so it structurally cannot know a STRING's allowed values.
+            if (f.options.isNotEmpty() && parsed !in f.options) {
+                errors += "${f.label}: '$parsed' is not one of ${f.options.joinToString(" | ")}"
+                continue
+            }
             if (parsed != currentValue(base, f.name)) overrides[f.name] = storeValue(f.kind, parsed)
         }
         if (errors.isNotEmpty()) return DomainError.Invalid(errors.joinToString(" · ")).left()

@@ -47,6 +47,14 @@ data class ConfigField(
     val editable: Boolean = true,
     val secret: Boolean = false,
     val readOnlyReason: String = "",
+    /**
+     * Closed value set for a STRING field (VA-106). Non-empty renders a `<select>` instead of a
+     * free-text input and is enforced on save, so a dial that selects *which subsystem runs* cannot
+     * be typo'd into silently meaning its default — the failure mode the older enum-ish STRING
+     * fields (`matchingMode`, `ensembleOrderings`) still carry, where the allowed values live only
+     * in the help text.
+     */
+    val options: List<String> = emptyList(),
 )
 
 /**

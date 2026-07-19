@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController
 class ServerStatusApiController(
     private val config: StageConfigService,
     private val graph: Stage3GraphRepository,
+    private val gatekeeper: ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperPublisher,
     private val env: Environment,
 ) {
 
@@ -104,6 +105,14 @@ class ServerStatusApiController(
                         if (config.boot.tuning.dryRun) "DRY_RUN — simulated tuning jobs"
                         else "LIVE — Vertex Managed OSS Tuning",
                     "baseModel" to config.boot.tuning.baseModel,
+                ),
+            // VA-106: the gatekeeper transport. judgeMode is a per-run choice (app.stage3), so it
+            // is not a server posture — the transport underneath it is what this reports.
+            "gatekeeper" to
+                mapOf(
+                    "dryRun" to config.boot.gatekeeper.dryRun,
+                    "posture" to gatekeeper.posture,
+                    "cascadeTimeout" to config.boot.gatekeeper.cascadeTimeout.toString(),
                 ),
         )
     }

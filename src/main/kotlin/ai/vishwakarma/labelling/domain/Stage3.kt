@@ -79,6 +79,17 @@ object Stage3Counters {
     const val JUDGE_SAMPLER_CALLS = "judgeSamplerCalls"
     /** Verdict variants whose majority relation was tied — LLD §15 #4's tie-rate numerator. */
     const val JUDGE_TIES = "judgeTies"
+    /**
+     * VA-106 gatekeeper telemetry, mirrored from `gatekeeper_runs.totals` while the cascade runs so
+     * the run page moves during a phase whose work happens in another service.
+     */
+    const val GK_PAIRS_SEEN = "gkPairsSeen"
+    const val GK_DECIDED_BY_GATES = "gkDecidedByGates"
+    const val GK_ESCALATED_LLM = "gkEscalatedLlm"
+    const val GK_ESCALATED_HUMAN = "gkEscalatedHuman"
+    const val GK_SHADOW_DISAGREED = "gkShadowDisagreed"
+    /** Pairs the cascade escalated to a human — marked ESCALATED, never defaulted to NEUTRAL. */
+    const val PAIRS_AWAITING_HUMAN = "pairsAwaitingHuman"
     /** ASSEMBLE (§11.7): the fact count + its kind split. */
     const val FACTS = "facts"
     const val FACTS_STATE = "factsState"
@@ -135,6 +146,27 @@ data class Stage3Run(
      * matching), so neither stores one here.
      */
     val cursors: Map<String, String> = emptyMap(),
+    /**
+     * The gatekeeper run this Stage 3 run triggered (VA-106) — the `runRequestId` we minted and the
+     * `gatekeeper_runs` doc id to poll. Null in `LLM` mode, which never publishes.
+     */
+    val gkRunRequestId: String? = null,
+    /**
+     * When the cascade was first triggered — the stable anchor for
+     * `app.gatekeeper.cascade-timeout`. It must NOT ride [phaseSince]: the JUDGE tick refreshes
+     * phaseSince every waiting poll (to hold off the §12.7 reclaim while the cascade legitimately
+     * works), so a timeout measured from phaseSince would reset each tick and never fire. Set once
+     * in the trigger, never after.
+     */
+    val gkTriggeredAt: Instant? = null,
+    /**
+     * `PUBLISHED` | `PUBLISH_FAILED` — whether the trigger actually reached Pub/Sub. Distinguishes
+     * "the cascade has not created its doc yet" (normal, for a few seconds) from "the request never
+     * left this process" (needs the operator), which are otherwise the same empty poll result.
+     */
+    val gkPublishState: String? = null,
+    /** Verbatim publish error behind a `PUBLISH_FAILED`, for the run page's retry card. */
+    val gkPublishError: String? = null,
     /** Fixed-point outcome (§11.8) — null until SCORING runs. */
     val converged: Boolean? = null,
     val iterations: Int? = null,

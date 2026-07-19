@@ -85,6 +85,36 @@
                       placeholder="answers assertively from corroborated facts&#10;refuses to speculate about unknown information"
                       th:text="${editing != null ? #strings.listJoin(editing.formatSpec.expectedBehaviours, '&#10;') : ''}"></textarea>
         </label>
+        <label>Opening probe <span class="muted">(a realistic verbatim first message from the interlocutor)</span>
+            <textarea name="openingProbe" rows="2"
+                      placeholder="e.g. Tell me about a time he had to push back on a senior stakeholder."
+                      th:text="${editing?.formatSpec?.openingProbe}"></textarea>
+        </label>
+        <label>Failure modes <span class="muted">(one per line — what a badly-tuned model does here)</span>
+            <textarea name="failureModes" rows="3"
+                      placeholder="invents a weakness the record does not contain&#10;stonewalls instead of redirecting"
+                      th:text="${editing != null ? #strings.listJoin(editing.formatSpec.failureModes, '&#10;') : ''}"></textarea>
+        </label>
+        <div class="form-row">
+            <label>Facets
+                <input type="text" name="facets" placeholder="role-agnostic, or e.g. track:em|senior-manager"
+                       th:value="${editing?.facets}"/>
+            </label>
+            <label>Outcomes <span class="muted">(comma-separated O-codes)</span>
+                <input type="text" name="outcomes" placeholder="O1, O4, O9"
+                       th:value="${editing != null ? #strings.listJoin(editing.outcomes, ', ') : ''}"/>
+            </label>
+            <label>Required claim types <span class="muted">(comma-separated; blank = fires for every subject)</span>
+                <input type="text" name="requiredClaimTypes" placeholder="WEAKNESS  ·  IDENTITY, EPISODE, VALUE, SKILL"
+                       title="Evidence gate: the planner only draws this template against a subject fact whose claims cover every listed type"
+                       th:value="${editing != null ? #strings.listJoin(editing.requiredClaimTypes, ', ') : ''}"/>
+            </label>
+        </div>
+        <label>Evidence gate <span class="muted">(authoritative prose: what the ledger must hold for this template to draw)</span>
+            <textarea name="evidenceGate" rows="3"
+                      placeholder="requires a ledger item of type {adverse-fact | self-disclosed-development-area}; where the slice holds none, the record-holds-none answer is the terminal one"
+                      th:text="${editing?.evidenceGate}"></textarea>
+        </label>
         <label>Prompt template <span class="muted">({{subject}} placeholders allowed)</span>
             <textarea name="promptTemplate" rows="4" th:text="${editing?.promptTemplate}"></textarea>
         </label>

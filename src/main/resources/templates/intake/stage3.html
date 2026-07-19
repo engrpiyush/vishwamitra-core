@@ -174,6 +174,79 @@
             </div>
         </div>
 
+        <!-- VA-106: the Lakshmana gatekeeper cascade. Shown whenever this run triggered one
+             (LLM-mode runs never do, so the whole block is absent then). Gate chips carry a
+             failure card with the errorCode + detail and the FROM_GATE / FROM_START retriggers. -->
+        <div class="panel" th:if="${gatekeeper != null}">
+            <div class="row-actions">
+                <h3 style="margin:0;">Gatekeeper</h3>
+                <span class="badge" th:classappend="'badge--' + ${gatekeeper.badge}"
+                      th:text="${gatekeeper.state}">STATE</span>
+                <span class="badge badge--muted" th:text="${judgeMode}">MODE</span>
+                <code class="copyable" th:text="${gatekeeper.runRequestId}">run-request-id</code>
+            </div>
+
+            <!-- Publish failure: the trigger never left this process — a distinct problem from a
+                 gate failure, and the only one whose fix is 'try to publish again'. -->
+            <div th:if="${run.gkPublishState == 'PUBLISH_FAILED'}" style="margin-top:0.8rem;">
+                <span class="badge badge--danger">PUBLISH FAILED</span>
+                <span class="muted">The cascade trigger could not be published — no cascade is
+                    running. Fix the transport, then re-trigger.</span>
+                <div class="preview" style="margin-top:0.6rem;" th:text="${run.gkPublishError}">why</div>
+                <form method="post" class="inline-form" style="margin-top:0.6rem;"
+                      th:action="@{/intake/stage3/runs/{rid}/gatekeeper/retrigger(rid=${run.id})}">
+                    <button type="submit">Re-trigger (FROM_START)</button>
+                </form>
+            </div>
+
+            <!-- Per-gate chips: state, headline counters, wall-clock. -->
+            <div class="row-actions" style="margin-top:0.8rem; flex-wrap:wrap; gap:0.5rem;">
+                <span th:each="g : ${gatekeeper.gates}" class="badge"
+                      th:classappend="'badge--' + ${g.badge}"
+                      th:title="${g.durationLabel != null ? g.label + ' · ' + g.durationLabel : g.label}">
+                    <span th:text="${g.label}">G1</span>
+                    <span th:text="'· ' + ${g.state}">· STATE</span>
+                    <span th:if="${g.durationLabel != null}" th:text="'· ' + ${g.durationLabel}">· 4m</span>
+                </span>
+                <span th:if="${gatekeeper.gates.isEmpty()}" class="muted">
+                    Trigger sent — waiting for the dispatcher to claim G1 (the run doc appears on
+                    the first claim).</span>
+            </div>
+
+            <!-- Totals + shadow line. -->
+            <p class="muted" style="margin:0.7rem 0 0; font-size:0.88em;"
+               th:if="${!gatekeeper.gates.isEmpty()}">
+                seen <strong th:text="${gatekeeper.pairsSeen}">0</strong>
+                &middot; decided by gates <strong th:text="${gatekeeper.decidedByGates}">0</strong>
+                &middot; LLM tail <strong th:text="${gatekeeper.escalatedLlm}">0</strong>
+                &middot; to human <strong th:text="${gatekeeper.escalatedHuman}">0</strong>
+                &middot; LLM $<strong th:text="${#numbers.formatDecimal(gatekeeper.llmSpendUsd,1,2)}">0.00</strong>
+                <th:block th:if="${judgeMode == 'SHADOW'}">
+                    &middot; shadow disagreements
+                    <strong th:text="${gatekeeper.shadowDisagreed}">0</strong></th:block>
+            </p>
+
+            <!-- Gate failure card: which gate, the code, the detail, and the FROM_GATE retrigger. -->
+            <div th:if="${gatekeeper.failed and gatekeeper.failedGate != null}" style="margin-top:0.9rem;">
+                <span class="badge badge--danger">GATE FAILED</span>
+                <span class="muted">at <strong th:text="${gatekeeper.failedGate.label}">G3</strong>
+                    &middot; <code th:text="${gatekeeper.effectiveErrorCode}">GK_E_*</code></span>
+                <div class="preview" style="margin-top:0.6rem;"
+                     th:text="${gatekeeper.effectiveErrorDetail}">detail</div>
+                <div class="row-actions" style="margin-top:0.6rem;">
+                    <form method="post" class="inline-form"
+                          th:action="@{/intake/stage3/runs/{rid}/gatekeeper/retrigger(rid=${run.id})}">
+                        <input type="hidden" name="gate" th:value="${gatekeeper.failedGate.gate.name()}"/>
+                        <button type="submit">Re-trigger failed gate (FROM_GATE)</button>
+                    </form>
+                    <form method="post" class="inline-form"
+                          th:action="@{/intake/stage3/runs/{rid}/gatekeeper/retrigger(rid=${run.id})}">
+                        <button type="submit" class="btn--ghost btn--sm">Restart (FROM_START)</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
         <!-- The run record: phase rail + live counters (stage3-poll.js updates them in place). -->
         <div class="panel" id="stage3Run"
              th:attr="data-run-id=${run.id},data-status=${run.status.name()},data-active=${active}">
@@ -264,10 +337,26 @@
                     <th>Judging</th>
                     <td>judged <strong data-counter="pairsJudged" th:text="${run.counters['pairsJudged'] ?: '0'}">0</strong>
                         / <span data-counter="pairsQueued" th:text="${run.counters['pairsQueued'] ?: '—'}">—</span>
-                        &middot; cache hits <strong data-counter="judgeCacheHits" th:text="${run.counters['judgeCacheHits'] ?: '0'}">0</strong>
-                        &middot; sampler calls <strong data-counter="judgeSamplerCalls" th:text="${run.counters['judgeSamplerCalls'] ?: '0'}">0</strong>
-                        <span class="muted" th:if="${(run.counters['judgeTies'] ?: 0) > 0}">
-                            &middot; ties <strong data-counter="judgeTies" th:text="${run.counters['judgeTies']}">0</strong></span>
+                        <span class="badge badge--muted" th:unless="${judgeMode == 'LLM'}"
+                              th:text="${judgeMode}" style="margin-left:0.3rem;">MODE</span>
+                        <!-- LLM path counters -->
+                        <th:block th:if="${judgeMode == 'LLM'}">
+                            &middot; cache hits <strong data-counter="judgeCacheHits" th:text="${run.counters['judgeCacheHits'] ?: '0'}">0</strong>
+                            &middot; sampler calls <strong data-counter="judgeSamplerCalls" th:text="${run.counters['judgeSamplerCalls'] ?: '0'}">0</strong>
+                            <span class="muted" th:if="${(run.counters['judgeTies'] ?: 0) > 0}">
+                                &middot; ties <strong data-counter="judgeTies" th:text="${run.counters['judgeTies']}">0</strong></span>
+                        </th:block>
+                        <!-- Gatekeeper telemetry (mirrored from gatekeeper_runs.totals while it runs;
+                             inside #stage3Run so refreshCounters already updates it live). -->
+                        <th:block th:unless="${judgeMode == 'LLM'}">
+                            &middot; gate-decided <strong data-counter="gkDecidedByGates" th:text="${run.counters['gkDecidedByGates'] ?: '0'}">0</strong>
+                            &middot; LLM tail <strong data-counter="gkEscalatedLlm" th:text="${run.counters['gkEscalatedLlm'] ?: '0'}">0</strong>
+                            &middot; to human <strong data-counter="gkEscalatedHuman" th:text="${run.counters['gkEscalatedHuman'] ?: '0'}">0</strong>
+                            <span class="muted" th:if="${(run.counters['pairsAwaitingHuman'] ?: 0) > 0}">
+                                &middot; left for human <strong data-counter="pairsAwaitingHuman" th:text="${run.counters['pairsAwaitingHuman']}">0</strong></span>
+                            <span class="muted" th:if="${judgeMode == 'SHADOW' and (run.counters['gkShadowDisagreed'] ?: 0) > 0}">
+                                &middot; shadow ≠ <strong data-counter="gkShadowDisagreed" th:text="${run.counters['gkShadowDisagreed']}">0</strong></span>
+                        </th:block>
                     </td>
                 </tr>
                 <tr th:if="${phaseIndex >= 5}">

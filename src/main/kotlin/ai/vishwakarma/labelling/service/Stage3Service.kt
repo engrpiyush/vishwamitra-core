@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.ReviewDecision
 import ai.vishwakarma.labelling.domain.Stage3Counters
 import ai.vishwakarma.labelling.domain.Stage3Run
@@ -31,6 +32,7 @@ import ai.vishwakarma.labelling.stage3.EntityResolver
 import ai.vishwakarma.labelling.stage3.ExplanationRow
 import ai.vishwakarma.labelling.stage3.FactAssembler
 import ai.vishwakarma.labelling.stage3.JudgeProgress
+import ai.vishwakarma.labelling.stage3.JudgeTickOutcome
 import ai.vishwakarma.labelling.stage3.PublishProjection
 import ai.vishwakarma.labelling.stage3.ScoreOutcome
 import ai.vishwakarma.labelling.stage3.Scorer
@@ -40,6 +42,11 @@ import ai.vishwakarma.labelling.stage3.SubjectScore
 import ai.vishwakarma.labelling.stage3.SubjectScorer
 import ai.vishwakarma.labelling.stage3.buildEvidenceProjection
 import ai.vishwakarma.labelling.stage3.embeddingText
+import ai.vishwakarma.labelling.stage3.gatekeeper.Gate
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperRunView
+import ai.vishwakarma.labelling.stage3.gatekeeper.GatekeeperService
+import ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode
+import ai.vishwakarma.labelling.stage3.gatekeeper.TriggerResult
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
@@ -79,7 +86,10 @@ class Stage3Service(
     private val subjectScores: SubjectScoreRepository,
     private val subjectFacts: SubjectFactRepository,
     private val aggregateScores: AggregateScoreService,
+    private val gatekeeper: GatekeeperService,
     private val config: StageConfigService,
+    /** Bootstrap props: the gatekeeper transport block is env/yml-bound, not live-editable. */
+    private val props: AppProperties,
 ) {
 
     private val log = LoggerFactory.getLogger(Stage3Service::class.java)
@@ -565,35 +575,66 @@ class Stage3Service(
      */
     private fun runJudgeTick(run: Stage3Run): Stage3Run =
         inPhase(run, "JUDGE") {
-            val batch = graph.judgeQueueBatch(run.subjectId, config.stage3().judgePairsPerPoll)
+            val mode = frozenJudgeMode(run)
+            // Both non-legacy modes ask the cascade to run; the request goes out once per run.
+            val triggered = if (mode.publishesToGatekeeper) ensureTriggered(run, mode) else run
+            // GATEKEEPER hands the verdict pen over, so the phase cannot proceed until the cascade
+            // has finished writing verdicts. SHADOW does not wait: the ensemble below is still the
+            // decider, and a shadow comparison must never slow or risk the real run.
+            if (mode.gatekeeperDecides) {
+                awaitCascade(triggered)?.let {
+                    return@inPhase it
+                }
+            }
+            val batch =
+                graph.judgeQueueBatch(triggered.subjectId, config.stage3().judgePairsPerPoll)
             if (batch.isEmpty()) {
                 advance(
-                    run,
+                    triggered,
                     Stage3RunStatus.ASSEMBLING,
                     mapOf(
                         Stage3Counters.PAIRS_JUDGED to
-                            graph.countJudgeQueue(run.subjectId, "JUDGED")
+                            graph.countJudgeQueue(triggered.subjectId, "JUDGED")
                     ),
                 )
             } else {
-                val outcome =
-                    judge.judgePairs(
-                        run.subjectId,
-                        batch,
-                        JudgeProgress(
-                            judgedSoFar = run.counters[Stage3Counters.PAIRS_JUDGED] ?: 0L,
-                            totalQueued = run.counters[Stage3Counters.PAIRS_QUEUED] ?: 0L,
-                        ),
-                    )
-                graph.applyJudgeOutcome(run.subjectId, outcome.judged)
-                val counters = run.counters
+                // THE SPLIT-BRAIN GUARD: in GATEKEEPER mode the ensemble is unreachable — the
+                // cascade's verdicts are read back and applied through the very same path, so
+                // exactly one judge ever writes a verdict for a run. Escalated pairs are marked
+                // ESCALATED (not left QUEUED, which would re-appear every tick and never drain, and
+                // not defaulted NEUTRAL) so the queue truly empties and ASSEMBLE ignores them.
+                val outcome: JudgeTickOutcome
+                var escalatedThisTick = 0L
+                if (mode.gatekeeperDecides) {
+                    val gk = gatekeeper.decidePairs(batch)
+                    outcome = gk.decided
+                    if (gk.escalated.isNotEmpty()) {
+                        graph.markJudgeEscalated(triggered.subjectId, gk.escalated.map { it.pair })
+                        escalatedThisTick = gk.escalated.size.toLong()
+                    }
+                } else {
+                    outcome =
+                        judge.judgePairs(
+                            triggered.subjectId,
+                            batch,
+                            JudgeProgress(
+                                judgedSoFar = triggered.counters[Stage3Counters.PAIRS_JUDGED] ?: 0L,
+                                totalQueued = triggered.counters[Stage3Counters.PAIRS_QUEUED] ?: 0L,
+                            ),
+                        )
+                }
+                graph.applyJudgeOutcome(triggered.subjectId, outcome.judged)
+                val counters = triggered.counters
                 val progressed =
-                    run.copy(
+                    triggered.copy(
                         counters =
                             counters +
                                 mapOf(
                                     Stage3Counters.PAIRS_JUDGED to
-                                        graph.countJudgeQueue(run.subjectId, "JUDGED"),
+                                        graph.countJudgeQueue(triggered.subjectId, "JUDGED"),
+                                    Stage3Counters.PAIRS_AWAITING_HUMAN to
+                                        (counters[Stage3Counters.PAIRS_AWAITING_HUMAN] ?: 0L) +
+                                            escalatedThisTick,
                                     Stage3Counters.JUDGE_CACHE_HITS to
                                         (counters[Stage3Counters.JUDGE_CACHE_HITS] ?: 0L) +
                                             outcome.cacheHits,
@@ -608,6 +649,175 @@ class Stage3Service(
                 runs.save(progressed)
                 progressed
             }
+        }
+
+    // ---- the gatekeeper leg (VA-106; Gatekeeper LLD §9, §14) ------------------------
+
+    /**
+     * The run's **frozen** judge mode, read back from `paramsSnapshot`.
+     *
+     * This read is what makes the pin mean anything. `paramsSnapshot` has always been written at
+     * submit, but no Stage 3 code ever read it back — every phase asks live config instead. For
+     * every other dial that is merely an audit inaccuracy; for this one it is the split-brain
+     * itself, because an operator flipping the mode mid-run would otherwise hand the second half of
+     * a run to a different judge than the first. Lakshmana reads the same field from the same
+     * document (`gatekeeper/integration.py`), so both services agree by construction.
+     *
+     * Live config is the fallback only for runs submitted before this field existed.
+     */
+    internal fun frozenJudgeMode(run: Stage3Run): JudgeMode {
+        @Suppress("UNCHECKED_CAST")
+        val params =
+            run.paramsSnapshot?.let { runCatching { Json.parse(it) as? Map<*, *> }.getOrNull() }
+        return JudgeMode.fromOrNull(params?.get("judgeMode") as? String)
+            ?: config.stage3().judgeModeOrDefault
+    }
+
+    /**
+     * Publish the cascade trigger exactly once per run, recording the outcome on the run.
+     *
+     * Idempotent by the recorded `gkRunRequestId`: a re-entered JUDGE tick (a crashed poll, a
+     * retry) must not mint a second run request, because a FROM_START publish supersedes its own
+     * predecessor (LLD §6 rule 4) and the run would restart the cascade every 1.5 seconds. A
+     * previous `PUBLISH_FAILED` is the one case that retries — that request never landed.
+     */
+    private fun ensureTriggered(run: Stage3Run, mode: JudgeMode): Stage3Run {
+        if (run.gkRunRequestId != null && run.gkPublishState == TriggerResult.PUBLISHED) return run
+        log.info(
+            "Run {}: judgeMode={} — triggering the gatekeeper cascade for subject {}",
+            run.id,
+            mode,
+            run.subjectId,
+        )
+        // intakeId == subjectId here: IntakeManifest.id is the subject id (one manifest per
+        // subject). The wire keeps the two distinct because lakshmana's model does.
+        val result = gatekeeper.trigger(intakeId = run.subjectId, stage3RunId = run.id)
+        val now = Instant.now()
+        return run.copy(
+                gkRunRequestId = result.runRequestId,
+                // Set once, on the first successful publish, and never moved — the stable clock the
+                // cascade-timeout measures from. A PUBLISH_FAILED retry keeps re-stamping until it
+                // lands, which is correct: the timeout counts from when the request actually left.
+                gkTriggeredAt = if (result.published) (run.gkTriggeredAt ?: now) else null,
+                gkPublishState = result.publishState,
+                gkPublishError = result.error,
+                phaseSince = now,
+            )
+            .also { runs.save(it) }
+    }
+
+    /**
+     * GATEKEEPER mode's wait. Returns the run to persist when the phase must NOT proceed this tick
+     * (still running, publish broken, cascade failed), or null when the cascade has succeeded and
+     * its verdicts are ready to drain.
+     *
+     * `phaseSince` is refreshed on every waiting tick, which deliberately disables the §12.7 stuck
+     * reclaim for this phase: the JUDGE tick genuinely makes no local progress for the 25–35 min
+     * (or, at 1,000 claims, 1.5–2.5 h) the cascade takes, and `phase-timeout` defaults to 15. The
+     * bound that replaces it is `app.gatekeeper.cascade-timeout`, measured from
+     * [Stage3Run.gkTriggeredAt] — a timestamp the waiting tick does NOT touch — so a cascade that
+     * never reports still fails the run instead of hanging forever. (Anchoring on `phaseSince`
+     * would be dead code: the waiting tick re-stamps it, so the deadline would reset every poll and
+     * never arrive.)
+     */
+    private fun awaitCascade(run: Stage3Run): Stage3Run? {
+        if (run.gkPublishState == TriggerResult.PUBLISH_FAILED)
+            return fail(
+                run,
+                "JUDGE: the gatekeeper trigger could not be published — ${run.gkPublishError}. " +
+                    "Fix the transport (app.gatekeeper.*) and Retry; no verdicts were written.",
+            )
+        val requestId = run.gkRunRequestId ?: return null
+        val view = gatekeeper.status(requestId, intakeId = run.subjectId, stage3RunId = run.id)
+        return when {
+            view.succeeded -> null
+            view.failed ->
+                fail(
+                    run,
+                    "JUDGE: the gatekeeper cascade FAILED at " +
+                        "${view.failedGate?.gate?.name ?: "an unknown gate"} — " +
+                        "${view.effectiveErrorCode ?: "no code"}: " +
+                        "${view.effectiveErrorDetail ?: "no detail"}. Retrigger the failed gate " +
+                        "from the run page, then Retry.",
+                )
+            // A superseded run means a newer FROM_START publish took over; this run's id will
+            // never reach SUCCEEDED, so waiting on it is waiting forever.
+            view.superseded ->
+                fail(
+                    run,
+                    "JUDGE: gatekeeper run $requestId was SUPERSEDED by " +
+                        "${view.supersededBy ?: "a newer run"} — this Stage 3 run is no longer " +
+                        "the one the cascade is working on.",
+                )
+            cascadeOverdue(run) ->
+                fail(
+                    run,
+                    "JUDGE: the gatekeeper cascade has not completed within " +
+                        "${props.gatekeeper.cascadeTimeout.toHours()}h (state ${view.state}) — " +
+                        "check the worker logs for runRequestId $requestId.",
+                )
+            else -> waitingOnCascade(run, view)
+        }
+    }
+
+    private fun cascadeOverdue(run: Stage3Run): Boolean {
+        // Anchored on gkTriggeredAt, NOT phaseSince — the latter is re-stamped every waiting tick,
+        // which would make this deadline perpetually one poll old and therefore never reached.
+        val since = run.gkTriggeredAt ?: return false
+        return Instant.now().isAfter(since.plus(props.gatekeeper.cascadeTimeout))
+    }
+
+    /** Persist the cascade's live gate telemetry so the run page moves while we wait. */
+    private fun waitingOnCascade(run: Stage3Run, view: GatekeeperRunView): Stage3Run =
+        run.copy(
+                counters =
+                    run.counters +
+                        mapOf(
+                            Stage3Counters.GK_PAIRS_SEEN to view.pairsSeen,
+                            Stage3Counters.GK_DECIDED_BY_GATES to view.decidedByGates,
+                            Stage3Counters.GK_ESCALATED_LLM to view.escalatedLlm,
+                            Stage3Counters.GK_ESCALATED_HUMAN to view.escalatedHuman,
+                            Stage3Counters.GK_SHADOW_DISAGREED to view.shadowDisagreed,
+                        ),
+                // NOT a stall: refreshing this holds off the §12.7 reclaim while an external step
+                // is legitimately in flight. The cascade bound is gkTriggeredAt (untouched here),
+                // so it still fires — see cascadeOverdue.
+                phaseSince = Instant.now(),
+            )
+            .also { runs.save(it) }
+
+    /**
+     * Operator retrigger from the run page — FROM_GATE for a failed gate, or FROM_START with a
+     * fresh id. Records the new request on the run so the poll follows the right cascade.
+     */
+    fun retriggerGatekeeper(
+        runId: String,
+        gate: Gate?,
+    ): Either<DomainError, Stage3Run> {
+        val run = runs.findById(runId) ?: return DomainError.NotFound("Run $runId not found").left()
+        val result =
+            gatekeeper.retrigger(
+                intakeId = run.subjectId,
+                stage3RunId = run.id,
+                runRequestId = run.gkRunRequestId,
+                fromGate = gate,
+            )
+        val updated =
+            run.copy(
+                    gkRunRequestId = result.runRequestId,
+                    gkPublishState = result.publishState,
+                    gkPublishError = result.error,
+                    phaseSince = Instant.now(),
+                )
+                .also { runs.save(it) }
+        return if (result.published) updated.right()
+        else DomainError.Conflict("Publish failed: ${result.error}").left()
+    }
+
+    /** The run's cascade view for the run page, or null when this run never triggered one. */
+    fun gatekeeperView(run: Stage3Run): GatekeeperRunView? =
+        run.gkRunRequestId?.let {
+            gatekeeper.status(it, intakeId = run.subjectId, stage3RunId = run.id)
         }
 
     /**

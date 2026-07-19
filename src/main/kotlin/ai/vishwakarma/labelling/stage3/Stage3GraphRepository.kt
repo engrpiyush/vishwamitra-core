@@ -1388,6 +1388,37 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
             explanationText = this["${prefix}Explanation"].takeUnless { it.isNull }?.asString(),
         )
 
+    /**
+     * VA-106: flip the gatekeeper-escalated pairs' `JUDGE_QUEUED.status` to `ESCALATED` so they
+     * leave the `QUEUED` window the JUDGE cursor drains, without a verdict edge and without being
+     * defaulted to NEUTRAL. ASSEMBLE reads only `status:'JUDGED'`, so an escalated pair contributes
+     * no fact edge — it is surfaced to a human instead (the `pairsAwaitingHuman` counter). Without
+     * this the cascade's human-routed pairs would sit `QUEUED` forever and the phase could never
+     * advance (or would abandon decided pairs behind them).
+     */
+    fun markJudgeEscalated(subjectId: String, pairs: List<ClaimPair>) {
+        if (pairs.isEmpty()) return
+        driver.session(sessionConfig()).use { s ->
+            s.executeWrite { tx ->
+                tx.run(
+                        """
+                        UNWIND ${'$'}rows AS row
+                        MATCH (a:Claim {claimId: row.a})-[q:JUDGE_QUEUED]->(b:Claim {claimId: row.b})
+                        WHERE a.subjectId = ${'$'}subjectId
+                        SET q.status = 'ESCALATED'
+                        """
+                            .trimIndent(),
+                        mapOf(
+                            "subjectId" to subjectId,
+                            "rows" to pairs.map { mapOf("a" to it.a, "b" to it.b) },
+                        ),
+                    )
+                    .consume()
+                Unit
+            }
+        }
+    }
+
     /** Queue entries in [status] — 'QUEUED' is the remaining work, 'JUDGED' the done count. */
     fun countJudgeQueue(subjectId: String, status: String): Long =
         driver.session(sessionConfig()).use { s ->

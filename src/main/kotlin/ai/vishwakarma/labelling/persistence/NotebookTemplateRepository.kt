@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.persistence
 
+import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import com.google.cloud.firestore.DocumentSnapshot
@@ -38,9 +39,15 @@ class NotebookTemplateRepository(private val db: Firestore) {
                     "intent" to formatSpec.intent,
                     "personaLens" to formatSpec.personaLens,
                     "expectedBehaviours" to formatSpec.expectedBehaviours,
+                    "openingProbe" to formatSpec.openingProbe,
+                    "failureModes" to formatSpec.failureModes,
                 ),
             "promptTemplate" to promptTemplate,
             "coverageTarget" to coverageTarget,
+            "facets" to facets,
+            "evidenceGate" to evidenceGate,
+            "requiredClaimTypes" to requiredClaimTypes.map { it.name },
+            "outcomes" to outcomes,
             "version" to version,
             "migratedFrom" to migratedFrom,
             "updatedBy" to updatedBy,
@@ -61,9 +68,18 @@ class NotebookTemplateRepository(private val db: Firestore) {
                     personaLens = spec["personaLens"] as? String ?: "",
                     expectedBehaviours =
                         (spec["expectedBehaviours"] as? List<String>) ?: emptyList(),
+                    openingProbe = spec["openingProbe"] as? String ?: "",
+                    failureModes = (spec["failureModes"] as? List<String>) ?: emptyList(),
                 ),
             promptTemplate = getString("promptTemplate") ?: "",
             coverageTarget = getLong("coverageTarget")?.toInt() ?: 1,
+            facets = getString("facets") ?: "",
+            evidenceGate = getString("evidenceGate") ?: "",
+            requiredClaimTypes =
+                ((get("requiredClaimTypes") as? List<String>) ?: emptyList()).mapNotNull {
+                    ClaimType.fromOrNull(it)
+                },
+            outcomes = (get("outcomes") as? List<String>) ?: emptyList(),
             version = getLong("version")?.toInt() ?: 1,
             migratedFrom = getString("migratedFrom"),
             updatedBy = getString("updatedBy"),

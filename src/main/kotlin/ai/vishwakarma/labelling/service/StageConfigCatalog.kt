@@ -10,6 +10,7 @@ import ai.vishwakarma.labelling.domain.ConfigFieldKind.LONG
 import ai.vishwakarma.labelling.domain.ConfigFieldKind.STRING
 import ai.vishwakarma.labelling.domain.ConfigFieldKind.STRING_LIST
 import ai.vishwakarma.labelling.domain.StageKey
+import ai.vishwakarma.labelling.stage3.gatekeeper.JudgeMode
 
 /**
  * The per-stage Configuration-tab field catalog (LLD §14A.4(2) / §14A.5): each entry mirrors one
@@ -404,6 +405,17 @@ object StageConfigCatalog {
                 "Judge ensemble",
                 "Thinking-token cap per sampler call (VA-77 B1); not part of the verdict-cache " +
                     "key — changing it is a calibration event.",
+            ),
+            ConfigField(
+                "judgeMode",
+                "Judge mode",
+                STRING,
+                "Judge ensemble",
+                "Which judge decides (VA-106): LLM = the ensemble; GATEKEEPER = the Lakshmana " +
+                    "cascade decides and the ensemble does not run; SHADOW = both run, the " +
+                    "ensemble decides and the cascade records shadow verdicts only. Pinned into " +
+                    "the run's paramsSnapshot at submit — a change never affects a run in flight.",
+                options = JudgeMode.NAMES,
             ),
             // -- Scoring dynamics --
             ConfigField(

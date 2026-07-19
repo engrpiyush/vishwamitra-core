@@ -61,6 +61,12 @@ data class FormatSpec(
     val personaLens: String = "",
     /** Expected advocate behaviours, including refusals/boundary handling. One item per rule. */
     val expectedBehaviours: List<String> = emptyList(),
+    /**
+     * A realistic verbatim first message from the interlocutor — the drafter voices in its spirit.
+     */
+    val openingProbe: String = "",
+    /** What a badly-tuned model does here instead. One item per failure. Authoring/eval aid. */
+    val failureModes: List<String> = emptyList(),
 )
 
 /**
@@ -78,6 +84,26 @@ data class NotebookTemplate(
     val promptTemplate: String = "",
     /** How many notebooks per subject the planner should aim to draw from this template. */
     val coverageTarget: Int = 1,
+    /**
+     * Subject-side applicability tags (role-track / seniority / craft…) or `role-agnostic`.
+     * Advisory context for the planner and generator; not hard-enforced (kept as authored free
+     * text).
+     */
+    val facets: String = "",
+    /**
+     * The authoritative, human-readable evidence gate: what the subject's ledger must contain for
+     * this template to be drawn at all. Blank ⇒ no gate. The prose is the source of truth;
+     * [requiredClaimTypes] is its machine-enforceable projection.
+     */
+    val evidenceGate: String = "",
+    /**
+     * The enforceable projection of [evidenceGate] onto claim types. `Stage4Planning` only draws
+     * this template against a subject fact whose member claims cover every listed type. Empty ⇒ the
+     * template fires for every subject (legacy behaviour), so a blank gate is byte-compatible.
+     */
+    val requiredClaimTypes: List<ClaimType> = emptyList(),
+    /** The O1–O9 training outcomes this template targets; doubles as a VA-60 eval handle. */
+    val outcomes: List<String> = emptyList(),
     /** Incremented on every save (create = 1), the ExtractionPrompt idiom. */
     val version: Int = 1,
     /** Provenance when the row was migrated from a legacy `scenarios` row. */

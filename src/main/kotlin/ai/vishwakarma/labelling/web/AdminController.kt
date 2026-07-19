@@ -633,6 +633,13 @@ class AdminController(
     private fun parseBehaviours(raw: String): List<String> =
         raw.lines().map { it.trim() }.filter { it.isNotBlank() }
 
+    /** Comma- or newline-separated free text → distinct trimmed tokens (outcomes, claim types). */
+    private fun parseTokens(raw: String): List<String> =
+        raw.split(',', '\n').map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+    private fun parseClaimTypes(raw: String): List<ClaimType> =
+        parseTokens(raw).mapNotNull { ClaimType.fromOrNull(it) }
+
     @PostMapping("/notebook-templates")
     fun createNotebookTemplate(
         @RequestParam category: String,
@@ -641,8 +648,14 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") intent: String,
         @RequestParam(required = false, defaultValue = "") personaLens: String,
         @RequestParam(required = false, defaultValue = "") expectedBehaviours: String,
+        @RequestParam(required = false, defaultValue = "") openingProbe: String,
+        @RequestParam(required = false, defaultValue = "") failureModes: String,
         @RequestParam(required = false, defaultValue = "") promptTemplate: String,
         @RequestParam(required = false, defaultValue = "1") coverageTarget: Int,
+        @RequestParam(required = false, defaultValue = "") facets: String,
+        @RequestParam(required = false, defaultValue = "") evidenceGate: String,
+        @RequestParam(required = false, defaultValue = "") requiredClaimTypes: String,
+        @RequestParam(required = false, defaultValue = "") outcomes: String,
         ra: RedirectAttributes,
     ): String {
         notebookTemplates
@@ -650,10 +663,21 @@ class AdminController(
                 category = category,
                 title = title,
                 formatSpec =
-                    FormatSpec(turnShape, intent, personaLens, parseBehaviours(expectedBehaviours)),
+                    FormatSpec(
+                        turnShape,
+                        intent,
+                        personaLens,
+                        parseBehaviours(expectedBehaviours),
+                        openingProbe,
+                        parseBehaviours(failureModes),
+                    ),
                 promptTemplate = promptTemplate,
                 coverageTarget = coverageTarget,
                 actor = actor(),
+                facets = facets,
+                evidenceGate = evidenceGate,
+                requiredClaimTypes = parseClaimTypes(requiredClaimTypes),
+                outcomes = parseTokens(outcomes),
             )
             .fold(
                 { ra.notify(it) },
@@ -671,8 +695,14 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") intent: String,
         @RequestParam(required = false, defaultValue = "") personaLens: String,
         @RequestParam(required = false, defaultValue = "") expectedBehaviours: String,
+        @RequestParam(required = false, defaultValue = "") openingProbe: String,
+        @RequestParam(required = false, defaultValue = "") failureModes: String,
         @RequestParam(required = false, defaultValue = "") promptTemplate: String,
         @RequestParam(required = false, defaultValue = "1") coverageTarget: Int,
+        @RequestParam(required = false, defaultValue = "") facets: String,
+        @RequestParam(required = false, defaultValue = "") evidenceGate: String,
+        @RequestParam(required = false, defaultValue = "") requiredClaimTypes: String,
+        @RequestParam(required = false, defaultValue = "") outcomes: String,
         ra: RedirectAttributes,
     ): String {
         notebookTemplates
@@ -681,10 +711,21 @@ class AdminController(
                 category = category,
                 title = title,
                 formatSpec =
-                    FormatSpec(turnShape, intent, personaLens, parseBehaviours(expectedBehaviours)),
+                    FormatSpec(
+                        turnShape,
+                        intent,
+                        personaLens,
+                        parseBehaviours(expectedBehaviours),
+                        openingProbe,
+                        parseBehaviours(failureModes),
+                    ),
                 promptTemplate = promptTemplate,
                 coverageTarget = coverageTarget,
                 actor = actor(),
+                facets = facets,
+                evidenceGate = evidenceGate,
+                requiredClaimTypes = parseClaimTypes(requiredClaimTypes),
+                outcomes = parseTokens(outcomes),
             )
             .fold(
                 { ra.notify(it) },

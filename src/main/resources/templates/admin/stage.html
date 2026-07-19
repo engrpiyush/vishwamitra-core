@@ -42,7 +42,13 @@
                             <span class="badge badge--info" th:if="${v.overridden}" title="A stored override is in effect">override</span>
                             <span class="lock" th:if="${!f.editable}" th:title="${f.readOnlyReason}">🔒</span>
                         </span>
-                        <th:block th:switch="${f.kind.name()}">
+                        <!-- A closed value set wins over the kind switch: the options ARE the widget. -->
+                        <select th:if="${!f.options.isEmpty()}" th:name="${f.name}" th:disabled="${!f.editable}"
+                                th:title="${f.editable ? f.help : f.readOnlyReason}">
+                            <option th:each="o : ${f.options}" th:value="${o}" th:text="${o}"
+                                    th:selected="${v.effective == o}">option</option>
+                        </select>
+                        <th:block th:if="${f.options.isEmpty()}" th:switch="${f.kind.name()}">
                             <select th:case="'BOOLEAN'" th:name="${f.name}" th:disabled="${!f.editable}"
                                     th:title="${f.editable ? f.help : f.readOnlyReason}">
                                 <option value="true" th:selected="${v.effective == 'true'}">true</option>

@@ -144,7 +144,17 @@ app:
     gemini-api-key: ${GEMINI_API_KEY:}
     # VA-77 B1: thinking-token cap per judge sampler call (was 4096 hardcoded).
     judge-thinking-budget: ${STAGE3_JUDGE_THINKING_BUDGET:512}
+    # VA-106: which judge decides — LLM | GATEKEEPER | SHADOW. Live-editable on the Configuration
+    # tab; frozen into paramsSnapshot per run. The transport under GATEKEEPER is app.gatekeeper.*.
+    judge-mode: ${STAGE3_JUDGE_MODE:LLM}
     dry-run: ${STAGE3_DRY_RUN:false}
+  # VA-106: the Lakshmana gatekeeper transport — the one Pub/Sub topic this app publishes to.
+  # Restart-bound (env/yml only), unlike app.stage3.judge-mode above.
+  gatekeeper:
+    dry-run: ${GATEKEEPER_DRYRUN:false}
+    topic: ${GATEKEEPER_TOPIC:}          # blank = publishing disabled (a hard no-op)
+    project-id: ${GATEKEEPER_PROJECT_ID:} # blank → app.gcp.project-id
+    cascade-timeout: ${GATEKEEPER_CASCADE_TIMEOUT:6h}
   # vishwakarma.ai product face (LLD §17.1): subject hosts <handle>.{base-domain} split from the
   # operator app by host-first routing (VA-30); product mail + internal-endpoint auth (VA-41).
   product:
@@ -205,6 +215,8 @@ app:
     # dry-run stubs only the LLM legs (pseudo embeddings now; canned judge/extraction with VA-19).
     neo4j-password: ${NEO4J_PASSWORD:vishwamitra-dev}
     dry-run: true
+  gatekeeper:
+    dry-run: true   # log the payload, never publish to Pub/Sub in dev
   stage4:
     dry-run: true   # offline generator/judge doubles — never calls Gemini in dev
   product:
@@ -258,5 +270,9 @@ app:
     dry-run: false  # real Speech-to-Text batchRecognize in prod
   stage3:
     dry-run: false  # real Vertex embeddings/judge in prod; graph = AuraDB via NEO4J_* env
+  gatekeeper:
+    # Real publishes once the topic is set (DEFERRED-LIVE: TF creates gatekeeper-requests). A blank
+    # topic keeps this a no-op even here, so a half-configured deploy cannot half-publish.
+    dry-run: ${GATEKEEPER_DRYRUN:false}
   stage4:
     dry-run: false  # real Gemini generation/judge in prod
