@@ -10,6 +10,8 @@ import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
+import ai.vishwakarma.labelling.service.SubjectProfileService
+import ai.vishwakarma.labelling.service.SubjectProfileUpdateRequest
 import ai.vishwakarma.labelling.web.SubjectTraining.TrainingPhase
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
@@ -40,6 +42,7 @@ class SubjectTrainingController(
     private val stage2: Stage2Service,
     private val advocates: AdvocateRepository,
     private val questions: QuestionService,
+    private val profiles: SubjectProfileService,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -70,6 +73,12 @@ class SubjectTrainingController(
         )
         // F11 (VA-35): the S2 inbox badge — shown whenever OPEN questions exist.
         model.addAttribute("openQuestions", questions.openCount(ctx.subjectId))
+        // VA-140: the "Your details" CTA sits inside the template's UPLOAD block and is gated on
+        // `profileEnabled` — supplied for *every* page by [GlobalModelAdvice], because the same
+        // flag gates the permanent footer link. Deliberately not set here: a second, phase-narrowed
+        // value under the same name would shadow the advice's and blank the footer link on this
+        // page alone.
+
         // Post-submit S2 (read-only): the uploads list + tool links (§8.1), and the §10
         // evidence-strength card (VA-44) — scoring only means anything once training is in.
         if (phase == TrainingPhase.SUBMITTED) {
@@ -114,6 +123,103 @@ class SubjectTrainingController(
 
     /** One row of the pre-submit uploads list — already friendly-mapped. */
     data class UploadRow(val id: String, val title: String, val status: String, val ready: Boolean)
+
+    // ---- VA-140: the A/B profile form (profile LLD §7.1) ---------------------
+
+    /**
+     * "Your details" — the subject's own A/B block (locale + knowledge freshness), sibling of the
+     * S3 upload page and written through the same [SubjectProfileService.put] the operator panel
+     * uses, so the §6.1 seal gate is the one control on both.
+     *
+     * **Divergence from profile LLD §7.1, deliberate.** That section says to copy [upload]'s guard,
+     * which *redirects away* unless `phase == UPLOAD`; its very next bullet says the page becomes a
+     * "read-only summary" post-submit and puts a permanent "Your details" link in the subject
+     * footer, which renders on every signed-in page including the post-submit ones. A literal
+     * redirect would make that link a dead end for the whole rest of the subject's life. So the
+     * guard moves to the write: the GET always renders and flips to a summary, and [saveProfile]
+     * (plus the service's own seal check) is what actually refuses. `phase == UPLOAD` already
+     * implies an unsealed manifest (`SubjectTraining.phaseFor` :39), so the two gates agree.
+     *
+     * With the surface off (`app.stage4.profile-enabled`) there is nothing to show and no legal
+     * write, so the page steps aside rather than explaining a config key to a subject (§12.3). That
+     * redirect is a **backstop for a hand-typed URL, not a route a subject can walk into**: both
+     * entry points — the home CTA and the footer link in `subject/layout.html` — hang off the same
+     * flag via [GlobalModelAdvice], because a visible link that silently bounces is a dead end on
+     * every signed-in page, and the flag defaults off outside the dev profile (`SP-CONFIG`).
+     */
+    @GetMapping("/profile")
+    fun profile(request: HttpServletRequest, model: Model): String {
+        val ctx = ctx(request)
+        val view = profiles.view(ctx.subjectId).fold({ null }, { it })
+        if (view == null || !view.enabled) return "redirect:/training"
+        val manifest = intake.manifest(ctx.subjectId)
+        val phase = SubjectTraining.phaseFor(manifest, stage2.listJobs(ctx.subjectId))
+        model.addAttribute("pageTitle", "Your details — ${ctx.displayName}")
+        model.addAttribute("ctx", ctx)
+        model.addAttribute("editable", phase == TrainingPhase.UPLOAD)
+        model.addAttribute("stored", view.stored)
+        model.addAttribute("summary", SubjectProfileForm.summary(view.resolved))
+        model.addAttribute("countries", SubjectProfileForm.countries)
+        model.addAttribute("currencies", SubjectProfileForm.currencies)
+        model.addAttribute("languages", SubjectProfileForm.languages)
+        model.addAttribute("timezones", SubjectProfileForm.timezones)
+        return "subject/training/profile"
+    }
+
+    /**
+     * Save the A/B answers. Every value the form can post comes from a [SubjectProfileForm] catalog
+     * drawn from the same JDK tables the service validates against, so a refusal here means the
+     * seal closed underneath the page, not a bad answer — and either way the subject reads
+     * [SubjectProfileForm.friendly], never the service string (§12.3).
+     *
+     * `marketRegion` is **read back from storage, never from the request.**
+     * [SubjectProfileService.put] rewrites the whole doc, so an operator's market label has to ride
+     * along or a subject saving their timezone would silently erase it (§7.2 — the field is
+     * operator-only vocabulary and has no box on this page). It cannot ride as a hidden input: it
+     * is the one profile field with no catalog behind it, it outranks `country` in the `{{locale}}`
+     * line (`domain/SubjectProfile.kt:77-84`) and that line is substituted verbatim into every
+     * generation prompt, so a hidden field here would be a subject-writable channel into the prompt
+     * — precisely what validating the other five fields against ISO/IANA tables prevents.
+     * Re-reading the stored value costs one read and closes it; `put`'s own bound on the field
+     * (`SubjectProfileService.kt`, `marketRegion`) is the backstop for every other caller.
+     */
+    @PostMapping("/profile")
+    fun saveProfile(
+        request: HttpServletRequest,
+        @RequestParam(required = false) country: String?,
+        @RequestParam(required = false) currency: String?,
+        @RequestParam(required = false) primaryLanguage: String?,
+        @RequestParam(required = false) timezone: String?,
+        @RequestParam(required = false) knowledgeAsOf: String?,
+        ra: RedirectAttributes,
+    ): String {
+        val ctx = ctx(request)
+        val manifest = intake.manifest(ctx.subjectId)
+        val phase = SubjectTraining.phaseFor(manifest, stage2.listJobs(ctx.subjectId))
+        if (phase != TrainingPhase.UPLOAD) return "redirect:/training/profile"
+        val storedMarket = profiles.view(ctx.subjectId).fold({ null }, { it.stored?.marketRegion })
+        profiles
+            .put(
+                ctx.subjectId,
+                SubjectProfileUpdateRequest(
+                    country = country,
+                    marketRegion = storedMarket,
+                    currency = currency,
+                    timezone = timezone,
+                    primaryLanguage = primaryLanguage,
+                    knowledgeAsOf = knowledgeAsOf,
+                ),
+                CurrentUser.email(),
+            )
+            .fold(
+                { err ->
+                    log.warn("Subject profile save refused for {}: {}", ctx.subjectId, err.message)
+                    ra.addFlashAttribute("error", SubjectProfileForm.friendly(err))
+                },
+                { ra.addFlashAttribute("ok", "Saved — thanks, that helps your advocate.") },
+            )
+        return "redirect:/training/profile"
+    }
 
     /** Remove an upload before submit (also how a duplicate-file submit blocker is resolved). */
     @PostMapping("/assets/{assetId}/remove")

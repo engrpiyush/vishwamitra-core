@@ -19,6 +19,8 @@ import ai.vishwakarma.labelling.service.IntakeService
 import ai.vishwakarma.labelling.service.LinkRegistration
 import ai.vishwakarma.labelling.service.ProvisioningService
 import ai.vishwakarma.labelling.service.Stage2Service
+import ai.vishwakarma.labelling.service.SubjectProfileService
+import ai.vishwakarma.labelling.service.SubjectProfileUpdateRequest
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
 import ai.vishwakarma.labelling.service.TokenService
@@ -53,6 +55,7 @@ class IntakeController(
     private val tokens: TokenService,
     private val users: UserService,
     private val opsCounters: OpsCounterRepository,
+    private val profiles: SubjectProfileService,
 ) {
 
     private fun actor(): String? = CurrentUser.email()
@@ -161,6 +164,13 @@ class IntakeController(
         // Stage 4 hub links (VA-63/64 entry points): visible once the subject is published.
         model.addAttribute("stage4Ready", subjectScores.find(id) != null)
         model.addAttribute("personaStored", personas.findBySubject(id) != null)
+        // VA-141: the seal-gated A/B profile panel (profile LLD §7.2) and its catalogs, passed the
+        // same way as the dropdown lists above.
+        model.addAttribute("profile", profiles.view(id).fold({ null }, { it }))
+        model.addAttribute("countries", SubjectProfileForm.countries)
+        model.addAttribute("currencies", SubjectProfileForm.currencies)
+        model.addAttribute("languages", SubjectProfileForm.languages)
+        model.addAttribute("timezones", SubjectProfileForm.timezones)
         return "intake/detail"
     }
 
@@ -202,6 +212,57 @@ class IntakeController(
         subjectService
             .update(id, displayName, handle, notes, SubjectStatus.fromOrNull(status))
             .notify(ra)
+        return "redirect:/intake/$id"
+    }
+
+    /**
+     * VA-141: the operator's A/B profile write (profile LLD §7.2) — deliberately **not** folded
+     * into [editSubject]. That endpoint edits identity (`displayName/handle/notes/status`) and is
+     * always editable; this one writes evidence-grade context that freezes with the corpus at the
+     * seal, and [SubjectProfileService.put] refuses once `IntakeManifest.sealed` is set (§6.1). The
+     * two must not share a submit button, or one save would be half-applied whenever the manifest
+     * is sealed.
+     *
+     * A successful save re-stamps `profileHash`, which is the third drift axis: the next Stage 4
+     * SELECT tick archives every example generated under the old one (§6.4). The flash says so —
+     * the same warning the persona wizard carries for `personaHash`.
+     */
+    @PostMapping("/{id}/profile")
+    fun editProfile(
+        @PathVariable id: String,
+        @RequestParam(required = false) country: String?,
+        @RequestParam(required = false) marketRegion: String?,
+        @RequestParam(required = false) currency: String?,
+        @RequestParam(required = false) timezone: String?,
+        @RequestParam(required = false) primaryLanguage: String?,
+        @RequestParam(required = false) knowledgeAsOf: String?,
+        ra: RedirectAttributes,
+    ): String {
+        profiles
+            .put(
+                id,
+                SubjectProfileUpdateRequest(
+                    country = country,
+                    marketRegion = marketRegion,
+                    currency = currency,
+                    timezone = timezone,
+                    primaryLanguage = primaryLanguage,
+                    knowledgeAsOf = knowledgeAsOf,
+                ),
+                actor(),
+            )
+            .fold(
+                { flashError(ra, it) },
+                { saved ->
+                    ra.addFlashAttribute(
+                        "ok",
+                        saved.profileHash?.let {
+                            "Profile saved — hash ${it.take(12)}… (generation runs pin to it; " +
+                                "examples stamped with the old one archive on the next Stage 4 tick)"
+                        } ?: "Profile cleared — no context is injected and no run is pinned to it",
+                    )
+                },
+            )
         return "redirect:/intake/$id"
     }
 

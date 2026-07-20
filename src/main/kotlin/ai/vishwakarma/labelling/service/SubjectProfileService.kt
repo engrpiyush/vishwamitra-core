@@ -31,6 +31,12 @@ data class SubjectProfileUpdateRequest(
 data class SubjectProfileView(
     val subjectId: String,
     val stored: SubjectProfile?,
+    /**
+     * What [SubjectProfileService.resolved] would hand Stage 4 **right now** — so it is blank
+     * whenever the surface is off, even though [stored] still holds the answers. A view reporting a
+     * live locale line while generation injects nothing would invent a fourth drift story on the
+     * one panel that exists to make the three real ones legible (§6.4).
+     */
     val resolved: ResolvedSubjectProfile,
     /** Hash of [resolved] — what a generation run started now would freeze; null when blank. */
     val profileHash: String?,
@@ -39,6 +45,13 @@ data class SubjectProfileView(
      * refuses (the edit path is an audited ADMIN unseal, §6.2).
      */
     val sealed: Boolean,
+    /**
+     * Whether the profile surface is switched on at all (`app.stage4.profile-enabled`, §8). False ⇒
+     * [SubjectProfileService.put] refuses every write, so the UI hides the form rather than
+     * offering a box whose save can only fail — and, on the subject side, rather than surfacing a
+     * refusal that names a config key (§12.3). Read-only views stay legal either way.
+     */
+    val enabled: Boolean,
 )
 
 /**
@@ -71,7 +84,7 @@ class SubjectProfileService(
         request: SubjectProfileUpdateRequest,
         actor: String?,
     ): Either<DomainError, SubjectProfileView> {
-        if (!enabled()) {
+        if (!surfaceEnabled()) {
             return DomainError.Conflict(
                     "The subject profile is disabled (app.stage4.profile-enabled)"
                 )
@@ -99,7 +112,7 @@ class SubjectProfileService(
             SubjectProfile(
                 subjectId = subjectId,
                 country = parse(request.country, "country", ::country),
-                marketRegion = request.marketRegion?.trim()?.takeIf { it.isNotBlank() },
+                marketRegion = parse(request.marketRegion, "marketRegion", ::marketRegion),
                 currency = parse(request.currency, "currency", ::currency),
                 timezone = parse(request.timezone, "timezone", ::timezone),
                 primaryLanguage = parse(request.primaryLanguage, "primaryLanguage", ::language),
@@ -126,22 +139,35 @@ class SubjectProfileService(
      * disabled injects nothing and stamps no profileHash (byte-for-byte legacy).
      */
     fun resolved(subjectId: String): ResolvedSubjectProfile =
-        if (!enabled()) ResolvedSubjectProfile()
+        // The read is skipped outright while the surface is off: nothing it could return is used.
+        if (!surfaceEnabled()) ResolvedSubjectProfile()
         else SubjectProfileDefaults.resolve(profiles.findBySubject(subjectId))
 
-    private fun enabled(): Boolean = config.stage4().let { it.enabled && it.profileEnabled }
+    /**
+     * Is the profile surface switched on at all (`app.stage4.enabled` ∧
+     * `app.stage4.profile-enabled`, §8)? Config-only and Firestore-free, so a nav fragment may ask
+     * on every render: the flag decides whether a "Your details" entry point exists, and an ungated
+     * one is a permanent dead link because [put] refuses and the page redirects away.
+     */
+    fun surfaceEnabled(): Boolean = config.stage4().let { it.enabled && it.profileEnabled }
 
     private fun isSealed(subjectId: String): Boolean =
         manifests.findBySubject(subjectId)?.sealed == true
 
     private fun viewOf(subjectId: String, stored: SubjectProfile?): SubjectProfileView {
-        val resolved = SubjectProfileDefaults.resolve(stored)
+        // Same gate as [resolved], for the same reason: `resolved`/`profileHash` are a report of
+        // what generation would use, and with the surface off generation uses neither. `stored`
+        // still carries the answers — the doc is inert, not lost.
+        val resolved =
+            if (!surfaceEnabled()) ResolvedSubjectProfile()
+            else SubjectProfileDefaults.resolve(stored)
         return SubjectProfileView(
             subjectId = subjectId,
             stored = stored,
             resolved = resolved,
             profileHash = resolved.hashOrNull(),
             sealed = isSealed(subjectId),
+            enabled = surfaceEnabled(),
         )
     }
 
@@ -150,6 +176,22 @@ class SubjectProfileService(
     /** ISO-3166 alpha-2, normalized upper — the code, not a country name. */
     private fun country(raw: String): String? =
         raw.uppercase().takeIf { it.length == 2 && it.all(Char::isLetter) && it in ISO_COUNTRIES }
+
+    /**
+     * The one A field with no external table behind it (§2.1: "free label, e.g. IN, EU, US-West") —
+     * and the one whose text reaches a model verbatim, because it outranks [country] in
+     * `ResolvedSubjectProfile.locale` (`domain/SubjectProfile.kt:77-84`) and that label is
+     * substituted into `{{locale}}` in every generation prompt
+     * (`stage4/Stage4Generation.kt:170-172`) and hashed into `profileHash`.
+     *
+     * So "free" is bounded here rather than trusted: one short line of letters, digits and light
+     * punctuation. Anything longer, or carrying a line break or a `{{token}}`/tag character, is a
+     * *sentence* — and a sentence in this field is unreviewed prompt text, whichever surface sent
+     * it. The subject form does not offer the field at all (`SubjectTrainingController.saveProfile`
+     * re-reads it from storage); this is the chokepoint that holds for every other caller.
+     */
+    private fun marketRegion(raw: String): String? =
+        raw.takeIf { it.length <= MARKET_REGION_MAX && MARKET_REGION.matches(it) }
 
     /** ISO-4217, normalized upper. */
     private fun currency(raw: String): String? =
@@ -164,5 +206,15 @@ class SubjectProfileService(
 
     private companion object {
         val ISO_COUNTRIES: Set<String> = Locale.getISOCountries().toSet()
+
+        /** Long enough for "Asia-Pacific (APAC)", far too short for an instruction. */
+        const val MARKET_REGION_MAX = 40
+
+        /**
+         * A single-line label: opens on a letter or digit, then letters/digits/space and the
+         * punctuation real market names use. Braces, angle brackets, colons and newlines are
+         * outside the class on purpose — they are the shapes prompt text is made of.
+         */
+        val MARKET_REGION = Regex("""[\p{L}\p{N}][\p{L}\p{N} .,'&()/+-]*""")
     }
 }

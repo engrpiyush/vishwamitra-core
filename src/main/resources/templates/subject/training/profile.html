@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/common :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-140: the subject's own A/B details (profile LLD §7.1) — sibling of the S3 upload page.
+  Every field is optional and every value comes from a catalog the server validates against, so
+  the page cannot produce a refusal a subject would have to decode. Friendly copy only (§12.3):
+  no locale/profile/manifest/seal vocabulary anywhere below.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="subject-panel">
+            <h1>Your details</h1>
+            <p class="lede">A few facts about where you work and how current your story is. Your
+                advocate uses them to answer in the right market, and to be straight about how
+                recent its picture of you is.</p>
+            <div th:replace="~{fragments/common :: flash}"></div>
+
+            <!-- Pre-submit: the editable form. -->
+            <div class="card" th:if="${editable}">
+                <form th:action="@{/training/profile}" method="post">
+                    <!-- The operator-set market label is carried through by the *server*, which
+                         re-reads it from the stored record (SubjectTrainingController.saveProfile).
+                         It deliberately has no hidden input here: it is the one profile field with
+                         no catalog behind it and it lands verbatim in the generation prompt, so a
+                         posted value would be a writable channel into that prompt. -->
+                    <label>Where you're based
+                        <select name="country">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="c : ${countries}" th:value="${c.value}"
+                                    th:text="${c.label}"
+                                    th:selected="${c.value == stored?.country}">Country</option>
+                        </select>
+                    </label>
+
+                    <label>The money you're paid in
+                        <select name="currency">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="c : ${currencies}" th:value="${c.value}"
+                                    th:text="${c.label}"
+                                    th:selected="${c.value == stored?.currency}">Currency</option>
+                        </select>
+                    </label>
+
+                    <label>The language you work in
+                        <select name="primaryLanguage">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="l : ${languages}" th:value="${l.value}"
+                                    th:text="${l.label}"
+                                    th:selected="${l.value == stored?.primaryLanguage}">Language</option>
+                        </select>
+                    </label>
+
+                    <label>Your time zone
+                        <select name="timezone">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="z : ${timezones}" th:value="${z.value}"
+                                    th:text="${z.label}"
+                                    th:selected="${z.value == stored?.timezone}">Time zone</option>
+                        </select>
+                    </label>
+
+                    <label>Everything you've shared is current as of
+                        <input type="date" name="knowledgeAsOf"
+                               th:value="${stored?.knowledgeAsOf}"/>
+                    </label>
+                    <p class="panel-fineprint">Your advocate treats this as the day its knowledge
+                        stops. Asked about anything later, it says plainly that it can't know and
+                        points the question back to you. Leave it blank and it won't raise the
+                        subject at all.</p>
+
+                    <button type="submit" class="btn btn--primary">Save my details</button>
+                </form>
+                <p class="panel-fineprint">Leave anything blank if you'd rather not say — your
+                    advocate simply won't mention it. You can change all of this right up until
+                    you submit your evidence.</p>
+            </div>
+
+            <!-- Post-submit: read-only. The write is refused server-side either way. -->
+            <div class="card" th:unless="${editable}">
+                <p class="panel-lede">These are settled now that you've submitted — they're part of
+                    what your advocate learned from.</p>
+                <table class="grid" th:if="${!summary.isEmpty()}">
+                    <tbody>
+                    <tr th:each="row : ${summary}">
+                        <td th:text="${row.label}">label</td>
+                        <td th:text="${row.value}">value</td>
+                    </tr>
+                    </tbody>
+                </table>
+                <p class="panel-lede" th:if="${summary.isEmpty()}">You didn't add any of these —
+                    your advocate works from your evidence alone.</p>
+                <p class="panel-fineprint">If something here needs changing, tell us and we'll
+                    sort it out.</p>
+            </div>
+
+            <div class="panel-links">
+                <a class="btn btn--secondary" th:href="@{/training}">Back to your training space</a>
+            </div>
+        </section>
+    </main>
+    <footer th:replace="~{subject/layout :: foot}"></footer>
+</div>
+
+</body>
+</html>

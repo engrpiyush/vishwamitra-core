@@ -12,6 +12,15 @@
     <div>
         <a th:href="@{/}">Home</a> ·
         <a th:href="@{/training}">Training space</a> ·
+        <!-- VA-140: reachable from every signed-in page *while the surface is switched on* — the
+             page redirects to the training home when it is off (the flag defaults off outside dev),
+             so an ungated link here would be a dead end on every page. `profileEnabled` is set for
+             every view by GlobalModelAdvice; absent (a fragment rendered outside it) reads false,
+             which hides the link rather than stranding it. Post-submit the page is a read-only
+             summary, so the link stays live for the rest of the subject's life. -->
+        <th:block th:if="${profileEnabled}">
+            <a th:href="@{/training/profile}">Your details</a> ·
+        </th:block>
         <a th:href="@{/tokens}">Access codes</a> ·
         <form th:action="@{/logout}" method="post" style="display:inline">
             <button type="submit" class="linklike">Sign out</button>

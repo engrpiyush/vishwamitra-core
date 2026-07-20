@@ -360,6 +360,114 @@
                     <button class="btn--danger btn--sm" type="submit">Delete subject</button>
                 </form>
             </div>
+
+            <!--
+              VA-141: the SubjectProfile A/B block (profile LLD §7.2) — a SEPARATE panel on purpose.
+              The "Subject" panel above is identity and is deliberately not seal-gated; these fields
+              are evidence-grade context that freezes with the corpus, so they post to their own
+              endpoint (/intake/{id}/profile) which refuses once the manifest is sealed. Sealed ⇒
+              read-only here, and the edit route is the ADMIN unseal form in the Manifest panel.
+
+              Everything below the OFF line is gated on `profile.enabled` on purpose: with the flag
+              down a run injects nothing and stamps no profileHash, so a resolved {{locale}} line or
+              a hash printed here would describe a generation that does not happen — the drift-axis
+              confusion §6.4 exists to prevent. (SubjectProfileService.viewOf blanks `resolved` and
+              nulls `profileHash` for the same reason; this gate is what keeps the *claim* honest.)
+            -->
+            <div class="panel" th:if="${profile != null}">
+                <h3>Profile · locale &amp; freshness</h3>
+                <p class="muted" style="margin:0.3rem 0 0.6rem;" th:if="${profile.enabled}">
+                    Injected into Stage 4 generation as
+                    <code>{{locale}}</code> / <code>{{knowledge_as_of}}</code>, frozen at submit.
+                    Blank ⇒ nothing is injected and the prompt is byte-for-byte today's.</p>
+
+                <p class="muted" style="margin:0.3rem 0 0.6rem;" th:unless="${profile.enabled}">
+                    <span class="badge badge--muted">OFF</span>
+                    The profile surface is switched off — <code>app.stage4.profile-enabled</code>.
+                    Writes are refused, <strong>nothing is injected into generation and no run is
+                    pinned to a profile hash</strong>: the prompt is byte-for-byte the pre-profile
+                    one. Stored answers are kept and apply again the moment the flag is switched
+                    back on — which is itself a calibration event.
+                </p>
+
+                <form th:if="${profile.enabled and !manifest.sealed}" method="post"
+                      th:action="@{/intake/{id}/profile(id=${subject.id})}" class="form" style="max-width:none;"
+                      data-confirm="Saving re-stamps the profile hash: examples generated under the old one are archived on the next Stage 4 tick."
+                      data-confirm-title="Save profile?" data-confirm-ok="Save profile">
+                    <label>Country <span class="muted">(ISO-3166)</span>
+                        <select name="country">
+                            <option value="">—</option>
+                            <option th:each="c : ${countries}" th:value="${c.value}" th:text="${c.label}"
+                                    th:selected="${c.value == profile.stored?.country}">Country</option>
+                        </select>
+                    </label>
+                    <label>Market region <span class="muted">(free label — overrides country in the locale line)</span>
+                        <input type="text" name="marketRegion" placeholder="e.g. EU, US-West"
+                               th:value="${profile.stored?.marketRegion}"/>
+                    </label>
+                    <label>Currency <span class="muted">(ISO-4217)</span>
+                        <select name="currency">
+                            <option value="">—</option>
+                            <option th:each="c : ${currencies}" th:value="${c.value}" th:text="${c.label}"
+                                    th:selected="${c.value == profile.stored?.currency}">Currency</option>
+                        </select>
+                    </label>
+                    <label>Primary language <span class="muted">(BCP-47)</span>
+                        <select name="primaryLanguage">
+                            <option value="">—</option>
+                            <option th:each="l : ${languages}" th:value="${l.value}" th:text="${l.label}"
+                                    th:selected="${l.value == profile.stored?.primaryLanguage}">Language</option>
+                        </select>
+                    </label>
+                    <label>Timezone <span class="muted">(IANA)</span>
+                        <select name="timezone">
+                            <option value="">—</option>
+                            <option th:each="z : ${timezones}" th:value="${z.value}" th:text="${z.label}"
+                                    th:selected="${z.value == profile.stored?.timezone}">Timezone</option>
+                        </select>
+                    </label>
+                    <label>Knowledge as of <span class="muted">(blank ⇒ the publish date)</span>
+                        <input type="date" name="knowledgeAsOf" th:value="${profile.stored?.knowledgeAsOf}"/>
+                    </label>
+                    <button type="submit" class="secondary">Save profile</button>
+                </form>
+
+                <div th:if="${profile.enabled and manifest.sealed}">
+                    <table class="grid">
+                        <tbody>
+                        <tr><td>Country</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.country) ? '—' : profile.resolved.country}">—</td></tr>
+                        <tr><td>Market region</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.marketRegion) ? '—' : profile.resolved.marketRegion}">—</td></tr>
+                        <tr><td>Currency</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.currency) ? '—' : profile.resolved.currency}">—</td></tr>
+                        <tr><td>Primary language</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.primaryLanguage) ? '—' : profile.resolved.primaryLanguage}">—</td></tr>
+                        <tr><td>Timezone</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.timezone) ? '—' : profile.resolved.timezone}">—</td></tr>
+                        <tr><td>Knowledge as of</td>
+                            <td th:text="${profile.resolved.knowledgeAsOf ?: '—'}">—</td></tr>
+                        <tr><td><code>{{locale}}</code></td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.locale) ? '—' : profile.resolved.locale}">—</td></tr>
+                        </tbody>
+                    </table>
+                    <p class="muted" style="margin:0.6rem 0 0;">
+                        <span class="badge badge--success">SEALED</span>
+                        The profile is frozen with the corpus.
+                        <span th:if="${manifest.stage2StartedAt == null}">Use <strong>Unseal (admin)</strong>
+                            in the Manifest panel to edit it.</span>
+                        <span th:unless="${manifest.stage2StartedAt == null}">Stage 2 has started —
+                            the seal, and this profile, are permanent.</span>
+                    </p>
+                </div>
+
+                <p class="muted" style="margin:0.6rem 0 0;"
+                   th:if="${profile.enabled and profile.profileHash != null}">
+                    hash <code th:text="${#strings.substring(profile.profileHash, 0, 12)}">abcdef</code>…
+                    <span th:if="${profile.stored?.updatedBy != null}">·
+                        <span th:text="${profile.stored.updatedBy}">who</span></span>
+                </p>
+            </div>
         </aside>
     </div>
 </main>

@@ -30,6 +30,10 @@
                     <p class="panel-lede" th:if="${uploadCount > 0}"
                        th:text="|${readyCount} of ${uploadCount} file(s) ready.|">0 files.</p>
                     <a class="btn btn--primary" th:href="@{/training/upload}">Add your evidence</a>
+                    <!-- VA-140: the A/B details CTA, beside the evidence CTA while it can still
+                         be edited (profile LLD §7.1). -->
+                    <a class="btn btn--secondary" th:if="${profileEnabled}"
+                       th:href="@{/training/profile}">Your details</a>
                 </div>
             </div>
 
