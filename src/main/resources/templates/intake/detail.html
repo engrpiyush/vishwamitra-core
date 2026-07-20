@@ -484,6 +484,29 @@
                         <input type="text" name="doNotDiscussCustom" th:value="${profile.stored?.doNotDiscussCustom?.text}"/>
                     </label>
 
+                    <!-- VA-154: E contact / PII. Private by default; each field's radio is its own
+                         O7 opt-in (§5.3). A shareable contact materialises as a `sensitive` Row-8
+                         claim at the seal, opted in via the companion review; un-sharing removes it
+                         on the next seal (§5.2/§5.4). Home address / DOB / gov-ID are not kinds. -->
+                    <h4 style="margin:1rem 0 0.3rem;">Contact / PII</h4>
+                    <div th:each="k : ${contactKinds}"
+                         th:with="cf=${contactByKind.get(k.kind.name())}" style="margin-bottom:0.6rem;">
+                        <label>
+                            <span th:text="${k.label}">Field</span>
+                            <input type="text" th:name="'contactValue_' + ${k.kind.name()}"
+                                   th:value="${cf != null ? cf.value : null}"
+                                   th:placeholder="${k.placeholder}"/>
+                        </label>
+                        <label class="check" style="display:block; font-weight:normal;">
+                            <input type="radio" th:name="'contactShare_' + ${k.kind.name()}"
+                                   value="HIDE" th:checked="${cf == null ? true : !cf.shareable}"/>
+                            Private (default)</label>
+                        <label class="check" style="display:block; font-weight:normal;">
+                            <input type="radio" th:name="'contactShare_' + ${k.kind.name()}"
+                                   value="INCLUDE" th:checked="${cf == null ? false : cf.shareable}"/>
+                            Shareable — trained verbatim (Row 8)</label>
+                    </div>
+
                     <button type="submit" class="secondary">Save profile</button>
                 </form>
 
@@ -520,6 +543,17 @@
                             <td th:text="${#lists.isEmpty(profile.resolved.doNotDiscussChecks) ? '—' : #strings.listJoin(profile.resolved.doNotDiscussChecks, ', ')}">—</td></tr>
                         <tr th:if="${profile.resolved.approvedDoNotDiscussCustom != null}"><td>Custom boundary</td>
                             <td th:text="${profile.resolved.approvedDoNotDiscussCustom}">—</td></tr>
+                        <!-- VA-154: E contact, each with its trained share posture. A `shareable`
+                             one is a `sensitive` Row-8 claim; a private one is never spoken. -->
+                        <tr th:each="cf : ${profile.resolved.contact}">
+                            <td th:text="'Contact · ' + ${cf.kind}">Contact</td>
+                            <td>
+                                <span th:text="${cf.value}">value</span>
+                                <span class="badge"
+                                      th:classappend="${cf.shareable} ? 'badge--info' : 'badge--success'"
+                                      th:text="${cf.shareable} ? 'shareable (Row 8)' : 'private'">private</span>
+                            </td>
+                        </tr>
                         </tbody>
                     </table>
                     <p class="muted" style="margin:0.6rem 0 0;">

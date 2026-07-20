@@ -87,4 +87,19 @@ class DeclaredEvidenceTest {
         assertFalse(DeclaredType.SELF_DISCLOSED_DRIVER in DeclaredType.materialised)
         assertTrue(DeclaredType.materialised.all { it in DeclaredType.all })
     }
+
+    @Test
+    fun `contactType is declared-contact-kind and stays outside the template gate vocabulary`() {
+        assertEquals("declared-contact-email", DeclaredType.contactType(ContactKind.EMAIL))
+        assertEquals("declared-contact-linkedin", DeclaredType.contactType(ContactKind.LINKEDIN))
+        // A contact is drawn by the sensitive / Row-8 opt-in path, never by a template's
+        // requiredDeclaredTypes gate — so no contact type is gate-legal (§5.2).
+        ContactKind.entries.forEach {
+            assertFalse(
+                DeclaredType.recognises(DeclaredType.contactType(it)),
+                "a contact type must not be a gate-legal declaredType",
+            )
+            assertFalse(DeclaredType.contactType(it) in DeclaredType.all)
+        }
+    }
 }

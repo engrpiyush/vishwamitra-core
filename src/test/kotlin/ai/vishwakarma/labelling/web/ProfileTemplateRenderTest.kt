@@ -1,6 +1,8 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.ContactField
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
 import ai.vishwakarma.labelling.domain.DoNotDiscussCustom
 import ai.vishwakarma.labelling.domain.EmploymentType
@@ -14,6 +16,7 @@ import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
@@ -107,6 +110,7 @@ class ProfileTemplateRenderTest {
                     liveConfig(),
                     SubjectProfileRepository(mock(Firestore::class.java)),
                     ClaimRepository(mock(Firestore::class.java)),
+                    ClaimReviewRepository(mock(Firestore::class.java)),
                 ),
             )
         )
@@ -225,6 +229,38 @@ class ProfileTemplateRenderTest {
     }
 
     @Test
+    fun `the post-submit subject page lists contacts read-only with their share posture`() {
+        val html =
+            subjectPage(
+                uploadPhase = false,
+                stored =
+                    SubjectProfile(
+                        subjectId = "s1",
+                        contact =
+                            listOf(
+                                ContactField(
+                                    ContactKind.EMAIL,
+                                    "asha@example.com",
+                                    shareable = true
+                                ),
+                                ContactField(ContactKind.PHONE, "+91 555 0100"),
+                            ),
+                    ),
+            )
+        assertFalse(html.contains("<select"), "a settled page kept an editable control")
+
+        val text = visibleText(html)
+        assertTrue(text.contains("How to reach you"))
+        assertTrue(text.contains("asha@example.com"))
+        assertTrue(text.contains("shared with your advocate"), "the shared contact lost its badge")
+        assertTrue(text.contains("kept private"), "the private contact lost its badge")
+        // §12.3: the settled contact view carries no machinery vocabulary.
+        for (banned in listOf("sensitive", "row 8", "piichoice")) {
+            assertFalse(text.lowercase().contains(banned), "'$banned' leaked into the contact view")
+        }
+    }
+
+    @Test
     fun `the editable subject page renders the C-D declared section, pre-filled, with the attestation`() {
         val html =
             subjectPage(
@@ -263,6 +299,48 @@ class ProfileTemplateRenderTest {
         val text = visibleText(html).lowercase()
         for (banned in listOf("materialise", "declaredtype", "subject_declared", "claim", "seal")) {
             assertFalse(text.contains(banned), "'$banned' leaked into the subject C/D page")
+        }
+    }
+
+    @Test
+    fun `the editable subject page renders the E contact rows, pre-filled, private by default`() {
+        val html =
+            subjectPage(
+                uploadPhase = true,
+                stored =
+                    SubjectProfile(
+                        subjectId = "s1",
+                        contact =
+                            listOf(
+                                ContactField(
+                                    ContactKind.EMAIL,
+                                    "asha@example.com",
+                                    shareable = true
+                                ),
+                                ContactField(ContactKind.PHONE, "+91 555 0100"),
+                            ),
+                    ),
+            )
+        val flat = html.replace(Regex("\\s+"), " ")
+
+        // A value row per kind, pre-filled from the stored doc.
+        assertTrue(flat.contains("""name="contactValue_EMAIL" value="asha@example.com""""))
+        assertTrue(flat.contains("""name="contactValue_PHONE" value="+91 555 0100""""))
+        // The shared email comes back on INCLUDE; the private phone stays on HIDE (the safe
+        // default), as does a kind the subject never filled in.
+        assertTrue(flat.contains("""name="contactShare_EMAIL" value="INCLUDE" checked="checked""""))
+        assertTrue(flat.contains("""name="contactShare_PHONE" value="HIDE" checked="checked""""))
+        assertTrue(
+            flat.contains("""name="contactShare_LINKEDIN" value="HIDE" checked="checked""""),
+            "an un-filled contact must default to private",
+        )
+        // The reused pii.html copy — private by default.
+        assertTrue(flat.contains("private by default"))
+
+        // §12.3: the PII surface still carries no machinery vocabulary.
+        val text = visibleText(html).lowercase()
+        for (banned in listOf("sensitive", "piichoice", "row 8", "materialise")) {
+            assertFalse(text.contains(banned), "'$banned' leaked into the subject contact page")
         }
     }
 
@@ -446,6 +524,35 @@ class ProfileTemplateRenderTest {
     }
 
     @Test
+    fun `the detail panel renders the E contact rows — editable inputs, then a sealed read-only grid`() {
+        val stored =
+            defaultDetailStored.copy(
+                contact =
+                    listOf(
+                        ContactField(ContactKind.EMAIL, "asha@example.com", shareable = true),
+                        ContactField(ContactKind.PHONE, "+91 555 0100"),
+                    )
+            )
+
+        val editable = detailPage(sealed = false, stored = stored).replace(Regex("\\s+"), " ")
+        // The editable panel offers a value box + share radios per kind, pre-filled and pre-posed.
+        assertTrue(editable.contains("""name="contactValue_EMAIL" value="asha@example.com""""))
+        assertTrue(
+            editable.contains("""name="contactShare_EMAIL" value="INCLUDE" checked="checked"""")
+        )
+        assertTrue(
+            editable.contains("""name="contactShare_PHONE" value="HIDE" checked="checked"""")
+        )
+
+        val sealedGrid = detailPage(sealed = true, stored = stored).replace(Regex("\\s+"), " ")
+        // The sealed read-only grid names each contact with its trained share posture.
+        assertTrue(sealedGrid.contains("Contact · EMAIL"))
+        assertTrue(sealedGrid.contains("asha@example.com"))
+        assertTrue(sealedGrid.contains("shareable (Row 8)"))
+        assertTrue(sealedGrid.contains("Contact · PHONE"))
+    }
+
+    @Test
     fun `with the flag off the panel names the switch instead of offering a doomed save`() {
         val html = detailPage(sealed = false, enabled = false)
 
@@ -554,6 +661,7 @@ private class FakeRenderProfileService :
             liveConfig(),
             SubjectProfileRepository(mock(Firestore::class.java)),
             ClaimRepository(mock(Firestore::class.java)),
+            ClaimReviewRepository(mock(Firestore::class.java)),
         ),
     ) {
 

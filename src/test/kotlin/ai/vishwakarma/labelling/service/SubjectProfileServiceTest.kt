@@ -2,6 +2,8 @@ package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Claim
+import ai.vishwakarma.labelling.domain.ClaimReview
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
 import ai.vishwakarma.labelling.domain.EmploymentType
@@ -10,6 +12,7 @@ import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -71,6 +74,21 @@ private class FakeProfileClaimRepo : ClaimRepository(mock(Firestore::class.java)
     }
 }
 
+private class FakeProfileReviewRepo : ClaimReviewRepository(mock(Firestore::class.java)) {
+    val store = linkedMapOf<String, ClaimReview>()
+
+    override fun save(review: ClaimReview) {
+        store[review.claimId] = review
+    }
+
+    override fun delete(claimId: String) {
+        store.remove(claimId)
+    }
+
+    override fun findBySubject(subjectId: String): List<ClaimReview> =
+        store.values.filter { it.subjectId == subjectId }
+}
+
 /**
  * [SubjectProfileService]: the A/B round-trip, field validation, the feature flag, and the §2.3
  * divergence from the persona template — `put` refuses once the manifest is sealed.
@@ -81,6 +99,7 @@ class SubjectProfileServiceTest {
     private val profiles = FakeProfileRepo()
     private val manifests = FakeProfileManifestRepo()
     private val claims = FakeProfileClaimRepo()
+    private val reviews = FakeProfileReviewRepo()
 
     private val enabledProps = AppProperties(stage4 = AppProperties.Stage4(profileEnabled = true))
 
@@ -91,7 +110,7 @@ class SubjectProfileServiceTest {
             profiles,
             subjects,
             manifests,
-            ProfileClaimMaterialiser(cfg, profiles, claims),
+            ProfileClaimMaterialiser(cfg, profiles, claims, reviews),
         )
     }
 
@@ -556,5 +575,89 @@ class SubjectProfileServiceTest {
             "a decision that cannot reach the ledger must not flip the doc",
         )
         assertTrue(claims.store.isEmpty())
+    }
+
+    // ---- E contact / PII (VA-154) -----------------------------------------------------
+
+    @Test
+    fun `put stores contact fields with their shareable flag and drops blank values`() {
+        seedSubject()
+        val view =
+            service()
+                .put(
+                    "s1",
+                    SubjectProfileUpdateRequest(
+                        contact =
+                            listOf(
+                                ContactFieldInput("EMAIL", "  asha@example.com ", shareable = true),
+                                ContactFieldInput("PHONE", "+91 555 0100", shareable = false),
+                                // blank value ⇒ a cleared field, dropped
+                                ContactFieldInput("LINKEDIN", "   ", shareable = true),
+                            ),
+                    ),
+                    actor = "subject",
+                )
+                .expectRight()
+
+        val stored = view.stored?.contact
+        assertEquals(2, stored?.size)
+        assertEquals(ContactKind.EMAIL, stored?.get(0)?.kind)
+        assertEquals("asha@example.com", stored?.get(0)?.value)
+        assertTrue(stored?.get(0)?.shareable == true)
+        assertEquals(ContactKind.PHONE, stored?.get(1)?.kind)
+        assertFalse(stored?.get(1)?.shareable == true)
+        // Contact does not touch the A/B hash (it reaches Stage 4 as a claim, §5).
+        assertNull(view.profileHash)
+    }
+
+    @Test
+    fun `put rejects an unknown contact kind and a value carrying an injection shape`() {
+        seedSubject()
+        val svc = service()
+
+        val badKind =
+            svc.put(
+                    "s1",
+                    SubjectProfileUpdateRequest(contact = listOf(ContactFieldInput("FAX", "x"))),
+                    "s"
+                )
+                .err()
+        assertIs<DomainError.Invalid>(badKind)
+
+        val badValue =
+            svc.put(
+                    "s1",
+                    SubjectProfileUpdateRequest(
+                        // a brace/token shape must never reach a Row-8 verbatim claim
+                        contact = listOf(ContactFieldInput("EMAIL", "{{leak}}", shareable = true))
+                    ),
+                    "s",
+                )
+                .err()
+        assertIs<DomainError.Invalid>(badValue)
+        // Neither poisoned save was persisted.
+        assertNull(profiles.store["s1"])
+    }
+
+    @Test
+    fun `a null contact request keeps the stored contacts — an A-B-only save never wipes them`() {
+        seedSubject()
+        val svc = service()
+        svc.put(
+                "s1",
+                SubjectProfileUpdateRequest(
+                    contact =
+                        listOf(ContactFieldInput("EMAIL", "asha@example.com", shareable = true))
+                ),
+                "subject",
+            )
+            .expectRight()
+
+        // A later A/B-only save (the session-02 locale form) carries no contact field.
+        val view = svc.put("s1", request(), actor = "subject").expectRight()
+
+        assertEquals(1, view.stored?.contact?.size)
+        assertEquals("asha@example.com", view.stored?.contact?.get(0)?.value)
+        assertTrue(view.stored?.contact?.get(0)?.shareable == true)
     }
 }

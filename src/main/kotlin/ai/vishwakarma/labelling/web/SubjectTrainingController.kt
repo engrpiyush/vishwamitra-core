@@ -170,6 +170,13 @@ class SubjectTrainingController(
         model.addAttribute("employmentTypes", SubjectProfileForm.employmentTypes)
         model.addAttribute("seniorities", SubjectProfileForm.seniorities)
         model.addAttribute("dndTopics", SubjectProfileForm.doNotDiscussTopics)
+        // VA-154: the E contact rows + the subject's stored contacts keyed by kind, so each row
+        // prefills its value and pre-selects the private/shared radio.
+        model.addAttribute("contactKinds", SubjectProfileForm.contactKinds)
+        model.addAttribute(
+            "contactByKind",
+            SubjectProfileForm.contactByKind(view.stored?.contact ?: emptyList()),
+        )
         return "subject/training/profile"
     }
 
@@ -226,6 +233,10 @@ class SubjectTrainingController(
         val aspirations = request.getParameterValues("aspirations")?.toList()
         val statedPreferences = request.getParameterValues("statedPreferences")?.toList()
         val doNotDiscussChecks = request.getParameterValues("doNotDiscussChecks")?.toList()
+        // VA-154: the E contact rows (one per kind). Deliberately **not** part of `declaresContent`
+        // below: a contact carries its own per-field `shareable` opt-in (§5.3), so it never needs
+        // the C/D narrative attestation — a subject may share a contact without ticking that box.
+        val contact = SubjectProfileForm.contactInputs(request::getParameter)
         val manifest = intake.manifest(ctx.subjectId)
         val phase = SubjectTraining.phaseFor(manifest, stage2.listJobs(ctx.subjectId))
         if (phase != TrainingPhase.UPLOAD) return "redirect:/training/profile"
@@ -288,6 +299,7 @@ class SubjectTrainingController(
                     statedPreferences = statedPreferences ?: emptyList(),
                     doNotDiscussChecks = doNotDiscussChecks ?: emptyList(),
                     doNotDiscussCustom = doNotDiscussCustom,
+                    contact = contact,
                 ),
                 CurrentUser.email(),
             )

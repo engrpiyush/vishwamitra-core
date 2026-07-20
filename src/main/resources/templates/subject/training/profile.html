@@ -148,6 +148,33 @@
                             and we'll take another look.</span>
                     </p>
 
+                    <!--
+                      VA-154: E — how to reach you. Private by default; each field's radio is its
+                      own opt-in (§5.3), so this section sits OUTSIDE the narrative attestation below
+                      (sharing a contact needs no separate affirmation — the "share" radio is it).
+                    -->
+                    <h2>How to reach you</h2>
+                    <p class="panel-fineprint">Contact details stay <strong>private by default</strong>
+                        — your advocate never shares one unless you say so on that field. Home
+                        address, date of birth and ID are never shared, so there's no box for them.</p>
+                    <div class="contact-field" th:each="k : ${contactKinds}"
+                         th:with="cf=${contactByKind.get(k.kind.name())}" style="margin-bottom:0.8rem;">
+                        <label>
+                            <span th:text="${k.label}">Field</span>
+                            <input type="text" th:name="'contactValue_' + ${k.kind.name()}"
+                                   th:value="${cf != null ? cf.value : null}"
+                                   th:placeholder="${k.placeholder}"/>
+                        </label>
+                        <label style="display:block; font-weight:normal;">
+                            <input type="radio" th:name="'contactShare_' + ${k.kind.name()}"
+                                   value="HIDE" th:checked="${cf == null ? true : !cf.shareable}"/>
+                            Keep it private (default)</label>
+                        <label style="display:block; font-weight:normal;">
+                            <input type="radio" th:name="'contactShare_' + ${k.kind.name()}"
+                                   value="INCLUDE" th:checked="${cf == null ? false : cf.shareable}"/>
+                            My advocate may share this</label>
+                    </div>
+
                     <!-- The declared-narrative attestation (§7.1) — the write is refused without it
                          whenever anything above is filled in. -->
                     <label class="attest">
@@ -175,7 +202,26 @@
                     </tr>
                     </tbody>
                 </table>
-                <p class="panel-lede" th:if="${summary.isEmpty() and stored?.doNotDiscussCustom == null}">
+                <!-- VA-154: contact, read-only, with each field's share posture. Walks the catalog
+                     (for the friendly label) and shows only the kinds actually stored. -->
+                <div th:if="${stored != null and !#lists.isEmpty(stored.contact)}"
+                     style="margin-top:0.8rem;">
+                    <p class="panel-fineprint" style="margin-bottom:0.3rem;">How to reach you</p>
+                    <ul style="margin:0; padding-left:1.1rem;">
+                        <th:block th:each="k : ${contactKinds}"
+                                  th:with="cf=${contactByKind.get(k.kind.name())}">
+                            <li th:if="${cf != null}">
+                                <span th:text="${k.label}">Email</span>:
+                                <span th:text="${cf.value}">value</span>
+                                <span class="badge"
+                                      th:classappend="${cf.shareable} ? 'badge--info' : 'badge--success'"
+                                      th:text="${cf.shareable} ? 'shared with your advocate' : 'kept private'">kept private</span>
+                            </li>
+                        </th:block>
+                    </ul>
+                </div>
+                <p class="panel-lede"
+                   th:if="${summary.isEmpty() and stored?.doNotDiscussCustom == null and (stored == null or #lists.isEmpty(stored.contact))}">
                     You didn't add any of these — your advocate works from your evidence alone.</p>
                 <p class="panel-fineprint" th:if="${stored?.doNotDiscussCustom != null}"
                    th:switch="${stored.doNotDiscussCustom.state.name()}">

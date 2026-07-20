@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.web
 import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.OpsCounterRepository
 import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
@@ -25,6 +26,8 @@ import arrow.core.right
 import com.google.cloud.firestore.Firestore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
@@ -97,6 +100,30 @@ class IntakeProfileWriteTest {
         // No checkbox posted ⇒ the panel means "none", so the controller coalesces to an empty
         // list (the service reads a null list as "keep stored"; the operator can clear a boundary).
         assertEquals(emptyList(), sent.doNotDiscussChecks)
+    }
+
+    @Test
+    fun `editProfile hands the E contact rows to the service, one per kind, with the share flag`() {
+        profiles.putResult = view().right()
+
+        mvc.perform(
+                post("/intake/s1/profile")
+                    .param("contactValue_EMAIL", "asha@example.com")
+                    .param("contactShare_EMAIL", "INCLUDE")
+                    // PHONE has a value but no share radio ⇒ private (the safe default).
+                    .param("contactValue_PHONE", "+91 555 0100")
+            )
+            .andExpect(redirectedUrl("/intake/s1"))
+
+        val sent = profiles.lastPut!!.contact!!
+        // The panel renders every kind, so the whole set is sent (blank rows the service drops).
+        assertEquals(5, sent.size)
+        val email = sent.first { it.kind == "EMAIL" }
+        assertEquals("asha@example.com", email.value)
+        assertTrue(email.shareable)
+        val phone = sent.first { it.kind == "PHONE" }
+        assertEquals("+91 555 0100", phone.value)
+        assertFalse(phone.shareable)
     }
 
     @Test
@@ -174,6 +201,7 @@ private class FakeAdminProfileService :
             liveConfig(),
             SubjectProfileRepository(mock(Firestore::class.java)),
             ClaimRepository(mock(Firestore::class.java)),
+            ClaimReviewRepository(mock(Firestore::class.java)),
         ),
     ) {
 

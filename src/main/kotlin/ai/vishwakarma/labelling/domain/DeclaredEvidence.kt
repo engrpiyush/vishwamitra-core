@@ -161,6 +161,19 @@ object DeclaredType {
     const val BOUNDARY = "subject-declared-boundary"
 
     /**
+     * `declared-contact-<kind>` — the logical type of a declared contact PII claim (§5.2). E.g.
+     * `declared-contact-email`. Deliberately **outside** [all]: a contact is drawn by the
+     * `sensitive` / Row-8 opt-in path, never by a notebook template's `requiredDeclaredTypes`
+     * evidence gate, so [recognises] returns false for it and no template may gate on one. The
+     * marker exists only so the materialiser stamps one canonical string and a reader can tell a
+     * contact claim from any other declared claim.
+     */
+    const val CONTACT_PREFIX = "declared-contact-"
+
+    /** The `declared-contact-<kind>` type for one [ContactKind]. */
+    fun contactType(kind: ContactKind): String = CONTACT_PREFIX + kind.name.lowercase()
+
+    /**
      * Types the `cat-27` evidenceGate prose names that **nothing in slice 2 materialises**:
      * `self-disclosed-driver`, `subject-stated-position` and `scope-preference` have no field in
      * groups C/D. They are listed so a template may gate on them and so [recognises] does not

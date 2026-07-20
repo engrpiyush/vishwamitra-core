@@ -6,6 +6,7 @@ import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -27,6 +28,9 @@ import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -50,6 +54,7 @@ private class FakeProfileService :
             liveConfig(),
             SubjectProfileRepository(mock(Firestore::class.java)),
             ClaimRepository(mock(Firestore::class.java)),
+            ClaimReviewRepository(mock(Firestore::class.java)),
         ),
     ) {
 
@@ -302,6 +307,29 @@ class SubjectProfilePageTest {
         assertEquals(listOf("health"), sent.doNotDiscussChecks)
         // The audited manifest stamp fires exactly once, and only on the declaring save.
         verify(intake).attestDeclared("s1", null)
+    }
+
+    @Test
+    fun `a shared contact reaches the service and needs no narrative attestation`() {
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+        profiles.putResult = profileView().right()
+
+        // Share a contact but declare no C/D narrative. The per-field "share" radio is the consent
+        // (§5.3), so the save succeeds and stamps NO declared attestation — contact is deliberately
+        // not part of `declaresContent`.
+        mvc.perform(
+                form()
+                    .param("contactValue_EMAIL", "asha@example.com")
+                    .param("contactShare_EMAIL", "INCLUDE")
+            )
+            .andExpect(redirectedUrl("/training/profile"))
+
+        assertEquals(1, profiles.putCalls)
+        val email = profiles.lastPut!!.contact!!.first { it.kind == "EMAIL" }
+        assertEquals("asha@example.com", email.value)
+        assertTrue(email.shareable)
+        verify(intake, never()).attestDeclared(anyString(), any())
     }
 
     @Test

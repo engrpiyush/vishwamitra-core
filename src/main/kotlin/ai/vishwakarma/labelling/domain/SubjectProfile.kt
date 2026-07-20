@@ -9,16 +9,22 @@ import java.util.Locale
  * The manually-entered subject block (SubjectProfile LLD §2.1), `subject_profiles`, doc id =
  * subjectId — sparse and all-nullable exactly like [SubjectPersona]: a blank profile is legal and
  * resolves to today's behaviour. This carries **A** (locale & environment), **B** (knowledge
- * freshness), **C** (candidacy / targeting) and **D** (declared narrative); the E contact fields
- * arrive with slice 3.
+ * freshness), **C** (candidacy / targeting), **D** (declared narrative) and **E** (contact / PII,
+ * slice 3).
  *
- * The two halves are different *kinds* of thing and the code keeps them apart everywhere:
+ * The three kinds of field are different *kinds* of thing and the code keeps them apart everywhere:
  * - **A/B are context.** They render into the generation prompt as `{{locale}}` /
  *   `{{knowledge_as_of}}`, never assert a fact about the person, and so carry no fabrication
  *   surface (§10).
  * - **C/D are declared evidence.** They become provenance-tagged `SUBJECT_DECLARED` claims at the
  *   seal ([ai.vishwakarma.labelling.service.ProfileClaimMaterialiser]) and travel the ordinary
  *   ledger path from there. Nothing in C/D reaches a prompt directly.
+ * - **E is declared PII.** Each [ContactField] is **private by default**; a `shareable` one
+ *   materialises at the seal as a `sensitive` declared claim opted-in through the *existing* O7
+ *   machinery (§5.2), reaching Row-8 verbatim, while a non-shareable one is never materialised and
+ *   stays under the trained REFUSE posture. `shareable` is a **training-time** gate, not a live
+ *   toggle (§5.4): un-sharing after the advocate is tuned is a re-seal / re-tune, never a runtime
+ *   change.
  *
  * [profileHash] is the SHA-256 over the *resolved* A/B scalars — the third drift axis beside
  * scoreRunId and personaHash ([Stage4Stamp], §6.4): an A/B-only edit changes no claim and no score,
@@ -58,11 +64,52 @@ data class SubjectProfile(
     val doNotDiscussChecks: List<String> = emptyList(),
     /** One bespoke entry, inert until an admin approves it (OD-9). */
     val doNotDiscussCustom: DoNotDiscussCustom? = null,
+    // ---- E. Contact / PII (declared PII) ----
+    /**
+     * Contact details the subject offered, each [ContactField.shareable] **private by default**
+     * (§5). A shareable field is the O7 opt-in the seal-time materialiser translates to a
+     * `sensitive` declared claim with `piiChoice = INCLUDE`; a non-shareable one is never spoken.
+     */
+    val contact: List<ContactField> = emptyList(),
     // ---- audit ----
     val updatedBy: String? = null,
     val updatedAt: Instant? = null,
     val profileHash: String? = null,
 )
+
+/**
+ * One declared contact detail (SubjectProfile LLD §2.1/§5). [shareable] is the per-field O7 gate
+ * and is **false by default** — the subject must actively opt each field in for the advocate to
+ * ever speak it. It is a *training-time* consent: a shareable field materialises as a `sensitive`
+ * declared claim with `piiChoice = INCLUDE` (§5.2), so un-sharing after the tune is a re-seal /
+ * re-tune, never a live toggle (§5.4).
+ */
+data class ContactField(
+    val kind: ContactKind,
+    val value: String,
+    val shareable: Boolean = false,
+)
+
+/**
+ * The contact kinds a subject may declare (§2.1). Deliberately excludes home address, date of birth
+ * and government ID — those have **no shareable form**: they map to the §14 100%-required O7 safety
+ * bar and always REFUSE ([ai.vishwakarma.labelling.stage4.Stage4EvalProbes]), so they are never
+ * offered as a field.
+ */
+enum class ContactKind {
+    NAME,
+    EMAIL,
+    LINKEDIN,
+    PORTFOLIO,
+    PHONE;
+
+    companion object {
+        fun fromOrNull(raw: String?): ContactKind? =
+            raw?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { valueOf(it.uppercase()) }.getOrNull() }
+    }
+}
 
 /**
  * A fully-materialized profile: every scalar non-null (absent ⇒ blank), the `{{locale}}` label
@@ -89,6 +136,13 @@ data class ResolvedSubjectProfile(
     val doNotDiscussChecks: List<String> = emptyList(),
     /** Present only when the admin approved it — [DoNotDiscussCustom.materialisable] (OD-9). */
     val approvedDoNotDiscussCustom: String? = null,
+    /**
+     * The declared contact fields, normalised (trimmed, blank-value-dropped), **both** shareable
+     * and private kept — the materialiser reads [ContactField.shareable] per field to decide which
+     * one becomes a `sensitive` opted-in claim and which stays unspoken (§5.2). Contact is *not* in
+     * [profileHash] (it reaches Stage 4 as a claim, never a prompt, exactly like C/D — §12.8.2).
+     */
+    val contact: List<ContactField> = emptyList(),
 ) {
 
     /**
@@ -109,7 +163,9 @@ data class ResolvedSubjectProfile(
                 knowledgeAsOf == null
 
     /**
-     * True when nothing in C/D is declared — the materialiser writes no claims for such a subject.
+     * True when nothing in C/D/E would materialise — the seal-time materialiser writes no claim for
+     * such a subject. E counts only when a contact is **shareable**: a private-only contact is
+     * stored but never becomes a claim (§5.2), so it does not lift this predicate.
      */
     val declaredBlank: Boolean
         get() =
@@ -120,7 +176,8 @@ data class ResolvedSubjectProfile(
                 aspirations.isEmpty() &&
                 statedPreferences.isEmpty() &&
                 doNotDiscussChecks.isEmpty() &&
-                approvedDoNotDiscussCustom == null
+                approvedDoNotDiscussCustom == null &&
+                contact.none { it.shareable }
 
     /**
      * The `{{locale}}` substitution value, e.g. "the India market (INR), primary language en-IN"
@@ -217,9 +274,14 @@ object SubjectProfileDefaults {
                 DoNotDiscussVocabulary.known(stored?.doNotDiscussChecks ?: emptyList()),
             approvedDoNotDiscussCustom =
                 stored?.doNotDiscussCustom?.takeIf { it.materialisable }?.text?.trim(),
+            contact = stored?.contact.cleanContacts(),
         )
 
     private fun String?.clean(): String = this?.trim() ?: ""
+
+    /** Trim contact values, drop blank-valued entries; keep kind, order and the shareable flag. */
+    private fun List<ContactField>?.cleanContacts(): List<ContactField> =
+        orEmpty().map { it.copy(value = it.value.trim()) }.filter { it.value.isNotBlank() }
 
     /** Trim, drop blanks, de-duplicate case-insensitively, keep first-declared order. */
     private fun List<String>?.cleanList(): List<String> {

@@ -4,16 +4,20 @@ import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimBasis
 import ai.vishwakarma.labelling.domain.ClaimOrigin
+import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.DoNotDiscussVocabulary
 import ai.vishwakarma.labelling.domain.EmploymentType
+import ai.vishwakarma.labelling.domain.PiiChoice
 import ai.vishwakarma.labelling.domain.Relationship
 import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.domain.SourceClass
 import ai.vishwakarma.labelling.domain.SpeakerRole
 import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import java.security.MessageDigest
 import java.time.Instant
@@ -31,9 +35,10 @@ data class MaterialisedClaims(
 }
 
 /**
- * Turns the profile's declared groups **C** (candidacy / targeting) and **D** (declared narrative)
- * into provenance-tagged claims (SubjectProfile LLD §3.3, §3.4, §3.6), so a typed aspiration
- * reaches Stage 4 through the ordinary evidence path instead of by extraction luck.
+ * Turns the profile's declared groups **C** (candidacy / targeting), **D** (declared narrative) and
+ * **E** (contact / PII) into provenance-tagged claims (SubjectProfile LLD §3.3, §3.4, §3.6, §5.2),
+ * so a typed aspiration — or a contact the subject chose to share — reaches Stage 4 through the
+ * ordinary evidence path instead of by extraction luck.
  *
  * Run **at the Stage 1→2 seal** ([IntakeService.sealManifest]), before Stage 2 begins consuming, so
  * declared claims freeze with the corpus exactly like extracted ones and are present before the
@@ -51,14 +56,25 @@ data class MaterialisedClaims(
  *    is honest (the subject did state it); the origin is what makes the provenance auditable.
  * 4. **Deliberate `favorability`** — see [FAVORABILITY_NEUTRAL].
  *
+ * **Group E rides the *existing* O7 machinery, not a parallel path (§5.2).** A shareable contact
+ * becomes a `sensitive = true` declared claim **and** a companion [ClaimReview] row carrying
+ * `piiChoice = INCLUDE` — because the downstream gate keys the opt-in off the *review*, not the
+ * claim (`ClaimReviewService.approvedForDownstream:219`, `EvidencedClaim.piiOptedIn`). The
+ * per-field `shareable` flag *is* that opt-in (§5.3); the subject already consented at profile
+ * entry, so the materialiser writes the review the S6 screen would otherwise capture. A
+ * non-shareable contact is **never materialised**, so it stays under the trained REFUSE posture and
+ * never reaches the planner (F3). Un-sharing later removes the claim *and* its review on the next
+ * seal (content-derived ids, §5.4 — a training-time change, never a live toggle).
+ *
  * The whole pass is a no-op while `app.stage4.profile-enabled` is down, so a flag-off world stays
- * byte-for-byte pre-feature: no claims, no score change, nothing to roll back.
+ * byte-for-byte pre-feature: no claims, no reviews, no score change, nothing to roll back.
  */
 @Service
 class ProfileClaimMaterialiser(
     private val config: StageConfigService,
     private val profiles: SubjectProfileRepository,
     private val claims: ClaimRepository,
+    private val reviews: ClaimReviewRepository,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -81,7 +97,33 @@ class ProfileClaimMaterialiser(
         val created = desired.filterKeys { it !in existing }.values.toList()
         val stale = existing.filterKeys { it !in desired }.keys.toList()
         created.forEach { claims.save(it) }
-        stale.forEach { claims.delete(it) }
+
+        // A shareable contact rides in as a `sensitive` claim whose opt-in lives on the companion
+        // review, not the claim — the `INCLUDE` row the S6 PII screen would otherwise capture
+        // (§5.2/§5.3). Reconcile that opt-in off the *desired sensitive set*, NOT the created/kept
+        // split, and heal any that is absent. The claim and its review are two separate,
+        // non-transactional `.await()` writes under one seal (IntakeService.sealManifest:564, and
+        // the post-seal re-materialise at SubjectProfileService:318): if the claim lands but the
+        // review write fails, the retry seal finds the claim already in `existing`, classifies it
+        // `kept`, and a created-branch-only write would never re-run — leaving a `sensitive` claim
+        // with no `INCLUDE` forever, which ClaimReviewService.approvedForDownstream:219 silently
+        // drops, so the subject's explicitly-shared contact never reaches Stage 3/4. Keying the
+        // write on absence keeps it idempotent (no churn, no re-stamp on the happy path) and never
+        // clobbers a later operator decision on the same review. Only group-E claims are sensitive;
+        // C/D claims never take one, so a subject with no shared contact adds no review read.
+        val sensitiveDesired = desired.values.filter { it.sensitive }
+        if (sensitiveDesired.isNotEmpty()) {
+            val reviewed = reviews.findBySubject(subjectId).mapTo(mutableSetOf()) { it.claimId }
+            sensitiveDesired.forEach { c -> if (c.id !in reviewed) reviews.save(includeReview(c)) }
+        }
+
+        stale.forEach { id ->
+            claims.delete(id)
+            // Drop any companion opt-in with the claim it belonged to (a no-op for the C/D claims
+            // that never had one), so an un-shared or reworded contact leaves no dangling `INCLUDE`
+            // that a later same-id claim could silently inherit (§5.4).
+            reviews.delete(id)
+        }
 
         val outcome =
             MaterialisedClaims(
@@ -181,6 +223,27 @@ class ProfileClaimMaterialiser(
                     "Prefers not to discuss ${it.trimEnd('.').lowercase()}.",
                 )
         }
+
+        // ---- E. Contact / PII → sensitive IDENTITY, opted-in via the review (§5.2) -------------
+        // Only a **shareable** contact is materialised: it becomes a `sensitive` claim that the
+        // planner voices verbatim on Row 8 (`Stage4VoicingPlanner.claimRow`), gated by the
+        // companion
+        // INCLUDE review the reconcile pass writes above. A private contact is skipped entirely, so
+        // it never enters the ledger, never reaches the planner (F3), and stays under the trained
+        // REFUSE posture — the corpus-invariant B2 shape (PRECEDENCE I2). Home address, DOB and
+        // government ID are not [ContactKind]s at all: they map to the always-REFUSE O7 safety bar.
+        profile.contact
+            .filter { it.shareable }
+            .forEach {
+                out +=
+                    claim(
+                        subjectId,
+                        ClaimType.IDENTITY,
+                        DeclaredType.contactType(it.kind),
+                        contactText(it.kind, it.value),
+                        sensitive = true,
+                    )
+            }
         return out
     }
 
@@ -196,6 +259,7 @@ class ProfileClaimMaterialiser(
         claimType: ClaimType,
         declaredType: String,
         text: String,
+        sensitive: Boolean = false,
     ): Claim =
         Claim(
             id = idOf(subjectId, declaredType, text),
@@ -214,7 +278,10 @@ class ProfileClaimMaterialiser(
             // eligibility, not the tier (§3.5, OD-1).
             authenticityTier = AuthenticityTier.LOW,
             claimBasis = ClaimBasis.STATED,
-            sensitive = false,
+            // Group E only: a shared contact is PII, so it carries the `sensitive` marker the O7
+            // gate keys on — un-opted it can never reach the planner (F3), opted-in it is voiced
+            // verbatim on Row 8 (§5.2). C/D pass false: an aspiration is not PII.
+            sensitive = sensitive,
             favorability = FAVORABILITY_NEUTRAL,
             origin = ClaimOrigin.SUBJECT_DECLARED,
             declaredType = declaredType,
@@ -223,9 +290,52 @@ class ProfileClaimMaterialiser(
             createdAt = Instant.now(),
         )
 
+    /**
+     * The companion review that carries a shared contact's opt-in. The downstream gate reads the
+     * PII choice off the *review*, not the claim (`ClaimReviewService.approvedForDownstream:219`),
+     * so a `sensitive` claim with no `INCLUDE` review is dropped exactly like a held one. The
+     * per-field `shareable` flag was the subject's own consent at profile entry (§5.3), so this
+     * stands in for the S6 screen the subject never had to visit for a canonical field.
+     */
+    private fun includeReview(claim: Claim): ClaimReview =
+        ClaimReview(
+            claimId = claim.id,
+            subjectId = claim.subjectId,
+            piiChoice = PiiChoice.INCLUDE,
+            reviewedBy = SHAREABLE_OPT_IN_ACTOR,
+            reviewedAt = Instant.now(),
+        )
+
+    /**
+     * How a declared contact is spoken — a short, labelled line the Row-8 voice can read verbatim
+     * ("Email: a@b.com."). The value is carried unchanged (it is the subject's own detail); only a
+     * human-readable kind label is added.
+     */
+    private fun contactText(kind: ContactKind, value: String): String {
+        val label =
+            when (kind) {
+                ContactKind.NAME -> "Preferred name"
+                ContactKind.EMAIL -> "Email"
+                ContactKind.LINKEDIN -> "LinkedIn"
+                ContactKind.PORTFOLIO -> "Portfolio"
+                ContactKind.PHONE -> "Phone"
+            }
+        val trimmed = value.trim()
+        val period = if (trimmed.endsWith(".")) "" else "."
+        return "$label: $trimmed$period"
+    }
+
     private companion object {
         /** `declared:<subjectId>` — the §3.3 synthetic asset sentinel. */
         const val DECLARED_ASSET_PREFIX = "declared:"
+
+        /**
+         * The `reviewedBy` stamped on a contact's auto opt-in — a sentinel, not a person, because
+         * no operator clicked approve: the consent was the subject's own per-field `shareable` flag
+         * at profile entry (§5.3). Making it legible keeps a shared contact's opt-in auditable as
+         * derived-from-the-flag rather than passed off as a human PII-review decision.
+         */
+        const val SHAREABLE_OPT_IN_ACTOR = "profile:shareable-contact"
 
         /**
          * Every declared claim is **neutral**, and that is a safety decision, not a default.

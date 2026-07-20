@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.domain
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -166,5 +167,70 @@ class SubjectProfileTest {
             "my startup's cap table",
             resolvedWith(DoNotDiscussApproval.APPROVED).approvedDoNotDiscussCustom,
         )
+    }
+
+    // ---- E contact / PII (§2.1, §5) ----------------------------------------------------------
+
+    @Test
+    fun `resolve surfaces contact fields trimmed, keeping both shared and private`() {
+        val resolved =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    contact =
+                        listOf(
+                            ContactField(
+                                ContactKind.EMAIL,
+                                "  asha@example.com ",
+                                shareable = true
+                            ),
+                            ContactField(ContactKind.PHONE, "+91 555 0100"),
+                            // A blank-valued field is dropped, never surfaced.
+                            ContactField(ContactKind.LINKEDIN, "   "),
+                        )
+                )
+            )
+        assertEquals(2, resolved.contact.size)
+        assertEquals("asha@example.com", resolved.contact[0].value)
+        assertTrue(resolved.contact[0].shareable)
+        assertEquals(ContactKind.PHONE, resolved.contact[1].kind)
+        assertFalse(resolved.contact[1].shareable)
+    }
+
+    @Test
+    fun `contact is out of the A-or-B hash and a shared contact drives declaredBlank false`() {
+        // Contact reaches Stage 4 as a claim, never a prompt — so, like C/D, it must not churn the
+        // A/B profileHash (§12.8.2 / §5).
+        val withContact =
+            worked.copy(
+                contact =
+                    listOf(ContactField(ContactKind.EMAIL, "asha@example.com", shareable = true))
+            )
+        assertEquals(
+            SubjectProfileDefaults.resolve(worked).hash(),
+            SubjectProfileDefaults.resolve(withContact).hash(),
+        )
+        // A shareable contact materialises, so it is NOT declaredBlank; a private-only one writes
+        // no
+        // claim, so it stays declaredBlank (§5.2).
+        val shared =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    contact =
+                        listOf(
+                            ContactField(ContactKind.EMAIL, "asha@example.com", shareable = true)
+                        ),
+                )
+            )
+        val privateOnly =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    contact = listOf(ContactField(ContactKind.EMAIL, "asha@example.com")),
+                )
+            )
+        assertFalse(shared.declaredBlank)
+        assertTrue(privateOnly.declaredBlank)
     }
 }

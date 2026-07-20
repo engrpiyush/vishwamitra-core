@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.ContactField
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
 import ai.vishwakarma.labelling.domain.DoNotDiscussCustom
 import ai.vishwakarma.labelling.domain.DoNotDiscussVocabulary
@@ -64,6 +66,25 @@ data class SubjectProfileUpdateRequest(
      * here.
      */
     val doNotDiscussCustom: String? = null,
+    /**
+     * E — the declared contact fields (§5). Null = the surface did not offer them (keep stored); a
+     * present list is the whole contact intent, blank-valued entries dropped. Both form surfaces
+     * render every kind, so they always pass a (possibly empty) list — clearing a field's box
+     * clears the contact, exactly like the C/D lists.
+     */
+    val contact: List<ContactFieldInput>? = null,
+)
+
+/**
+ * One contact detail as a surface posts it (§7.1/§5.3): the [kind] name, the raw [value], and the
+ * per-field [shareable] opt-in the "private by default" radio captures. Validated and parsed into a
+ * [ai.vishwakarma.labelling.domain.ContactField] by [SubjectProfileService.put] — a bad kind or a
+ * value carrying prompt-injection shapes fails the whole save, never reaches the ledger.
+ */
+data class ContactFieldInput(
+    val kind: String,
+    val value: String? = null,
+    val shareable: Boolean = false,
 )
 
 /** What the profile form reads: the sparse stored doc beside its full materialization. */
@@ -202,6 +223,12 @@ class SubjectProfileService(
                         ?.filter { it.isNotBlank() } ?: previous?.doNotDiscussChecks.orEmpty(),
                 doNotDiscussCustom =
                     customEntry(request.doNotDiscussCustom, previous?.doNotDiscussCustom, errors),
+                // E: absent ⇒ keep stored; a present list is the whole contact intent (both forms
+                // render every kind). Blank-valued rows are dropped, so clearing a box clears the
+                // contact — and un-sharing removes the claim on the next seal (§5.2/§5.4).
+                contact =
+                    request.contact?.let { validateContacts(it, errors) }
+                        ?: previous?.contact.orEmpty(),
             )
         if (errors.isNotEmpty()) {
             return DomainError.Invalid("Invalid profile values — " + errors.joinToString("; "))
@@ -364,6 +391,32 @@ class SubjectProfileService(
     }
 
     /**
+     * The declared contact list (§5). Each input's kind must be a known [ContactKind] and its value
+     * a single line of contact punctuation — a blank value is a **cleared** field (dropped), a
+     * malformed kind or a value carrying a newline / brace / tag character is a hard error, exactly
+     * like the C/D lines. The value is carried verbatim into a Row-8 claim, so it is bounded the
+     * same way [declaredLine] is, plus the `@ _ ~ = # %` an email / URL / handle needs. `shareable`
+     * rides straight through — it is the subject's own per-field O7 opt-in (§5.3).
+     */
+    private fun validateContacts(
+        raw: List<ContactFieldInput>,
+        errors: MutableList<String>,
+    ): List<ContactField> =
+        raw.mapNotNull { input ->
+            val value = input.value?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val kind = ContactKind.fromOrNull(input.kind)
+            if (kind == null) {
+                errors += "contact.kind: '${input.kind.take(40)}'"
+                return@mapNotNull null
+            }
+            if (value.length > CONTACT_VALUE_MAX || !CONTACT_VALUE.matches(value)) {
+                errors += "contact.${kind.name.lowercase()}: '${value.take(60)}'"
+                return@mapNotNull null
+            }
+            ContactField(kind = kind, value = value, shareable = input.shareable)
+        }
+
+    /**
      * Resolve the bespoke do-not-discuss entry against what is stored. Null request ⇒ keep; blank ⇒
      * clear; unchanged text ⇒ keep the existing approval; **changed text ⇒ back to PENDING**, since
      * an approval is a verdict on one specific string and must never ride along to another.
@@ -436,5 +489,17 @@ class SubjectProfileService(
          * those are the shapes prompt text and markup are made of, not the shapes a career goal is.
          */
         val DECLARED_LINE = Regex("""[\p{L}\p{N}][\p{L}\p{N} .,;:!?'"&()/+—–-]*""")
+
+        /** One contact detail — an email / URL / handle / phone / name, comfortably long. */
+        const val CONTACT_VALUE_MAX = 200
+
+        /**
+         * A single line of contact text: opens on a letter, digit or `+` (a phone's country code),
+         * then the punctuation an email / URL / handle / phone actually uses — `@ _ ~ = # %` on top
+         * of the [DECLARED_LINE] set. Braces, angle brackets, quotes and newlines stay out: the
+         * value is spoken verbatim on Row 8, so it must never carry a `{{token}}`, a tag or a line
+         * break (§5.2).
+         */
+        val CONTACT_VALUE = Regex("""[\p{L}\p{N}+][\p{L}\p{N} .,:;'&()/+@_~=#%?!-]*""")
     }
 }

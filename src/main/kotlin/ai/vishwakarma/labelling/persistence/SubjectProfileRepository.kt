@@ -1,5 +1,7 @@
 package ai.vishwakarma.labelling.persistence
 
+import ai.vishwakarma.labelling.domain.ContactField
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
 import ai.vishwakarma.labelling.domain.DoNotDiscussCustom
 import ai.vishwakarma.labelling.domain.EmploymentType
@@ -65,6 +67,15 @@ class SubjectProfileRepository(private val db: Firestore) {
                         "at" to it.at?.toTimestamp(),
                     )
                 },
+            // ---- E (declared PII) ----
+            "contact" to
+                contact.map {
+                    mapOf(
+                        "kind" to it.kind.name,
+                        "value" to it.value,
+                        "shareable" to it.shareable,
+                    )
+                },
             "updatedBy" to updatedBy,
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
             "profileHash" to profileHash,
@@ -87,6 +98,7 @@ class SubjectProfileRepository(private val db: Firestore) {
             statedPreferences = strings("statedPreferences"),
             doNotDiscussChecks = strings("doNotDiscussChecks"),
             doNotDiscussCustom = doNotDiscussCustom(),
+            contact = contact(),
             updatedBy = getString("updatedBy"),
             updatedAt = instant("updatedAt"),
             profileHash = getString("profileHash"),
@@ -115,6 +127,28 @@ class SubjectProfileRepository(private val db: Firestore) {
                     Instant.ofEpochSecond(it.seconds, it.nanos.toLong())
                 },
         )
+    }
+
+    /**
+     * Tolerant read of the E contact list: an element missing a kind or a value is dropped rather
+     * than poisoning the whole document, and `shareable` defaults **false** (private) when absent —
+     * so a malformed row can only ever fail *closed*, never silently opt a contact into disclosure.
+     */
+    private fun DocumentSnapshot.contact(): List<ContactField> {
+        val raw = get("contact") as? List<*> ?: return emptyList()
+        return raw.mapNotNull { element ->
+            @Suppress("UNCHECKED_CAST")
+            val map = element as? Map<String, Any?> ?: return@mapNotNull null
+            val kind = ContactKind.fromOrNull(map["kind"] as? String) ?: return@mapNotNull null
+            val value =
+                (map["value"] as? String)?.trim()?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+            ContactField(
+                kind = kind,
+                value = value,
+                shareable = (map["shareable"] as? Boolean) ?: false
+            )
+        }
     }
 
     /** Tolerant read: an unparseable date is treated as absent, never a poisoned document. */

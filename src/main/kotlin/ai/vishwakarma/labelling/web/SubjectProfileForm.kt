@@ -1,8 +1,11 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.ContactField
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.DoNotDiscussVocabulary
 import ai.vishwakarma.labelling.domain.EmploymentType
 import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
+import ai.vishwakarma.labelling.service.ContactFieldInput
 import ai.vishwakarma.labelling.service.DomainError
 import java.time.ZoneId
 import java.util.Currency
@@ -10,6 +13,14 @@ import java.util.Locale
 
 /** One `<option>` of a profile dropdown: the stored value beside the label a human reads. */
 data class ProfileOption(val value: String, val label: String)
+
+/**
+ * One contact row of the E form (§5.3): the [ContactKind], its subject-safe [label], and a
+ * placeholder. The form renders one row per kind so a subject can fill any subset, each defaulting
+ * to **private** — the per-field `shareable` radio is the only thing that opts a contact into being
+ * spoken.
+ */
+data class ContactKindOption(val kind: ContactKind, val label: String, val placeholder: String)
 
 /** One line of the read-only profile summary (post-seal / post-submit rendering). */
 data class ProfileSummaryRow(val label: String, val value: String)
@@ -128,6 +139,52 @@ object SubjectProfileForm {
      * carries the stored `key` and the subject-facing `label`.
      */
     val doNotDiscussTopics: List<DoNotDiscussVocabulary.Topic> = DoNotDiscussVocabulary.topics
+
+    /**
+     * The E contact rows (VA-154), one per [ContactKind], in a stable subject-friendly order. Home
+     * address, DOB and government ID are deliberately absent — they have no shareable form and map
+     * to the always-REFUSE O7 safety bar ([ContactKind] doc).
+     */
+    val contactKinds: List<ContactKindOption> =
+        listOf(
+            ContactKindOption(ContactKind.NAME, "Preferred name", "How you'd like to be addressed"),
+            ContactKindOption(ContactKind.EMAIL, "Email", "you@example.com"),
+            ContactKindOption(ContactKind.LINKEDIN, "LinkedIn", "linkedin.com/in/you"),
+            ContactKindOption(
+                ContactKind.PORTFOLIO,
+                "Portfolio or website",
+                "yoursite.dev",
+            ),
+            ContactKindOption(ContactKind.PHONE, "Phone", "+1 555 0100"),
+        )
+
+    /**
+     * The stored contacts keyed by [ContactKind.name] — the template looks each kind up as it walks
+     * [contactKinds] to prefill the value box and pre-select the private/shared radio. Keying by
+     * the enum name keeps the Thymeleaf lookup a plain map get.
+     */
+    fun contactByKind(contact: List<ContactField>): Map<String, ContactField> =
+        contact.associateBy { it.kind.name }
+
+    /**
+     * Read the E form back into [ContactFieldInput]s, one per [ContactKind], from a param lookup —
+     * `contactValue_<KIND>` for the value and `contactShare_<KIND>` for the private/shared radio
+     * (`INCLUDE` ⇒ shareable, anything else ⇒ private). Servlet-free (the caller passes
+     * `request::getParameter`) so both controllers share one reader and it is unit-testable. The
+     * service drops blank-valued rows, so a subject may fill any subset; every field defaults to
+     * **private** because an absent radio is not `INCLUDE`.
+     */
+    fun contactInputs(param: (String) -> String?): List<ContactFieldInput> =
+        ContactKind.entries.map { kind ->
+            ContactFieldInput(
+                kind = kind.name,
+                value = param("contactValue_${kind.name}"),
+                shareable = param("contactShare_${kind.name}") == CONTACT_SHARE_INCLUDE,
+            )
+        }
+
+    /** The `contactShare_<KIND>` radio value that opts a contact in — reused from `pii.html`. */
+    const val CONTACT_SHARE_INCLUDE = "INCLUDE"
 
     /**
      * The read-only rendering of a stored profile — what both surfaces show once the manifest is

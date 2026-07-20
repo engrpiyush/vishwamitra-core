@@ -166,8 +166,9 @@ class IntakeController(
         model.addAttribute("stage4Ready", subjectScores.find(id) != null)
         model.addAttribute("personaStored", personas.findBySubject(id) != null)
         // VA-141: the seal-gated A/B profile panel (profile LLD §7.2) and its catalogs, passed the
-        // same way as the dropdown lists above.
-        model.addAttribute("profile", profiles.view(id).fold({ null }, { it }))
+        // same way as the dropdown lists above. Read the view once and reuse it for the E prefill.
+        val profileView = profiles.view(id).fold({ null }, { it })
+        model.addAttribute("profile", profileView)
         model.addAttribute("countries", SubjectProfileForm.countries)
         model.addAttribute("currencies", SubjectProfileForm.currencies)
         model.addAttribute("languages", SubjectProfileForm.languages)
@@ -176,6 +177,13 @@ class IntakeController(
         model.addAttribute("employmentTypes", SubjectProfileForm.employmentTypes)
         model.addAttribute("seniorities", SubjectProfileForm.seniorities)
         model.addAttribute("dndTopics", SubjectProfileForm.doNotDiscussTopics)
+        // VA-154: the E contact catalog + the stored contacts keyed by kind, so the panel prefills
+        // each row and pre-selects its private/shared radio.
+        model.addAttribute("contactKinds", SubjectProfileForm.contactKinds)
+        model.addAttribute(
+            "contactByKind",
+            SubjectProfileForm.contactByKind(profileView?.stored?.contact ?: emptyList()),
+        )
         return "intake/detail"
     }
 
@@ -258,6 +266,10 @@ class IntakeController(
         val aspirations = request.getParameterValues("aspirations")?.toList()
         val statedPreferences = request.getParameterValues("statedPreferences")?.toList()
         val doNotDiscussChecks = request.getParameterValues("doNotDiscussChecks")?.toList()
+        // VA-154: the E contact rows, one per kind, read `contactValue_<KIND>` /
+        // `contactShare_<KIND>`.
+        // The panel renders every kind, so this is the whole contact intent (blank rows clear).
+        val contact = SubjectProfileForm.contactInputs(request::getParameter)
         profiles
             .put(
                 id,
@@ -283,6 +295,7 @@ class IntakeController(
                     statedPreferences = statedPreferences ?: emptyList(),
                     doNotDiscussChecks = doNotDiscussChecks ?: emptyList(),
                     doNotDiscussCustom = doNotDiscussCustom,
+                    contact = contact,
                 ),
                 actor(),
             )

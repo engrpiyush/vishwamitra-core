@@ -16,6 +16,7 @@ import ai.vishwakarma.labelling.gcs.SignedUpload
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AssetRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -130,6 +131,7 @@ class IntakeServiceTest {
                 liveConfig(props),
                 mock(SubjectProfileRepository::class.java),
                 mock(ClaimRepository::class.java),
+                mock(ClaimReviewRepository::class.java),
             ) {
             val calls = mutableListOf<String>()
 

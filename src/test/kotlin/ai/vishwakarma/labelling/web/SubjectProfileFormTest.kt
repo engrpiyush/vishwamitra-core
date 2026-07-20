@@ -1,6 +1,8 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.ContactField
+import ai.vishwakarma.labelling.domain.ContactKind
 import ai.vishwakarma.labelling.domain.EmploymentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Subject
@@ -8,6 +10,7 @@ import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.ClaimRepository
+import ai.vishwakarma.labelling.persistence.ClaimReviewRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
@@ -67,6 +70,7 @@ class SubjectProfileFormTest {
                 liveConfig(AppProperties(stage4 = AppProperties.Stage4(profileEnabled = true))),
                 profiles,
                 ClaimRepository(mock(Firestore::class.java)),
+                ClaimReviewRepository(mock(Firestore::class.java)),
             ),
         )
 
@@ -131,6 +135,51 @@ class SubjectProfileFormTest {
         // The blank "prefer not to say" choice is the template's, never a catalog row — a blank
         // value must mean *unanswered*, and the service reads it that way (§2.1).
         assertTrue(SubjectProfileForm.countries.none { it.value.isEmpty() })
+    }
+
+    @Test
+    fun `contactInputs reads one input per kind, defaulting every field to private`() {
+        // Only EMAIL is shared; PHONE has a value but no radio; the rest are absent.
+        val params =
+            mapOf(
+                "contactValue_EMAIL" to "asha@example.com",
+                "contactShare_EMAIL" to "INCLUDE",
+                "contactValue_PHONE" to "+91 555 0100",
+            )
+        val inputs = SubjectProfileForm.contactInputs { params[it] }
+
+        // One row per kind, in the catalog's stable order.
+        assertEquals(
+            ContactKind.entries.map { it.name },
+            inputs.map { it.kind },
+        )
+        val email = inputs.first { it.kind == "EMAIL" }
+        assertEquals("asha@example.com", email.value)
+        assertTrue(email.shareable)
+        // A value with no INCLUDE radio stays private — the safe default.
+        val phone = inputs.first { it.kind == "PHONE" }
+        assertEquals("+91 555 0100", phone.value)
+        assertFalse(phone.shareable)
+        // An absent field is neither valued nor shared.
+        assertTrue(inputs.first { it.kind == "LINKEDIN" }.value == null)
+        assertFalse(inputs.first { it.kind == "LINKEDIN" }.shareable)
+    }
+
+    @Test
+    fun `contactByKind keys the stored contacts by kind name for template prefill`() {
+        val map =
+            SubjectProfileForm.contactByKind(
+                listOf(
+                    ContactField(ContactKind.EMAIL, "asha@example.com", shareable = true),
+                    ContactField(ContactKind.PHONE, "+91 555 0100"),
+                )
+            )
+        assertEquals("asha@example.com", map["EMAIL"]?.value)
+        assertTrue(map["EMAIL"]?.shareable == true)
+        assertFalse(map["PHONE"]?.shareable == true)
+        assertTrue(map["LINKEDIN"] == null)
+        // The catalog offers exactly the five kinds, none of them the always-REFUSE ones.
+        assertEquals(5, SubjectProfileForm.contactKinds.size)
     }
 
     @Test
