@@ -38,6 +38,13 @@ data class Stage4GenerationRequest(
     val promptVersion: Int,
     /** Short hash of the exact instruction block — the stamp + cache-key ingredient (§9.3). */
     val promptHash: String,
+    /**
+     * The SubjectProfile `{{locale}}` label frozen at submit (profile LLD §4.3). Blank ⇒ the
+     * context clause is dropped and the drafter infers the market from the evidence (OD-6).
+     */
+    val locale: String = "",
+    /** The frozen `{{knowledge_as_of}}` date (ISO-8601 text); blank ⇒ that clause is dropped. */
+    val knowledgeAsOf: String = "",
 )
 
 /**
@@ -57,6 +64,8 @@ interface Stage4ConversationDrafter {
  * implementations and unit-pinned like the planner it follows.
  */
 object Stage4Generation {
+
+    private val log = LoggerFactory.getLogger(Stage4Generation::class.java)
 
     /**
      * Stamp hash for META examples, which render from code templates and never see a prompt row —
@@ -130,10 +139,98 @@ object Stage4Generation {
         """
             .trimIndent()
 
+    /** The `{{locale}}` / `{{knowledge_as_of}}` tokens — the only substitutions GENERATE makes. */
+    const val LOCALE_TOKEN = "{{locale}}"
+    const val KNOWLEDGE_AS_OF_TOKEN = "{{knowledge_as_of}}"
+
     /**
-     * The §9.3 generation prompt: fixed card + category row + plan constraints + style + evidence.
+     * The two halves of the dedicated context line (profile LLD §4.4), emitted **independently** —
+     * each only when its own scalar is non-blank, so the line never depends on the clause-drop
+     * heuristic to tidy itself up. (They were one string once: the freshness half's internal
+     * semicolon reads as a sentence break, so dropping a blank as-of left the orphan "do not assert
+     * developments after that date." pointing at a date that was no longer in the prompt.)
+     *
+     * Written *with* the tokens: [substituteContext] stays the single chokepoint that resolves
+     * them, here and anywhere an operator placed them in a category row or a NotebookTemplate.
      */
-    fun buildPrompt(request: Stage4GenerationRequest): String = buildString {
+    private const val LOCALE_CLAUSE = "Context: the subject operates in $LOCALE_TOKEN."
+
+    private const val FRESHNESS_CLAUSE =
+        "Answer as of $KNOWLEDGE_AS_OF_TOKEN — do not assert developments after that date."
+
+    /**
+     * Resolve the two generation-context tokens over the fully assembled prompt (profile LLD §4.1).
+     * A blank value **drops the sentence carrying its token** rather than leaving a hole — an empty
+     * locale must not become "the subject operates in ." A text with neither token is returned
+     * unchanged, which is what keeps profile-less subjects byte-for-byte legacy.
+     *
+     * Deliberately generate-time only: substituting at PLAN would perturb the `VoicingPlan.planId`
+     * content hash and defeat the generation cache (§4.1).
+     */
+    fun substituteContext(text: String, locale: String, knowledgeAsOf: String): String {
+        val withLocale =
+            if (locale.isNotBlank()) text.replace(LOCALE_TOKEN, locale)
+            else dropSentencesWith(text, LOCALE_TOKEN)
+        return if (knowledgeAsOf.isNotBlank())
+            withLocale.replace(KNOWLEDGE_AS_OF_TOKEN, knowledgeAsOf)
+        else dropSentencesWith(withLocale, KNOWLEDGE_AS_OF_TOKEN)
+    }
+
+    /**
+     * Drop every sentence mentioning [token]; a line left empty by the drop goes with it.
+     *
+     * This only ever runs over text *we did not write* — a category prompt row or a
+     * NotebookTemplate that an operator seeded with a token (the prompt's own context clauses are
+     * emitted conditionally and never need tidying). Two details earn their keep there:
+     * - the line's leading bullet/indent is preserved when the token sat in its **first** sentence
+     *   but later sentences survive, so `- Expected behaviour: mention {{locale}}. Keep it short.`
+     *   stays a bullet instead of collapsing into loose prose;
+     * - a line removed *wholesale* is logged, because it takes an operator's instruction out of the
+     *   prompt while the template's promptHash is unchanged — otherwise a silent deletion.
+     */
+    private fun dropSentencesWith(text: String, token: String): String {
+        if (!text.contains(token)) return text
+        return text
+            .lines()
+            .mapNotNull { line ->
+                if (!line.contains(token)) return@mapNotNull line
+                val sentences = line.split(SENTENCE_BREAK)
+                val kept = sentences.filterNot { it.contains(token) }
+                if (kept.isEmpty()) {
+                    log.warn(
+                        "Generation prompt: dropped the whole line \"{}\" — every sentence on it " +
+                            "carries {} and the run froze no value for it",
+                        line.trim().take(120),
+                        token,
+                    )
+                    return@mapNotNull null
+                }
+                // The prefix belongs to the line, not to its first sentence — but re-attach it only
+                // when that first sentence is the one being dropped, or it would double up.
+                val prefix =
+                    if (kept.first() === sentences.first()) ""
+                    else LINE_PREFIX.find(line)?.value.orEmpty()
+                (prefix + kept.joinToString(" ").trim()).ifBlank { null }
+            }
+            .joinToString("\n")
+    }
+
+    /** Sentence boundary for the clause drop: terminator + following space, terminator kept. */
+    private val SENTENCE_BREAK = Regex("(?<=[.!?])\\s+")
+
+    /**
+     * A line's leading indent + list marker (`- `, `* `, `1. `), preserved across a clause drop.
+     */
+    private val LINE_PREFIX = Regex("^\\s*(?:[-*•]\\s+|\\d+[.)]\\s+)?")
+
+    /**
+     * The §9.3 generation prompt: fixed card + category row + plan constraints + style + evidence,
+     * with the profile's locale/freshness context resolved in one post-assembly pass.
+     */
+    fun buildPrompt(request: Stage4GenerationRequest): String =
+        substituteContext(assemblePrompt(request), request.locale, request.knowledgeAsOf)
+
+    private fun assemblePrompt(request: Stage4GenerationRequest): String = buildString {
         appendLine(
             "You are ${request.persona.advocateName}, an AI advocate speaking about " +
                 "${request.subjectName} to a guest, strictly from the evidence below."
@@ -142,6 +239,11 @@ object Stage4Generation {
         appendLine("Fixed rules (non-negotiable):")
         FIXED_CARD.forEach { appendLine("- $it") }
         appendLine()
+        if (request.locale.isNotBlank() || request.knowledgeAsOf.isNotBlank()) {
+            if (request.locale.isNotBlank()) appendLine(LOCALE_CLAUSE)
+            if (request.knowledgeAsOf.isNotBlank()) appendLine(FRESHNESS_CLAUSE)
+            appendLine()
+        }
         appendLine("Task (${request.plan.category.name.lowercase()} category):")
         appendLine(request.promptInstructions)
         appendLine()

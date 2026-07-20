@@ -578,6 +578,12 @@ data class AppProperties(
         /** Dev/test: offline generator + judge doubles over the Stage 3 dry-run corpus (VA-62). */
         val dryRun: Boolean = false,
         /**
+         * SubjectProfile surface (profile LLD §8): profile writes and the `{{locale}}` /
+         * `{{knowledge_as_of}}` injection. Off ⇒ the profile resolves blank and every prompt is
+         * byte-for-byte what it is today. Defaults off; the dev profile turns it on.
+         */
+        val profileEnabled: Boolean = false,
+        /**
          * VA-62 scripted-judge verdict distribution (dry-run only): fraction of plans judged FAIL
          * and BORDERLINE respectively (deterministic per planId); the rest judge PASS.
          */

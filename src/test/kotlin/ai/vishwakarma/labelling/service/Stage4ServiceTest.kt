@@ -29,6 +29,7 @@ import ai.vishwakarma.labelling.domain.Stage4RunStatus
 import ai.vishwakarma.labelling.domain.Stage4Stamp
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectPersona
+import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.domain.TemplateCategory
 import ai.vishwakarma.labelling.domain.TemplateCategoryGroup
 import ai.vishwakarma.labelling.domain.Turn
@@ -52,6 +53,7 @@ import ai.vishwakarma.labelling.persistence.Stage4RunRepository
 import ai.vishwakarma.labelling.persistence.SubjectFactRecord
 import ai.vishwakarma.labelling.persistence.SubjectFactRepository
 import ai.vishwakarma.labelling.persistence.SubjectPersonaRepository
+import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.SubjectScoreRecord
 import ai.vishwakarma.labelling.persistence.SubjectScoreRepository
@@ -76,6 +78,7 @@ import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -150,6 +153,16 @@ private class FakeS4ReviewRepo : ClaimReviewRepository(mock(Firestore::class.jav
 
 private class FakeS4ManifestRepo : IntakeManifestRepository(mock(Firestore::class.java)) {
     override fun findBySubject(subjectId: String): IntakeManifest? = null
+}
+
+private class FakeS4ProfileRepo : SubjectProfileRepository(mock(Firestore::class.java)) {
+    val store = mutableMapOf<String, SubjectProfile>()
+
+    override fun findBySubject(subjectId: String): SubjectProfile? = store[subjectId]
+
+    override fun save(profile: SubjectProfile) {
+        store[profile.subjectId] = profile
+    }
 }
 
 private class FakeS4JobRepo : Stage2JobRepository(mock(Firestore::class.java)) {
@@ -380,6 +393,7 @@ class Stage4ServiceTest {
     private val exportRepo = FakeS4ExportRepo()
     private val exporter = FakeS4Exporter()
     private val templateRepo = FakeS4TemplateRepo()
+    private val subjectProfiles = FakeS4ProfileRepo()
     private val taxonomyRepo = FakeS4TaxonomyRepo()
 
     /** The hash SELECT freezes for a subject with nothing stored (defaults-only persona). */
@@ -442,6 +456,13 @@ class Stage4ServiceTest {
             sftExamples = sfts,
             dpoPairs = dpos,
             notebookTemplates = NotebookTemplateService(templateRepo, taxonomyRepo),
+            subjectProfiles =
+                SubjectProfileService(
+                    liveConfig(props),
+                    subjectProfiles,
+                    subjects,
+                    FakeS4ManifestRepo(),
+                ),
             config = liveConfig(props),
         )
     }
@@ -1690,5 +1711,225 @@ class Stage4ServiceTest {
 
         assertIs<DomainError.Conflict>(dpoService(props).generate(run.id, "op").err())
         assertTrue(dpos.store.isEmpty())
+    }
+
+    // ---- SubjectProfile A/B: freeze, injection, drift (profile LLD §4.3, §6.4) --------
+
+    private val profileProps = AppProperties(stage4 = AppProperties.Stage4(profileEnabled = true))
+
+    /** The §4.4 worked example's A block. */
+    private fun seedProfile(subjectId: String = "s1", currency: String = "INR") {
+        subjectProfiles.store[subjectId] =
+            SubjectProfile(
+                subjectId = subjectId,
+                country = "IN",
+                marketRegion = "IN",
+                currency = currency,
+                primaryLanguage = "en-IN",
+            )
+    }
+
+    /** Pin the publish date so the knowledge-as-of fallback is deterministic. */
+    private fun publishedOn(date: String, subjectId: String = "s1") {
+        scores.save(
+            scores.store.getValue(subjectId).copy(publishedAt = Instant.parse("${date}T10:00:00Z"))
+        )
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun snapshot(run: Stage4Run): Map<String, Any?> =
+        Json.parse(assertNotNull(run.paramsSnapshot)) as Map<String, Any?>
+
+    @Test
+    fun `submit freezes the profile locale, the publish-date fallback and the profile hash`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        seedProfile()
+        val svc = service(profileProps)
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+
+        val snap = snapshot(run)
+        assertEquals("the India market (INR), primary language en-IN", snap["locale"])
+        assertEquals("2026-07-15", snap["knowledgeAsOf"])
+        assertNotNull(run.profileHash)
+    }
+
+    @Test
+    fun `knowledge-as-of resolves operator override then profile then publish date`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        seedProfile()
+        val svc = service(profileProps)
+
+        val override =
+            svc.submit("s1", Stage4SubmitRequest(knowledgeAsOf = "2026-06-01"), "op").expectRight()
+        assertEquals("2026-06-01", snapshot(override)["knowledgeAsOf"])
+        // The override is a run param — the profile is untouched.
+        assertNull(subjectProfiles.store.getValue("s1").knowledgeAsOf)
+
+        subjectProfiles.store["s1"] =
+            subjectProfiles.store.getValue("s1").copy(knowledgeAsOf = LocalDate.parse("2026-05-01"))
+        runs.store.clear()
+        val fromProfile = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        assertEquals("2026-05-01", snapshot(fromProfile)["knowledgeAsOf"])
+    }
+
+    @Test
+    fun `an unparseable operator override is rejected at submit`() {
+        seedPublished()
+        val svc = service(profileProps)
+
+        val err = svc.submit("s1", Stage4SubmitRequest(knowledgeAsOf = "15-07-2026"), "op").err()
+
+        assertIs<DomainError.Invalid>(err)
+        assertTrue(runs.store.isEmpty())
+    }
+
+    @Test
+    fun `a subject with no profile freezes blank scalars and stamps no profile hash`() {
+        seedPublished()
+        // The subject IS published — the publish date must NOT leak in as a knowledge_as_of
+        // fallback for a profile-less run, or every legacy subject silently gains a context line.
+        publishedOn("2026-07-15")
+        val svc = service(profileProps)
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+
+        assertNull(run.profileHash)
+        assertEquals("", snapshot(run)["locale"])
+        assertEquals("", snapshot(run)["knowledgeAsOf"])
+        assertTrue(drafter.requests.isNotEmpty())
+        assertTrue(drafter.requests.all { it.locale.isBlank() && it.knowledgeAsOf.isBlank() })
+        assertTrue(sfts.store.values.all { it.stamp?.profileHash == null })
+        // Byte-for-byte legacy: the whole prompt equals the same request rendered with both
+        // scalars explicitly blank — no context block, no stray clause, nothing.
+        drafter.requests.forEach { request ->
+            assertEquals(
+                Stage4Generation.buildPrompt(request.copy(locale = "", knowledgeAsOf = "")),
+                Stage4Generation.buildPrompt(request),
+            )
+        }
+        val prompt = Stage4Generation.buildPrompt(drafter.requests.first())
+        listOf("Context: the subject operates in", "Answer as of", "developments after that date")
+            .forEach { assertTrue(it !in prompt, "unexpected context text in prompt: $it") }
+    }
+
+    @Test
+    fun `the flag being off keeps a profiled subject on the legacy prompt`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        seedProfile()
+        // Same stored profile, feature flag down: nothing may reach the prompt or the stamp.
+        val svc = service(AppProperties())
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+
+        assertNull(run.profileHash)
+        assertEquals("", snapshot(run)["locale"])
+        assertEquals("", snapshot(run)["knowledgeAsOf"])
+        assertTrue(drafter.requests.all { it.locale.isBlank() && it.knowledgeAsOf.isBlank() })
+    }
+
+    @Test
+    fun `an operator override still resolves for a subject with no profile`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        val svc = service(profileProps)
+
+        val run =
+            svc.submit("s1", Stage4SubmitRequest(knowledgeAsOf = "2026-06-01"), "op").expectRight()
+
+        // The blank-profile gate must not swallow an explicit operator instruction.
+        assertEquals("2026-06-01", snapshot(run)["knowledgeAsOf"])
+    }
+
+    @Test
+    fun `a profile with only locale renders no freshness clause`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        subjectProfiles.store["s1"] =
+            SubjectProfile(subjectId = "s1", country = "IN", currency = "INR")
+        val svc = service(profileProps)
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+
+        // A non-blank profile DOES reach the publish-date rung (LLD §4.3 worked example).
+        assertEquals("2026-07-15", snapshot(run)["knowledgeAsOf"])
+        val prompt = Stage4Generation.buildPrompt(drafter.requests.first())
+        assertTrue(prompt.contains("Context: the subject operates in the India market (INR)."))
+        assertTrue(prompt.contains("Answer as of 2026-07-15"))
+    }
+
+    @Test
+    fun `GENERATE injects the frozen locale and date into every drafted prompt`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        seedProfile()
+        val svc = service(profileProps)
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.JUDGING)
+
+        assertTrue(drafter.requests.isNotEmpty())
+        assertTrue(
+            drafter.requests.all {
+                it.locale == "the India market (INR), primary language en-IN" &&
+                    it.knowledgeAsOf == "2026-07-15"
+            }
+        )
+        val prompt = Stage4Generation.buildPrompt(drafter.requests.first())
+        assertTrue(
+            prompt.contains(
+                "Context: the subject operates in the India market (INR), primary language en-IN."
+            ),
+            prompt,
+        )
+        assertTrue(
+            prompt.contains(
+                "Answer as of 2026-07-15 — do not assert developments after that date."
+            ),
+            prompt,
+        )
+        // Every generated example carries the run's profile hash — the drift axis's anchor.
+        assertTrue(
+            sfts.store.values.any { it.stamp != null } &&
+                sfts.store.values
+                    .filter { it.stamp != null }
+                    .all { it.stamp?.profileHash == run.profileHash }
+        )
+    }
+
+    @Test
+    fun `an A-B-only profile edit archives the stale-locale examples via the profile drift axis`() {
+        seedPublished()
+        publishedOn("2026-07-15")
+        seedProfile()
+        val svc = service(profileProps)
+        val first = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, first.id, Stage4RunStatus.REVIEW_WAIT)
+        val liveBefore = sfts.store.values.count { it.status != ExampleStatus.ARCHIVED }
+        assertTrue(liveBefore > 0)
+
+        // Currency only: no claim changes, no re-score, no persona edit — the collision C3 case.
+        seedProfile(currency = "USD")
+        val second = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        val afterSelect = svc.poll(second.id).expectRight()
+
+        assertEquals(
+            liveBefore.toLong(),
+            afterSelect.counters[Stage4Counters.EXAMPLES_ARCHIVED],
+        )
+        assertTrue(
+            sfts.store.values
+                .filter { it.status == ExampleStatus.ARCHIVED }
+                .all { it.archivedReason?.contains("profileHash") == true }
+        )
+        // …and the re-run re-drafts them under the new locale.
+        pollUntil(svc, second.id, Stage4RunStatus.JUDGING)
+        assertTrue(drafter.requests.last().locale.contains("(USD)"))
     }
 }

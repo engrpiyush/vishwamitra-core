@@ -7,6 +7,7 @@ import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ExportRecord
 import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.domain.ResolvedPersona
+import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.domain.ReviewComment
 import ai.vishwakarma.labelling.domain.SftExample
 import ai.vishwakarma.labelling.domain.Stage4Category
@@ -45,6 +46,8 @@ import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
@@ -53,7 +56,16 @@ import org.springframework.stereotype.Service
  * per-run mix-weight overrides (QA-3). Null dials inherit the `app.stage4.mix` defaults; the
  * effective values are frozen into the run's paramsSnapshot at submit.
  */
-data class Stage4SubmitRequest(val fresh: Boolean = false, val mix: MixOverrides? = null) {
+data class Stage4SubmitRequest(
+    val fresh: Boolean = false,
+    val mix: MixOverrides? = null,
+    /**
+     * Operator override for `{{knowledge_as_of}}` (ISO-8601 date). It wins over the profile's own
+     * date and the publish date (profile LLD §4.3) but is a *run* param — it never touches the
+     * sealed profile, which is why its home is the paramsSnapshot.
+     */
+    val knowledgeAsOf: String? = null,
+) {
     data class MixOverrides(
         val qa: Double? = null,
         val situational: Double? = null,
@@ -116,6 +128,7 @@ class Stage4Service(
     private val sftExamples: SftExampleRepository,
     private val dpoPairs: DpoPairRepository,
     private val notebookTemplates: NotebookTemplateService,
+    private val subjectProfiles: SubjectProfileService,
     private val config: StageConfigService,
 ) {
 
@@ -134,6 +147,11 @@ class Stage4Service(
      * nothing references it). The ledger guards (§9.1) run inside SELECT so their verbatim reasons
      * land on the run record. Effective params — including the QA-3 mix overrides and `fresh` — are
      * frozen into the paramsSnapshot at this instant.
+     *
+     * The SubjectProfile's two injection scalars freeze here too (profile LLD §4.3): resolved once,
+     * not per poll tick, so a mid-run profile edit cannot half-colour a dataset. `knowledge_as_of`
+     * resolves operator override → profile → publish date; the A/B profileHash is frozen onto the
+     * run beside them so SELECT's drift sweep archives examples baked with an older locale.
      */
     fun submit(
         subjectId: String,
@@ -170,13 +188,28 @@ class Stage4Service(
             runs.save(active.copy(status = Stage4RunStatus.SUPERSEDED, finishedAt = now))
             log.info("Stage 4 run {} superseded by a newer submit", active.id)
         }
+        val override = request.knowledgeAsOf?.trim()?.takeIf { it.isNotBlank() }
+        if (override != null && runCatching { LocalDate.parse(override) }.isFailure) {
+            return DomainError.Invalid(
+                    "knowledgeAsOf must be an ISO-8601 date (yyyy-MM-dd), got '$override'"
+                )
+                .left()
+        }
         val effective = effectiveStage4(overrides)
+        val profile = subjectProfiles.resolved(subjectId)
         val run =
             Stage4Run(
                 id = runs.newId(),
                 subjectId = subjectId,
                 fresh = request.fresh,
-                paramsSnapshot = snapshotOf(effective, request.fresh),
+                profileHash = profile.hashOrNull(),
+                paramsSnapshot =
+                    snapshotOf(
+                        effective,
+                        request.fresh,
+                        locale = profile.locale,
+                        knowledgeAsOf = knowledgeAsOfFor(subjectId, override, profile),
+                    ),
                 createdBy = actor,
                 createdAt = now,
                 phaseSince = now,
@@ -282,7 +315,7 @@ class Stage4Service(
             }
             val personaHash = personaService.resolved(run.subjectId).hash()
             val eligible = eligibleClaims(run.subjectId, scoreRunId)
-            val archived = driftSweep(run.subjectId, scoreRunId, personaHash)
+            val archived = driftSweep(run.subjectId, scoreRunId, personaHash, run.profileHash)
             advance(
                 run.copy(scoreRunId = scoreRunId, personaHash = personaHash),
                 Stage4RunStatus.PLANNING,
@@ -312,14 +345,23 @@ class Stage4Service(
             .map { EvidencedClaim(it, reviewMap[it.id]) }
     }
 
-    /** QA-6: archive stamped examples/pairs whose publish or persona drifted; returns the count. */
-    private fun driftSweep(subjectId: String, scoreRunId: String, personaHash: String): Long {
+    /**
+     * QA-6: archive stamped examples/pairs whose publish, persona **or profile** drifted; returns
+     * the count. The profile axis (OD-7) is what catches an A/B-only edit: it changes no claim and
+     * no score, so without it a notebook baked with the old locale would survive and export.
+     */
+    private fun driftSweep(
+        subjectId: String,
+        scoreRunId: String,
+        personaHash: String,
+        profileHash: String?,
+    ): Long {
         val now = Instant.now()
         var archived = 0L
         sftExamples.findByStampSubject(subjectId).forEach { example ->
             if (example.status == ExampleStatus.ARCHIVED) return@forEach
             val stamp = example.stamp ?: return@forEach
-            val reason = driftReason(stamp, scoreRunId, personaHash) ?: return@forEach
+            val reason = driftReason(stamp, scoreRunId, personaHash, profileHash) ?: return@forEach
             sftExamples.save(
                 example.copy(
                     status = ExampleStatus.ARCHIVED,
@@ -332,7 +374,7 @@ class Stage4Service(
         dpoPairs.findByStampSubject(subjectId).forEach { pair ->
             if (pair.status == ExampleStatus.ARCHIVED) return@forEach
             val stamp = pair.stamp ?: return@forEach
-            val reason = driftReason(stamp, scoreRunId, personaHash) ?: return@forEach
+            val reason = driftReason(stamp, scoreRunId, personaHash, profileHash) ?: return@forEach
             dpoPairs.save(
                 pair.copy(status = ExampleStatus.ARCHIVED, archivedReason = reason, updatedAt = now)
             )
@@ -343,10 +385,20 @@ class Stage4Service(
         return archived
     }
 
-    private fun driftReason(stamp: Stage4Stamp, scoreRunId: String, personaHash: String): String? {
+    private fun driftReason(
+        stamp: Stage4Stamp,
+        scoreRunId: String,
+        personaHash: String,
+        profileHash: String?,
+    ): String? {
         val drifted = buildList {
             if (stamp.scoreRunId != scoreRunId) add("scoreRunId $scoreRunId")
             if (stamp.personaHash != personaHash) add("personaHash ${personaHash.take(12)}")
+            // Null on both sides for a subject with no declared profile — the pre-profile world
+            // never drifts on this axis, so nothing is archived just because the feature landed.
+            if (stamp.profileHash != profileHash) {
+                add("profileHash ${profileHash?.take(12) ?: "none"}")
+            }
         }
         return drifted.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "superseded by ")
     }
@@ -520,9 +572,20 @@ class Stage4Service(
                 return@inPhase advance(run, Stage4RunStatus.JUDGING, generateCounters(run))
             }
 
-            val batch = pending.take(frozenParams(run).generateBatchPerPoll)
+            val frozen = frozenParams(run)
+            val batch = pending.take(frozen.generateBatchPerPoll)
             batch.forEach { p ->
-                generateOne(run, p, subjectName, persona, presetStyle, ::rowFor, evidenceById)
+                generateOne(
+                    run,
+                    p,
+                    subjectName,
+                    persona,
+                    presetStyle,
+                    ::rowFor,
+                    evidenceById,
+                    frozen.locale,
+                    frozen.knowledgeAsOf,
+                )
             }
             run.copy(counters = run.counters + generateCounters(run), phaseSince = Instant.now())
                 .also { runs.save(it) }
@@ -538,6 +601,9 @@ class Stage4Service(
         /** The plan's instruction row: template block (VA-88) or category row; null = META. */
         rowFor: (VoicingPlan) -> ResolvedExtractionPrompt?,
         evidenceById: Map<String, EvidencedClaim>,
+        /** The run-frozen profile scalars (§4.3); blank ⇒ today's prompt, byte for byte. */
+        locale: String,
+        knowledgeAsOf: String,
     ) {
         val category = p.plan.category
         val row = rowFor(p.plan)
@@ -565,7 +631,9 @@ class Stage4Service(
 
         // Generation cache (§9.3): an ARCHIVED example with the same planId + prompt hash carries
         // turns produced from identical inputs — copy them into a new DRAFT, no LLM call. The
-        // `fresh` flag bypasses.
+        // `fresh` flag bypasses. The profileHash is part of the key (profile LLD §6.4): the plan id
+        // is computed before injection, so without it a locale edit would archive the stale
+        // conversations and then copy those very turns straight back, defeating the drift axis.
         val cached =
             if (run.fresh) null
             else
@@ -575,6 +643,7 @@ class Stage4Service(
                         it.status == ExampleStatus.ARCHIVED &&
                             it.stamp?.planId == p.plan.planId &&
                             it.stamp?.generatorPromptHash == promptHash &&
+                            it.stamp?.profileHash == run.profileHash &&
                             it.turns.isNotEmpty()
                     }
                     .maxByOrNull { it.updatedAt ?: Instant.EPOCH }
@@ -587,6 +656,7 @@ class Stage4Service(
                 category = category,
                 planId = p.plan.planId,
                 personaHash = run.personaHash,
+                profileHash = run.profileHash,
                 generatorPromptHash = promptHash,
                 templateId = p.plan.templateId,
                 templateCategory = p.plan.templateCategory,
@@ -627,6 +697,8 @@ class Stage4Service(
                                 promptInstructions = checkNotNull(row).instructions,
                                 promptVersion = row.version,
                                 promptHash = row.hash,
+                                locale = locale,
+                                knowledgeAsOf = knowledgeAsOf,
                             )
                         ),
                         drafter.model,
@@ -685,6 +757,7 @@ class Stage4Service(
                     it.status != ExampleStatus.ARCHIVED &&
                         it.stamp?.scoreRunId == scoreRunId &&
                         it.stamp?.personaHash == personaHash &&
+                        it.stamp?.profileHash == run.profileHash &&
                         it.stamp?.planId != null
                 }
                 .distinctBy { it.stamp!!.planId }
@@ -1027,8 +1100,46 @@ class Stage4Service(
         )
     }
 
-    /** Every effective `app.stage4.*` value plus `fresh`, as a parseable JSON map (§3.2 audit). */
-    private fun snapshotOf(effective: AppProperties.Stage4, fresh: Boolean): String =
+    /**
+     * The §4.3 `{{knowledge_as_of}}` resolution order: operator run override → the profile's own
+     * date → the subject's publish date. Blank when nothing resolves — the clause is then dropped
+     * from the prompt entirely.
+     *
+     * **The ladder only runs when the profile surface is actually in play.** Stage 4 refuses to run
+     * an unpublished subject, so `publishedAt` is effectively always set: an ungated fall-through
+     * to it would hand *every* subject a frozen date — profile or not, feature flag or not — and
+     * the emitted context line would break the byte-for-byte-legacy contract this slice promises
+     * (and that `app.stage4.profile-enabled` advertises). A blank profile already covers the
+     * flag-off case, since [SubjectProfileService.resolved] blanks the profile when the flag is
+     * down.
+     */
+    private fun knowledgeAsOfFor(
+        subjectId: String,
+        override: String?,
+        profile: ResolvedSubjectProfile,
+    ): String {
+        if (override == null && profile.blank) return ""
+        return override
+            ?: profile.knowledgeAsOf?.toString()
+            ?: subjectScores
+                .find(subjectId)
+                ?.publishedAt
+                ?.atZone(ZoneOffset.UTC)
+                ?.toLocalDate()
+                ?.toString()
+            ?: ""
+    }
+
+    /**
+     * Every effective `app.stage4.*` value plus `fresh` and the SubjectProfile injection scalars,
+     * as a parseable JSON map (§3.2 audit / profile LLD §4.3).
+     */
+    private fun snapshotOf(
+        effective: AppProperties.Stage4,
+        fresh: Boolean,
+        locale: String,
+        knowledgeAsOf: String,
+    ): String =
         Json.writeLine(
             mapOf(
                 "enabled" to effective.enabled,
@@ -1055,6 +1166,8 @@ class Stage4Service(
                 "evalBehaviorBar" to effective.evalBehaviorBar,
                 "phaseTimeout" to effective.phaseTimeout.toString(),
                 "fresh" to fresh,
+                "locale" to locale,
+                "knowledgeAsOf" to knowledgeAsOf,
             )
         )
 
@@ -1066,6 +1179,9 @@ class Stage4Service(
         val judgeBatchPerPoll: Int,
         val ensembleK: Int,
         val judgeEnabled: Boolean,
+        /** The profile scalars GENERATE injects; blank on pre-profile runs (§4.3). */
+        val locale: String,
+        val knowledgeAsOf: String,
     )
 
     /**
@@ -1105,6 +1221,10 @@ class Stage4Service(
                 (raw["judgeBatchPerPoll"] as? Number)?.toInt() ?: base.judgeBatchPerPoll,
             ensembleK = (raw["ensembleK"] as? Number)?.toInt() ?: base.ensembleK,
             judgeEnabled = (raw["judgeEnabled"] as? Boolean) ?: base.judgeEnabled,
+            // No live fallback: these two are run-frozen by definition, and a pre-profile run must
+            // keep injecting nothing however the profile has changed since.
+            locale = (raw["locale"] as? String).orEmpty(),
+            knowledgeAsOf = (raw["knowledgeAsOf"] as? String).orEmpty(),
         )
     }
 

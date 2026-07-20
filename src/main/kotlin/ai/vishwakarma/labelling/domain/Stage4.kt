@@ -88,6 +88,12 @@ data class Stage4Run(
     val scoreRunId: String? = null,
     /** The resolved persona hash frozen at SELECT (defaults-only persona materializes one). */
     val personaHash: String? = null,
+    /**
+     * The resolved SubjectProfile A/B hash frozen at submit beside the injected locale/as-of
+     * scalars (profile LLD §6.4, OD-7) — the third drift axis. Null when the subject declared no
+     * profile, which is also what every pre-profile run carries: null vs null never drifts.
+     */
+    val profileHash: String? = null,
     val status: Stage4RunStatus = Stage4RunStatus.PENDING,
     /** The phase the run was in when it FAILED; operator Retry resumes here (phases re-entrant). */
     val failedPhase: Stage4RunStatus? = null,
@@ -134,6 +140,12 @@ data class Stage4Stamp(
     val planId: String? = null,
     /** Hash of the resolved persona the generation prompt embedded. */
     val personaHash: String? = null,
+    /**
+     * Hash of the resolved SubjectProfile A/B block whose locale/freshness the prompt injected
+     * (profile LLD §6.4). Null = no profile declared; an A/B edit changes it and the drift sweep
+     * archives this example exactly as a persona-dial change would.
+     */
+    val profileHash: String? = null,
     /** Short hash of the exact generator prompt row used (ExtractionPrompt idiom). */
     val generatorPromptHash: String? = null,
     /** The NotebookTemplate that shaped this conversation (VA-88); null = legacy planning. */

@@ -688,6 +688,13 @@ object StageConfigCatalog {
                 readOnlyReason = POSTURE,
             ),
             ConfigField(
+                "profileEnabled",
+                "Subject profile enabled",
+                BOOLEAN,
+                "Surface & posture",
+                "SubjectProfile writes + locale/knowledge-as-of injection into generation.",
+            ),
+            ConfigField(
                 "dryRunJudgeFailRate",
                 "Dry-run judge FAIL rate",
                 DOUBLE,

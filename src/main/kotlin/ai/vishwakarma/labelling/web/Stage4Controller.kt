@@ -162,6 +162,10 @@ class Stage4Controller(
         @RequestParam(required = false) mixMultiClaim: Double?,
         @RequestParam(required = false) mixNegative: Double?,
         @RequestParam(required = false) mixMeta: Double?,
+        /**
+         * Operator override for `{{knowledge_as_of}}` (ISO date) — a run param, not a profile edit.
+         */
+        @RequestParam(required = false) knowledgeAsOf: String?,
         ra: RedirectAttributes,
     ): String {
         val overrides =
@@ -177,7 +181,11 @@ class Stage4Controller(
                     )
                 }
         stage4
-            .submit(id, Stage4SubmitRequest(fresh = fresh, mix = overrides), actor())
+            .submit(
+                id,
+                Stage4SubmitRequest(fresh = fresh, mix = overrides, knowledgeAsOf = knowledgeAsOf),
+                actor(),
+            )
             .fold(
                 { ra.addFlashAttribute("error", it.message) },
                 {

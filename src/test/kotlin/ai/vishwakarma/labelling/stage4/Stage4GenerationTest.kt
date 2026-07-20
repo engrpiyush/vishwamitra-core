@@ -168,4 +168,131 @@ class Stage4GenerationTest {
         assertTrue(first[1].text.startsWith("[dry-run qa · row 6 · hedged]"))
         assertTrue(first[1].text.contains("Avery"))
     }
+
+    // ---- profile context injection (SubjectProfile LLD §4.1/§4.4) --------------------
+
+    @Test
+    fun `a blank profile leaves the prompt byte-for-byte what it is today`() {
+        val legacy = Stage4Generation.buildPrompt(request())
+
+        val injected = Stage4Generation.buildPrompt(request().copy(locale = "", knowledgeAsOf = ""))
+
+        assertEquals(legacy, injected)
+        assertTrue("Context: the subject operates in" !in legacy)
+        assertTrue("{{" !in legacy)
+    }
+
+    @Test
+    fun `the context line renders the frozen locale and as-of date`() {
+        val prompt =
+            Stage4Generation.buildPrompt(
+                request()
+                    .copy(
+                        locale = "the India market (INR), primary language en-IN",
+                        knowledgeAsOf = "2026-07-15",
+                    )
+            )
+
+        assertTrue(
+            prompt.contains(
+                "Context: the subject operates in the India market (INR), primary language en-IN."
+            ),
+            prompt,
+        )
+        assertTrue(
+            prompt.contains(
+                "Answer as of 2026-07-15 — do not assert developments after that date."
+            ),
+            prompt,
+        )
+        assertTrue("{{locale}}" !in prompt && "{{knowledge_as_of}}" !in prompt)
+    }
+
+    @Test
+    fun `tokens an operator put in the category row substitute too`() {
+        val prompt =
+            Stage4Generation.buildPrompt(
+                request()
+                    .copy(
+                        promptInstructions =
+                            "Answer for {{locale}}. Nothing after {{knowledge_as_of}} is known.",
+                        locale = "the EU market",
+                        knowledgeAsOf = "2026-06-01",
+                    )
+            )
+
+        assertTrue(prompt.contains("Answer for the EU market."), prompt)
+        assertTrue(prompt.contains("Nothing after 2026-06-01 is known."), prompt)
+    }
+
+    @Test
+    fun `a blank locale drops its clause and keeps the as-of one`() {
+        val prompt =
+            Stage4Generation.buildPrompt(request().copy(locale = "", knowledgeAsOf = "2026-07-15"))
+
+        assertTrue("the subject operates in" !in prompt, prompt)
+        assertTrue(prompt.contains("Answer as of 2026-07-15 —"), prompt)
+    }
+
+    @Test
+    fun `a blank as-of drops the whole freshness clause, leaving no orphan`() {
+        val prompt =
+            Stage4Generation.buildPrompt(
+                request().copy(locale = "the IN market", knowledgeAsOf = "")
+            )
+
+        assertTrue(prompt.contains("Context: the subject operates in the IN market."), prompt)
+        // The clauses are emitted independently, so nothing can survive pointing at a date that
+        // is not in the prompt.
+        assertTrue("Answer as of" !in prompt, prompt)
+        assertTrue("developments after that date" !in prompt, prompt)
+    }
+
+    @Test
+    fun `a dropped first sentence keeps the line's bullet marker`() {
+        val text = "- Expected behaviour: mention {{locale}}. Keep the answer under 80 words."
+
+        val out = Stage4Generation.substituteContext(text, locale = "", knowledgeAsOf = "")
+
+        assertEquals("- Keep the answer under 80 words.", out)
+    }
+
+    @Test
+    fun `a surviving first sentence does not gain a duplicate bullet marker`() {
+        val text = "- Expected behaviour: name one metric. Mention {{locale}} explicitly."
+
+        val out = Stage4Generation.substituteContext(text, locale = "", knowledgeAsOf = "")
+
+        assertEquals("- Expected behaviour: name one metric.", out)
+    }
+
+    @Test
+    fun `a semicolon no longer splits an operator's sentence mid-clause`() {
+        val text = "Answer for {{locale}}; keep the register plain."
+
+        val out = Stage4Generation.substituteContext(text, locale = "", knowledgeAsOf = "")
+
+        // The whole sentence carries the token, so the whole sentence goes — the trailing clause
+        // is not left stranded as its own instruction.
+        assertEquals("", out)
+    }
+
+    @Test
+    fun `substituteContext drops a whole clause rather than leaving a hole`() {
+        val text =
+            "Keep this. The subject operates in {{locale}}. Answer as of {{knowledge_as_of}}.\n" +
+                "Second line about {{locale}} only."
+
+        val out =
+            Stage4Generation.substituteContext(text, locale = "", knowledgeAsOf = "2026-01-01")
+
+        assertEquals("Keep this. Answer as of 2026-01-01.", out)
+    }
+
+    @Test
+    fun `substituteContext is a no-op on text carrying neither token`() {
+        val text = "Nothing to substitute here."
+
+        assertEquals(text, Stage4Generation.substituteContext(text, "the IN market", "2026-01-01"))
+    }
 }

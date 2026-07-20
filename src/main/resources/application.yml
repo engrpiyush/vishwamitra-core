@@ -219,6 +219,7 @@ app:
     dry-run: true   # log the payload, never publish to Pub/Sub in dev
   stage4:
     dry-run: true   # offline generator/judge doubles — never calls Gemini in dev
+    profile-enabled: true   # SubjectProfile A/B surface + injection is on locally
   product:
     # Subject world on <handle>.localhost:8080 (Chrome/Firefox resolve *.localhost natively);
     # plain localhost:8080 stays the operator app.
