@@ -1,12 +1,16 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
+import ai.vishwakarma.labelling.domain.DoNotDiscussCustom
+import ai.vishwakarma.labelling.domain.EmploymentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.domain.SealAction
 import ai.vishwakarma.labelling.domain.SealEvent
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectProfile
+import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.ClaimRepository
@@ -220,6 +224,48 @@ class ProfileTemplateRenderTest {
         }
     }
 
+    @Test
+    fun `the editable subject page renders the C-D declared section, pre-filled, with the attestation`() {
+        val html =
+            subjectPage(
+                uploadPhase = true,
+                stored =
+                    SubjectProfile(
+                        subjectId = "s1",
+                        aspirations = listOf("Optimising for staff-level IC work"),
+                        employmentType = EmploymentType.FTE,
+                        doNotDiscussChecks = listOf("health"),
+                        doNotDiscussCustom =
+                            DoNotDiscussCustom(
+                                text = "my cap table",
+                                state = DoNotDiscussApproval.PENDING,
+                            ),
+                    ),
+            )
+        val flat = html.replace(Regex("\\s+"), " ")
+
+        // The declared inputs render, pre-filled from the stored doc.
+        assertTrue(flat.contains("""name="aspirations""""))
+        assertTrue(flat.contains("Optimising for staff-level IC work"))
+        // The curated checklist renders its subject-safe labels, and a stored key comes back
+        // checked — the round-trip a subject notices.
+        assertTrue(flat.contains("Health and medical history"))
+        assertTrue(flat.contains("""value="health" checked="checked""""))
+        // The bespoke entry shows its PENDING state in subject words, plus the text.
+        assertTrue(flat.contains("my cap table"))
+        assertTrue(flat.contains("reviewing this one"), "the pending-state copy is missing")
+        // The attestation checkbox is present and never pre-ticked (each declaring save
+        // re-affirms).
+        assertTrue(flat.contains("""name="declaredAttested" value="true""""))
+        assertFalse(flat.contains("""name="declaredAttested" value="true" checked"""))
+
+        // §12.3: the declared surface still carries no machinery vocabulary.
+        val text = visibleText(html).lowercase()
+        for (banned in listOf("materialise", "declaredtype", "subject_declared", "claim", "seal")) {
+            assertFalse(text.contains(banned), "'$banned' leaked into the subject C/D page")
+        }
+    }
+
     // ---- VA-140: the shared subject footer (subject/layout.html :: foot) --------------
 
     /**
@@ -286,7 +332,21 @@ class ProfileTemplateRenderTest {
 
     // ---- VA-141: the intake/detail.html panel -----------------------------------------
 
-    private fun detailPage(sealed: Boolean, enabled: Boolean = true): String {
+    private val defaultDetailStored =
+        SubjectProfile(
+            subjectId = "s1",
+            country = "IN",
+            currency = "INR",
+            timezone = "Asia/Kolkata",
+            updatedBy = "op@example.com",
+        )
+
+    private fun detailPage(
+        sealed: Boolean,
+        enabled: Boolean = true,
+        stored: SubjectProfile = defaultDetailStored,
+        stage2Started: Boolean = false,
+    ): String {
         val subjectService = mock(SubjectService::class.java)
         val intake = mock(IntakeService::class.java)
         val scores = mock(SubjectScoreRepository::class.java)
@@ -301,6 +361,7 @@ class ProfileTemplateRenderTest {
                     id = "s1",
                     subjectId = "s1",
                     sealed = sealed,
+                    stage2StartedAt = if (stage2Started) Instant.now() else null,
                     // sealedBy/sealedAt are derived from this audit trail, not stored.
                     sealEvents =
                         if (!sealed) emptyList()
@@ -320,20 +381,15 @@ class ProfileTemplateRenderTest {
         profiles.viewResult =
             SubjectProfileView(
                     subjectId = "s1",
-                    stored =
-                        SubjectProfile(
-                            subjectId = "s1",
-                            country = "IN",
-                            currency = "INR",
-                            timezone = "Asia/Kolkata",
-                            updatedBy = "op@example.com",
-                        ),
-                    resolved =
-                        ResolvedSubjectProfile(
-                            country = "IN",
-                            currency = "INR",
-                            timezone = "Asia/Kolkata",
-                        ),
+                    stored = stored,
+                    // The panel's read-only (sealed) view renders `resolved`, so derive it from the
+                    // stored doc exactly as the real service would — C/D included. Deliberately
+                    // kept
+                    // non-blank even when `enabled = false`: the flag-off tests hand in this
+                    // "pre-fix
+                    // shape" (non-blank resolved, non-null hash) to prove the *template's* own gate
+                    // hides them, independently of the service blanking ahead of it.
+                    resolved = SubjectProfileDefaults.resolve(stored),
                     profileHash = "abc123def456789",
                     sealed = sealed,
                     enabled = enabled,
@@ -422,6 +478,68 @@ class ProfileTemplateRenderTest {
         // …and says so plainly, in operator vocabulary (this surface keeps the machinery words).
         assertTrue(flat.contains("nothing is injected into generation"))
         assertTrue(flat.contains("app.stage4.profile-enabled"))
+    }
+
+    // ---- VA-150: the admin C/D panel + approve/reject control -------------------------
+
+    private val declaredStored =
+        SubjectProfile(
+            subjectId = "s1",
+            country = "IN",
+            targetRoles = listOf("Staff Engineer"),
+            employmentType = EmploymentType.FTE,
+            aspirations = listOf("Optimising for staff-level IC work"),
+            doNotDiscussChecks = listOf("health"),
+            doNotDiscussCustom =
+                DoNotDiscussCustom(text = "my cap table", state = DoNotDiscussApproval.PENDING),
+            updatedBy = "op@example.com",
+        )
+
+    @Test
+    fun `the unsealed admin panel renders the C-D inputs and the pending approve or reject control`() {
+        val flat = detailPage(sealed = false, stored = declaredStored).replace(Regex("\\s+"), " ")
+
+        // C/D inputs on the seal-gated form, pre-filled.
+        assertTrue(flat.contains("""name="targetRoles""""))
+        assertTrue(flat.contains("Staff Engineer"))
+        assertTrue(flat.contains("""name="aspirations""""))
+        assertTrue(flat.contains("""name="doNotDiscussChecks""""))
+        assertTrue(flat.contains("""value="health" checked="checked""""))
+        // The approve/reject control for the bespoke entry, posting to its own audited route.
+        assertTrue(flat.contains("""action="/intake/s1/profile/dnd-custom""""))
+        assertTrue(flat.contains("Approve boundary"))
+        assertTrue(flat.contains("my cap table"))
+    }
+
+    @Test
+    fun `a sealed panel drops the C-D edit form but keeps the approve control`() {
+        val flat = detailPage(sealed = true, stored = declaredStored).replace(Regex("\\s+"), " ")
+
+        // The profile EDIT form is seal-gated away — note the trailing quote, so the dnd-custom
+        // route (which shares the prefix) does not false-match it.
+        assertFalse(
+            flat.contains("""action="/intake/s1/profile""" + "\""),
+            "a sealed manifest still offered the C/D edit form",
+        )
+        // …but the approve/reject control stays: a verdict on frozen text is legitimate until
+        // Stage 2 consumes the corpus (§12.8.8).
+        assertTrue(flat.contains("""action="/intake/s1/profile/dnd-custom""""))
+        assertTrue(flat.contains("Approve boundary"))
+        // Sealed read-only C/D rows render from the resolved profile.
+        assertTrue(flat.contains("<td>Target roles</td>"))
+        assertTrue(flat.contains("Staff Engineer"))
+    }
+
+    @Test
+    fun `once Stage 2 has consumed the corpus the approve control is gone, with a reason`() {
+        val flat =
+            detailPage(sealed = true, stored = declaredStored, stage2Started = true)
+                .replace(Regex("\\s+"), " ")
+
+        // The frozen-corpus guard (§12.8.8) reaches the UI: no verdict button, and the panel says
+        // why rather than offering an action the service would only refuse.
+        assertFalse(flat.contains("Approve boundary"), "a doomed approve control rendered")
+        assertTrue(flat.contains("Stage 2 has consumed the corpus"))
     }
 }
 

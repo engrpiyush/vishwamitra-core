@@ -429,6 +429,61 @@
                     <label>Knowledge as of <span class="muted">(blank ⇒ the publish date)</span>
                         <input type="date" name="knowledgeAsOf" th:value="${profile.stored?.knowledgeAsOf}"/>
                     </label>
+
+                    <!-- VA-150: C/D declared evidence — materialises as SUBJECT_DECLARED claims at
+                         the seal (§3.6). Out of profileHash (§12.8.2), so a C/D-only edit moves the
+                         claim set, not the generation cache. No attestation here (§7.2). -->
+                    <p class="muted" style="margin:0.8rem 0 0.3rem;">Declared candidacy &amp; narrative (C/D)</p>
+
+                    <label>Target roles <span class="muted">(one per box)</span></label>
+                    <input type="text" name="targetRoles"
+                           th:each="r : ${profile.stored?.targetRoles}" th:value="${r}"/>
+                    <input type="text" name="targetRoles" placeholder="e.g. Staff Engineer"/>
+
+                    <label>Target seniority
+                        <select name="targetSeniority">
+                            <option value="">—</option>
+                            <option th:each="s : ${seniorities}" th:value="${s.value}" th:text="${s.label}"
+                                    th:selected="${s.value == profile.stored?.targetSeniority}">Level</option>
+                        </select>
+                    </label>
+                    <label>Employment type
+                        <select name="employmentType">
+                            <option value="">—</option>
+                            <option th:each="e : ${employmentTypes}" th:value="${e.value}" th:text="${e.label}"
+                                    th:selected="${e.value == profile.stored?.employmentType?.name()}">Type</option>
+                        </select>
+                    </label>
+                    <label>Open to relocation
+                        <select name="openToRelocation">
+                            <option value="">—</option>
+                            <option value="true" th:selected="${profile.stored?.openToRelocation == true}">Yes</option>
+                            <option value="false" th:selected="${profile.stored?.openToRelocation == false}">No</option>
+                        </select>
+                    </label>
+
+                    <label>Aspirations <span class="muted">(one per box)</span></label>
+                    <input type="text" name="aspirations"
+                           th:each="a : ${profile.stored?.aspirations}" th:value="${a}"/>
+                    <input type="text" name="aspirations"
+                           placeholder="e.g. Optimising for staff-level IC work, not management"/>
+
+                    <label>Stated preferences <span class="muted">(one per box)</span></label>
+                    <input type="text" name="statedPreferences"
+                           th:each="p : ${profile.stored?.statedPreferences}" th:value="${p}"/>
+                    <input type="text" name="statedPreferences" placeholder="A declared preference"/>
+
+                    <label>Do-not-discuss <span class="muted">(curated — the fact of a boundary, never its substance)</span></label>
+                    <label class="check" th:each="t : ${dndTopics}" style="display:block; font-weight:normal;">
+                        <input type="checkbox" name="doNotDiscussChecks" th:value="${t.key}"
+                               th:checked="${profile.stored != null and #lists.contains(profile.stored.doNotDiscussChecks, t.key)}"/>
+                        <span th:text="${t.label}">Topic</span>
+                    </label>
+
+                    <label>Custom do-not-discuss <span class="muted">(subject-authored; approve below to materialise)</span>
+                        <input type="text" name="doNotDiscussCustom" th:value="${profile.stored?.doNotDiscussCustom?.text}"/>
+                    </label>
+
                     <button type="submit" class="secondary">Save profile</button>
                 </form>
 
@@ -449,6 +504,22 @@
                             <td th:text="${profile.resolved.knowledgeAsOf ?: '—'}">—</td></tr>
                         <tr><td><code>{{locale}}</code></td>
                             <td th:text="${#strings.isEmpty(profile.resolved.locale) ? '—' : profile.resolved.locale}">—</td></tr>
+                        <tr><td>Target roles</td>
+                            <td th:text="${#lists.isEmpty(profile.resolved.targetRoles) ? '—' : #strings.listJoin(profile.resolved.targetRoles, '; ')}">—</td></tr>
+                        <tr><td>Target seniority</td>
+                            <td th:text="${#strings.isEmpty(profile.resolved.targetSeniority) ? '—' : profile.resolved.targetSeniority}">—</td></tr>
+                        <tr><td>Employment type</td>
+                            <td th:text="${profile.resolved.employmentType != null ? profile.resolved.employmentType : '—'}">—</td></tr>
+                        <tr><td>Open to relocation</td>
+                            <td th:text="${profile.resolved.openToRelocation != null ? profile.resolved.openToRelocation : '—'}">—</td></tr>
+                        <tr><td>Aspirations</td>
+                            <td th:text="${#lists.isEmpty(profile.resolved.aspirations) ? '—' : #strings.listJoin(profile.resolved.aspirations, '; ')}">—</td></tr>
+                        <tr><td>Stated preferences</td>
+                            <td th:text="${#lists.isEmpty(profile.resolved.statedPreferences) ? '—' : #strings.listJoin(profile.resolved.statedPreferences, '; ')}">—</td></tr>
+                        <tr><td>Do-not-discuss</td>
+                            <td th:text="${#lists.isEmpty(profile.resolved.doNotDiscussChecks) ? '—' : #strings.listJoin(profile.resolved.doNotDiscussChecks, ', ')}">—</td></tr>
+                        <tr th:if="${profile.resolved.approvedDoNotDiscussCustom != null}"><td>Custom boundary</td>
+                            <td th:text="${profile.resolved.approvedDoNotDiscussCustom}">—</td></tr>
                         </tbody>
                     </table>
                     <p class="muted" style="margin:0.6rem 0 0;">
@@ -458,6 +529,36 @@
                             in the Manifest panel to edit it.</span>
                         <span th:unless="${manifest.stage2StartedAt == null}">Stage 2 has started —
                             the seal, and this profile, are permanent.</span>
+                    </p>
+                </div>
+
+                <!-- VA-150 / SP-DND (OD-9): the admin verdict on the subject's bespoke do-not-discuss
+                     entry. Deliberately NOT wrapped in the seal gate above: the service records a
+                     verdict on already-frozen text and re-runs the materialiser when the manifest is
+                     sealed but the corpus is not yet consumed (§12.8.8) — the one legitimate post-seal
+                     declared-claim write — and refuses on its own once Stage 2 has frozen it. So this
+                     control shows whether or not the manifest is sealed; only the stage2 lock hides it. -->
+                <div th:if="${profile.enabled and profile.stored?.doNotDiscussCustom != null}" style="margin-top:0.8rem;">
+                    <p class="muted" style="margin:0 0 0.3rem;">Custom do-not-discuss
+                        <span class="badge"
+                              th:classappend="${profile.stored.doNotDiscussCustom.state.name() == 'APPROVED' ? 'badge--success' : (profile.stored.doNotDiscussCustom.state.name() == 'REJECTED' ? 'badge--danger' : 'badge--warning')}"
+                              th:text="${profile.stored.doNotDiscussCustom.state}">PENDING</span>
+                    </p>
+                    <p style="margin:0 0 0.4rem;" th:text="${profile.stored.doNotDiscussCustom.text}">the entry</p>
+                    <div class="row-actions"
+                         th:if="${profile.stored.doNotDiscussCustom.state.name() == 'PENDING' and manifest.stage2StartedAt == null}">
+                        <form method="post" th:action="@{/intake/{id}/profile/dnd-custom(id=${subject.id})}" class="inline-form">
+                            <input type="hidden" name="approve" value="true"/>
+                            <button type="submit" class="btn--sm">Approve boundary</button>
+                        </form>
+                        <form method="post" th:action="@{/intake/{id}/profile/dnd-custom(id=${subject.id})}" class="inline-form">
+                            <input type="hidden" name="approve" value="false"/>
+                            <button type="submit" class="btn--ghost btn--sm">Reject</button>
+                        </form>
+                    </div>
+                    <p class="muted" style="margin:0.3rem 0 0;"
+                       th:if="${profile.stored.doNotDiscussCustom.state.name() == 'PENDING' and manifest.stage2StartedAt != null}">
+                        Stage 2 has consumed the corpus — this pending entry can no longer be admitted; a fresh intake is required.
                     </p>
                 </div>
 

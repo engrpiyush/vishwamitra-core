@@ -302,7 +302,7 @@ class SubjectProfileServiceTest {
                         targetRoles = listOf("Staff Engineer"),
                         targetSeniority = "staff",
                         employmentType = "FTE",
-                        openToRelocation = true,
+                        openToRelocation = "true",
                         aspirations = listOf("Optimising for staff-level IC work, not management."),
                         doNotDiscussChecks = listOf("health"),
                     ),
@@ -316,6 +316,49 @@ class SubjectProfileServiceTest {
         assertEquals(EmploymentType.FTE, stored.employmentType)
         assertEquals(true, stored.openToRelocation)
         assertEquals(listOf("health"), stored.doNotDiscussChecks)
+    }
+
+    @Test
+    fun `a blank targetSeniority clears the stored stance where an absent one keeps it`() {
+        seedSubject()
+        val svc = service()
+        svc.put("s1", SubjectProfileUpdateRequest(targetSeniority = "Staff"), actor = "op")
+            .expectRight()
+
+        // Absent (null) ⇒ keep: an A/B-only locale save carries no seniority field and must not
+        // wipe a declared one (§12.7.4, the whole-document-rewrite guard).
+        svc.put("s1", SubjectProfileUpdateRequest(), actor = "op").expectRight()
+        assertEquals("Staff", profiles.store["s1"]?.targetSeniority)
+
+        // Present-but-blank ⇒ clear: the form's "Prefer not to say" option withdraws it. The old
+        // `request?.let { declaredLine(it) } ?: previous` read a blank as "keep", so the retracted
+        // level survived and kept materialising as a "Targeting Staff-level roles." declared claim.
+        val cleared =
+            svc.put("s1", SubjectProfileUpdateRequest(targetSeniority = ""), actor = "op")
+                .expectRight()
+        assertNull(cleared.stored?.targetSeniority)
+    }
+
+    @Test
+    fun `a blank openToRelocation clears the stored stance where an absent one keeps it`() {
+        seedSubject()
+        val svc = service()
+        svc.put("s1", SubjectProfileUpdateRequest(openToRelocation = "false"), actor = "op")
+            .expectRight()
+        assertEquals(false, profiles.store["s1"]?.openToRelocation)
+
+        // Absent (null) ⇒ keep.
+        svc.put("s1", SubjectProfileUpdateRequest(), actor = "op").expectRight()
+        assertEquals(false, profiles.store["s1"]?.openToRelocation)
+
+        // Present-but-blank ("Prefer not to say") ⇒ clear the Boolean, so no "Not looking to
+        // relocate." claim materialises for a stance the subject retracted. The old `request ?:
+        // previous` on a nullable Boolean could not tell "cleared" from "absent" and kept `false`;
+        // the wire type is now text so the empty option can carry that third state.
+        val cleared =
+            svc.put("s1", SubjectProfileUpdateRequest(openToRelocation = ""), actor = "op")
+                .expectRight()
+        assertNull(cleared.stored?.openToRelocation)
     }
 
     @Test

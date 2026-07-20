@@ -71,6 +71,91 @@
                         points the question back to you. Leave it blank and it won't raise the
                         subject at all.</p>
 
+                    <!--
+                      VA-149: C/D — what you're looking for, and topics to keep private. These are
+                      the one part of this page your advocate can actually *say* about you, so they
+                      ride behind the attestation below. All optional; still friendly copy only.
+                    -->
+                    <h2>What you're looking for</h2>
+                    <p class="panel-fineprint">Tell your advocate the kind of work you want. It uses
+                        this to speak up for the right roles — and to turn down, in your words, the
+                        ones that aren't for you.</p>
+
+                    <label>Roles you're aiming for</label>
+                    <input class="stacked" type="text" name="targetRoles"
+                           th:each="r : ${stored?.targetRoles}" th:value="${r}"/>
+                    <input class="stacked" type="text" name="targetRoles"
+                           placeholder="e.g. Staff Engineer"/>
+
+                    <label>The level you're targeting
+                        <select name="targetSeniority">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="s : ${seniorities}" th:value="${s.value}"
+                                    th:text="${s.label}"
+                                    th:selected="${s.value == stored?.targetSeniority}">Level</option>
+                        </select>
+                    </label>
+
+                    <label>How you'd like to work
+                        <select name="employmentType">
+                            <option value="">Prefer not to say</option>
+                            <option th:each="e : ${employmentTypes}" th:value="${e.value}"
+                                    th:text="${e.label}"
+                                    th:selected="${e.value == stored?.employmentType?.name()}">How</option>
+                        </select>
+                    </label>
+
+                    <label>Open to relocating
+                        <select name="openToRelocation">
+                            <option value="">Prefer not to say</option>
+                            <option value="true" th:selected="${stored?.openToRelocation == true}">Yes</option>
+                            <option value="false" th:selected="${stored?.openToRelocation == false}">No</option>
+                        </select>
+                    </label>
+
+                    <label>What you're optimising for</label>
+                    <input class="stacked" type="text" name="aspirations"
+                           th:each="a : ${stored?.aspirations}" th:value="${a}"/>
+                    <input class="stacked" type="text" name="aspirations"
+                           placeholder="e.g. Deep technical work, not management"/>
+
+                    <label>Anything else you'd want said</label>
+                    <input class="stacked" type="text" name="statedPreferences"
+                           th:each="p : ${stored?.statedPreferences}" th:value="${p}"/>
+                    <input class="stacked" type="text" name="statedPreferences"
+                           placeholder="A preference your advocate should know"/>
+
+                    <h2>Topics to keep private</h2>
+                    <p class="panel-fineprint">Tick anything you'd rather your advocate didn't get
+                        into. It will gently steer away from these instead of answering.</p>
+                    <label class="attest" th:each="t : ${dndTopics}">
+                        <input type="checkbox" name="doNotDiscussChecks" th:value="${t.key}"
+                               th:checked="${stored != null and #lists.contains(stored.doNotDiscussChecks, t.key)}"/>
+                        <span th:text="${t.label}">Topic</span>
+                    </label>
+
+                    <label>Something else to keep private
+                        <input type="text" name="doNotDiscussCustom"
+                               th:value="${stored?.doNotDiscussCustom?.text}"
+                               placeholder="One topic, in your own words"/>
+                    </label>
+                    <p class="panel-fineprint" th:if="${stored?.doNotDiscussCustom != null}"
+                       th:switch="${stored.doNotDiscussCustom.state.name()}">
+                        <span th:case="'PENDING'">We're reviewing this one — until then your advocate
+                            treats it as private to be safe.</span>
+                        <span th:case="'APPROVED'">Added — your advocate keeps this off the table.</span>
+                        <span th:case="'REJECTED'">We couldn't add this exactly as written — reword it
+                            and we'll take another look.</span>
+                    </p>
+
+                    <!-- The declared-narrative attestation (§7.1) — the write is refused without it
+                         whenever anything above is filled in. -->
+                    <label class="attest">
+                        <input type="checkbox" name="declaredAttested" value="true"/>
+                        Everything I've entered about what I'm looking for is true, and I want my
+                        advocate to speak for me on it.
+                    </label>
+
                     <button type="submit" class="btn btn--primary">Save my details</button>
                 </form>
                 <p class="panel-fineprint">Leave anything blank if you'd rather not say — your
@@ -90,8 +175,16 @@
                     </tr>
                     </tbody>
                 </table>
-                <p class="panel-lede" th:if="${summary.isEmpty()}">You didn't add any of these —
-                    your advocate works from your evidence alone.</p>
+                <p class="panel-lede" th:if="${summary.isEmpty() and stored?.doNotDiscussCustom == null}">
+                    You didn't add any of these — your advocate works from your evidence alone.</p>
+                <p class="panel-fineprint" th:if="${stored?.doNotDiscussCustom != null}"
+                   th:switch="${stored.doNotDiscussCustom.state.name()}">
+                    <span th:case="'PENDING'">One private topic you added is still being
+                        reviewed — until then your advocate keeps it off the table.</span>
+                    <span th:case="'APPROVED'">Also kept private:
+                        <span th:text="${stored.doNotDiscussCustom.text}">topic</span>.</span>
+                    <span th:case="'REJECTED'">One topic you added couldn't be kept as written.</span>
+                </p>
                 <p class="panel-fineprint">If something here needs changing, tell us and we'll
                     sort it out.</p>
             </div>

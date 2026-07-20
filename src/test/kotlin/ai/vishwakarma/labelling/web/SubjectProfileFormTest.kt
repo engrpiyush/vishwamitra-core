@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.EmploymentType
 import ai.vishwakarma.labelling.domain.IntakeManifest
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectProfile
@@ -185,6 +186,31 @@ class SubjectProfileFormTest {
     @Test
     fun `a blank profile summarises to nothing at all`() {
         assertTrue(SubjectProfileForm.summary(SubjectProfileDefaults.resolve(null)).isEmpty())
+    }
+
+    @Test
+    fun `summary surfaces the C-D declared fields in subject-safe words, keys as labels`() {
+        val resolved =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    targetRoles = listOf("Staff Engineer"),
+                    targetSeniority = "Staff",
+                    employmentType = EmploymentType.FTE,
+                    openToRelocation = false,
+                    aspirations = listOf("Optimising for staff-level IC work"),
+                    doNotDiscussChecks = listOf("health"),
+                )
+            )
+        val byLabel = SubjectProfileForm.summary(resolved).associate { it.label to it.value }
+
+        assertEquals("Staff Engineer", byLabel["Roles you're aiming for"])
+        assertEquals("Staff", byLabel["Level you're targeting"])
+        assertEquals("A permanent role", byLabel["How you'd like to work"])
+        assertEquals("No", byLabel["Open to relocating"])
+        assertEquals("Optimising for staff-level IC work", byLabel["What you're optimising for"])
+        // A do-not-discuss key renders as its curated label, never the raw storage key.
+        assertEquals("Health and medical history", byLabel["Topics to keep private"])
     }
 
     // ---- §12.3: the subject never reads a service string ------------------------------

@@ -514,6 +514,28 @@ class IntakeService(
     }
 
     /**
+     * SubjectProfile declared-narrative attestation (VA-149, profile LLD §7.1): the strict twin of
+     * [attestConsent], stamping who attested and when on the manifest — called by the subject
+     * profile surface each time the subject submits a group-C/D declaration under the "these
+     * details are true and I want my advocate to speak for me on them" statement. Required per
+     * submit, so the stamp is simply refreshed (latest wins; the attestation itself is
+     * irrevocable). The *content* of the declaration rides the separate profile document and
+     * materialises into claims at the seal ([sealManifest]); this stamps only the audited fact that
+     * the subject affirmed it, exactly as consent does for uploads.
+     */
+    fun attestDeclared(subjectId: String, actor: String?): IntakeManifest {
+        val current = recomputeManifest(subjectId)
+        val attested =
+            current.copy(
+                declaredAttestedAt = Instant.now(),
+                declaredAttestedBy = actor,
+                updatedAt = Instant.now(),
+            )
+        manifests.save(attested)
+        return attested
+    }
+
+    /**
      * Seal the manifest for the Stage 2 handoff. Gated by [IntakeManifest.sealBlockers]; requires a
      * mandatory operator [note] (the confirmation justification), audited in
      * [IntakeManifest.sealEvents].
@@ -626,6 +648,8 @@ class IntakeService(
                 reviewSubmittedAt = existing?.reviewSubmittedAt,
                 consentAttestedAt = existing?.consentAttestedAt,
                 consentAttestedBy = existing?.consentAttestedBy,
+                declaredAttestedAt = existing?.declaredAttestedAt,
+                declaredAttestedBy = existing?.declaredAttestedBy,
                 updatedAt = Instant.now(),
             )
         manifests.save(manifest)

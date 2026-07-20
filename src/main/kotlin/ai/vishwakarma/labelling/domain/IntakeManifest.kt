@@ -74,6 +74,17 @@ data class IntakeManifest(
      */
     val consentAttestedAt: Instant? = null,
     val consentAttestedBy: String? = null,
+    /**
+     * SubjectProfile declared-narrative attestation (VA-149, profile LLD §7.1): stamped every time
+     * the subject attests the "these details are true and I want my advocate to speak for me on
+     * them" statement on the self-serve profile surface while declaring groups C/D — the same
+     * required-per-submit shape as [consentAttestedAt], with which it runs strictly parallel
+     * (latest wins; one-time and irrevocable; no revocation surface). Null when the subject never
+     * declared C/D, and — deliberately — for admin-entered declarations: the operator panel carries
+     * operator authority, not a subject attestation, so it never stamps this (§7.2).
+     */
+    val declaredAttestedAt: Instant? = null,
+    val declaredAttestedBy: String? = null,
     val updatedAt: Instant? = null,
 ) {
     /** The most recent seal-lifecycle event, if any. */

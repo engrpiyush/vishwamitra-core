@@ -45,7 +45,13 @@ data class SubjectProfileUpdateRequest(
     val targetSeniority: String? = null,
     /** `FTE` / `CONTRACT` / `EITHER`; blank string clears. */
     val employmentType: String? = null,
-    val openToRelocation: Boolean? = null,
+    /**
+     * `true` / `false`; null keeps stored, a present blank string clears — the tri-state the form's
+     * "Prefer not to say"/"—" option needs. A nullable Boolean could not carry that third state
+     * (null had to mean both "absent, keep" and "cleared"), so this rides the wire as text and is
+     * parsed in [SubjectProfileService.put], exactly like [employmentType].
+     */
+    val openToRelocation: String? = null,
     // ---- D. Declared narrative — null = keep stored ----
     val aspirations: List<String>? = null,
     val statedPreferences: List<String>? = null,
@@ -165,13 +171,25 @@ class SubjectProfileService(
                 targetRoles =
                     request.targetRoles?.let { declaredList(it, "targetRoles", errors) }
                         ?: previous?.targetRoles.orEmpty(),
+                // The three C/D scalars share one shape, so "keep" and "clear" never collapse: a
+                // *null* request field is one the surface did not offer — keep what is stored; a
+                // *present-but-blank* one is the form's empty "Prefer not to say"/"—" option, a
+                // deliberate withdrawal that clears the stance (§7 request KDoc). Reading a blank
+                // as
+                // "keep" is the bug this shape fixes — a subject who picks "Prefer not to say" must
+                // be able to retract a Yes/No/level, not silently re-assert it.
                 targetSeniority =
-                    request.targetSeniority?.let { declaredLine(it, "targetSeniority", errors) }
-                        ?: previous?.targetSeniority,
+                    if (request.targetSeniority == null) previous?.targetSeniority
+                    else declaredLine(request.targetSeniority, "targetSeniority", errors),
                 employmentType =
                     if (request.employmentType == null) previous?.employmentType
                     else parse(request.employmentType, "employmentType", EmploymentType::valueOf),
-                openToRelocation = request.openToRelocation ?: previous?.openToRelocation,
+                openToRelocation =
+                    if (request.openToRelocation == null) previous?.openToRelocation
+                    else
+                        parse(request.openToRelocation, "openToRelocation") {
+                            it.toBooleanStrictOrNull()
+                        },
                 aspirations =
                     request.aspirations?.let { declaredList(it, "aspirations", errors) }
                         ?: previous?.aspirations.orEmpty(),

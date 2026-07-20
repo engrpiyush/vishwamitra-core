@@ -25,6 +25,7 @@ import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TokenChip
 import ai.vishwakarma.labelling.service.TokenService
 import ai.vishwakarma.labelling.service.UserService
+import jakarta.servlet.http.HttpServletRequest
 import java.time.LocalDate
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
@@ -171,6 +172,10 @@ class IntakeController(
         model.addAttribute("currencies", SubjectProfileForm.currencies)
         model.addAttribute("languages", SubjectProfileForm.languages)
         model.addAttribute("timezones", SubjectProfileForm.timezones)
+        // VA-150: the C/D declared-evidence catalogs, passed the same way as the A/B lists above.
+        model.addAttribute("employmentTypes", SubjectProfileForm.employmentTypes)
+        model.addAttribute("seniorities", SubjectProfileForm.seniorities)
+        model.addAttribute("dndTopics", SubjectProfileForm.doNotDiscussTopics)
         return "intake/detail"
     }
 
@@ -229,6 +234,7 @@ class IntakeController(
      */
     @PostMapping("/{id}/profile")
     fun editProfile(
+        request: HttpServletRequest,
         @PathVariable id: String,
         @RequestParam(required = false) country: String?,
         @RequestParam(required = false) marketRegion: String?,
@@ -236,8 +242,22 @@ class IntakeController(
         @RequestParam(required = false) timezone: String?,
         @RequestParam(required = false) primaryLanguage: String?,
         @RequestParam(required = false) knowledgeAsOf: String?,
+        // ---- C/D declared evidence (VA-150) — no attestation here: this is operator authority,
+        // not the subject's own affirmation, so it never stamps declaredAttested (§7.2). Scalars
+        // bind as @RequestParam; the LIST fields are read off the request below. ----
+        @RequestParam(required = false) targetSeniority: String?,
+        @RequestParam(required = false) employmentType: String?,
+        @RequestParam(required = false) openToRelocation: String?,
+        @RequestParam(required = false) doNotDiscussCustom: String?,
         ra: RedirectAttributes,
     ): String {
+        // Read straight off the request, never as `@RequestParam List<String>`: Spring comma-splits
+        // a single-value box, and a declared line legitimately carries commas (§7.1 aspiration) —
+        // getParameterValues returns the boxes exactly as submitted, unsplit.
+        val targetRoles = request.getParameterValues("targetRoles")?.toList()
+        val aspirations = request.getParameterValues("aspirations")?.toList()
+        val statedPreferences = request.getParameterValues("statedPreferences")?.toList()
+        val doNotDiscussChecks = request.getParameterValues("doNotDiscussChecks")?.toList()
         profiles
             .put(
                 id,
@@ -248,6 +268,21 @@ class IntakeController(
                     timezone = timezone,
                     primaryLanguage = primaryLanguage,
                     knowledgeAsOf = knowledgeAsOf,
+                    // The panel renders every C/D input, so a submit is the whole C/D intent —
+                    // coalesce the lists null→empty so clearing the last checkbox actually clears
+                    // the field (an unchecked box posts nothing; the service reads a null list as
+                    // "keep stored", §7). The scalar selects post their empty "—" option straight
+                    // through as a blank: the service reads a present blank as a clear, so the
+                    // operator can withdraw a stored seniority/engagement/relocation stance, not
+                    // merely change it. openToRelocation is relayed as raw text and parsed there.
+                    targetRoles = targetRoles ?: emptyList(),
+                    targetSeniority = targetSeniority,
+                    employmentType = employmentType,
+                    openToRelocation = openToRelocation,
+                    aspirations = aspirations ?: emptyList(),
+                    statedPreferences = statedPreferences ?: emptyList(),
+                    doNotDiscussChecks = doNotDiscussChecks ?: emptyList(),
+                    doNotDiscussCustom = doNotDiscussCustom,
                 ),
                 actor(),
             )
@@ -260,6 +295,40 @@ class IntakeController(
                             "Profile saved — hash ${it.take(12)}… (generation runs pin to it; " +
                                 "examples stamped with the old one archive on the next Stage 4 tick)"
                         } ?: "Profile cleared — no context is injected and no run is pinned to it",
+                    )
+                },
+            )
+        return "redirect:/intake/$id"
+    }
+
+    /**
+     * VA-150 (SP-DND, OD-9): the admin verdict on the subject's one bespoke do-not-discuss entry.
+     * Approval is what lets that string materialise as a declared boundary claim — a `PENDING` or
+     * `REJECTED` entry never reaches Stage 4 — so it is a first-class audited action, not a field
+     * on [editProfile] (which the subject-side write also drives).
+     *
+     * Deliberately **not** seal-gated (unlike the profile edit): [SubjectProfileService] records a
+     * verdict on already-frozen text and re-runs the materialiser when the manifest is sealed but
+     * the corpus is not yet consumed — the one path that legitimately writes a declared claim after
+     * the seal. It refuses on its own once Stage 2 has frozen the corpus (§12.8.8), so the panel
+     * can show this control while sealed without a second gate here.
+     */
+    @PostMapping("/{id}/profile/dnd-custom")
+    fun decideDoNotDiscuss(
+        @PathVariable id: String,
+        @RequestParam approve: Boolean,
+        ra: RedirectAttributes,
+    ): String {
+        profiles
+            .decideDoNotDiscussCustom(id, approve, actor())
+            .fold(
+                { flashError(ra, it) },
+                {
+                    ra.addFlashAttribute(
+                        "ok",
+                        if (approve)
+                            "Custom do-not-discuss approved — it materialises as a declared boundary."
+                        else "Custom do-not-discuss rejected — it never reaches the evidence set.",
                     )
                 },
             )

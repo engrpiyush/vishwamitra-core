@@ -163,6 +163,13 @@ class SubjectTrainingController(
         model.addAttribute("currencies", SubjectProfileForm.currencies)
         model.addAttribute("languages", SubjectProfileForm.languages)
         model.addAttribute("timezones", SubjectProfileForm.timezones)
+        // VA-149: the C/D declared-evidence catalogs — the C engagement/seniority dropdowns and the
+        // curated do-not-discuss checklist. Everything else the C/D section needs (the roles /
+        // aspirations / preferences lines and the bespoke entry's approval state) is read off
+        // `stored`, already on the model.
+        model.addAttribute("employmentTypes", SubjectProfileForm.employmentTypes)
+        model.addAttribute("seniorities", SubjectProfileForm.seniorities)
+        model.addAttribute("dndTopics", SubjectProfileForm.doNotDiscussTopics)
         return "subject/training/profile"
     }
 
@@ -191,12 +198,66 @@ class SubjectTrainingController(
         @RequestParam(required = false) primaryLanguage: String?,
         @RequestParam(required = false) timezone: String?,
         @RequestParam(required = false) knowledgeAsOf: String?,
+        // ---- C/D declared evidence (VA-149). Scalars bind as @RequestParam; the LIST fields are
+        // read off the request below, never as @RequestParam List<String> — see the body. ----
+        @RequestParam(required = false) targetSeniority: String?,
+        @RequestParam(required = false) employmentType: String?,
+        /**
+         * Tri-state select, forwarded verbatim: "true"/"false" set the stance, the empty "Prefer
+         * not to say" option ("") clears it, and an absent param keeps what is stored (§7). Parsed
+         * by [SubjectProfileService.put], never here — this surface only relays the raw choice.
+         */
+        @RequestParam(required = false) openToRelocation: String?,
+        @RequestParam(required = false) doNotDiscussCustom: String?,
+        /**
+         * The declared-narrative attestation checkbox (§7.1); the C/D write is refused without it.
+         */
+        @RequestParam(required = false) declaredAttested: Boolean?,
         ra: RedirectAttributes,
     ): String {
         val ctx = ctx(request)
+        // The declared LIST fields are read straight off the request, never as
+        // `@RequestParam List<String>`: Spring's single-value binding comma-splits one box, and a
+        // declared line ("Optimising for staff-level IC work, not management") legitimately carries
+        // commas — a split would shatter one aspiration into two. getParameterValues returns
+        // exactly
+        // the boxes as submitted, unsplit; the service still trims, drops blanks and de-dupes.
+        val targetRoles = request.getParameterValues("targetRoles")?.toList()
+        val aspirations = request.getParameterValues("aspirations")?.toList()
+        val statedPreferences = request.getParameterValues("statedPreferences")?.toList()
+        val doNotDiscussChecks = request.getParameterValues("doNotDiscussChecks")?.toList()
         val manifest = intake.manifest(ctx.subjectId)
         val phase = SubjectTraining.phaseFor(manifest, stage2.listJobs(ctx.subjectId))
         if (phase != TrainingPhase.UPLOAD) return "redirect:/training/profile"
+
+        // The F2-shaped attestation gate (§7.1). A submit that carries **any** declared C/D content
+        // is refused server-side unless the subject ticked the "these details are true and I want
+        // my
+        // advocate to speak for me on them" box — a required checkbox that blocks the write,
+        // exactly
+        // like the upload-consent attestation one slice over
+        // (`SubjectTrainingApiController.register`
+        // → `IntakeService.attestConsent`). A pure A/B (locale) save carries no declaration and
+        // needs
+        // no attestation, unchanged from session 02; withdrawing declarations (all C/D blank) needs
+        // none either. The checkbox is deliberately never pre-ticked, so a save that re-submits a
+        // pre-filled declaration re-affirms it — the per-batch posture consent already uses.
+        val declaring =
+            declaresContent(
+                targetRoles,
+                targetSeniority,
+                employmentType,
+                openToRelocation,
+                aspirations,
+                statedPreferences,
+                doNotDiscussChecks,
+                doNotDiscussCustom,
+            )
+        if (declaring && declaredAttested != true) {
+            ra.addFlashAttribute("error", DECLARED_ATTEST_REQUIRED)
+            return "redirect:/training/profile"
+        }
+
         val storedMarket = profiles.view(ctx.subjectId).fold({ null }, { it.stored?.marketRegion })
         profiles
             .put(
@@ -208,6 +269,25 @@ class SubjectTrainingController(
                     timezone = timezone,
                     primaryLanguage = primaryLanguage,
                     knowledgeAsOf = knowledgeAsOf,
+                    // This form renders every C/D input, so a submit is the whole C/D intent: an
+                    // absent list means "none", not "keep". Coalesce the lists null→empty so
+                    // unticking the last do-not-discuss box actually clears the field — an
+                    // unchecked
+                    // checkbox posts nothing, which the service would otherwise read as "keep
+                    // stored" (§7 request KDoc). The scalar selects likewise post their empty
+                    // "Prefer not to say" option straight through as a blank: the service reads a
+                    // present blank as a clear, so choosing it withdraws a stored stance rather
+                    // than
+                    // silently re-asserting it. openToRelocation rides as raw text for the same
+                    // reason — parseTriState below is only the attestation gate's read of it.
+                    targetRoles = targetRoles ?: emptyList(),
+                    targetSeniority = targetSeniority,
+                    employmentType = employmentType,
+                    openToRelocation = openToRelocation,
+                    aspirations = aspirations ?: emptyList(),
+                    statedPreferences = statedPreferences ?: emptyList(),
+                    doNotDiscussChecks = doNotDiscussChecks ?: emptyList(),
+                    doNotDiscussCustom = doNotDiscussCustom,
                 ),
                 CurrentUser.email(),
             )
@@ -216,10 +296,55 @@ class SubjectTrainingController(
                     log.warn("Subject profile save refused for {}: {}", ctx.subjectId, err.message)
                     ra.addFlashAttribute("error", SubjectProfileForm.friendly(err))
                 },
-                { ra.addFlashAttribute("ok", "Saved — thanks, that helps your advocate.") },
+                {
+                    // Stamp the declared-narrative attestation only on a save that actually carried
+                    // a
+                    // declaration, and only once the write succeeded — the audited manifest twin of
+                    // consentAttested (§7.1). A locale-only save leaves it untouched.
+                    if (declaring) intake.attestDeclared(ctx.subjectId, CurrentUser.email())
+                    ra.addFlashAttribute("ok", "Saved — thanks, that helps your advocate.")
+                },
             )
         return "redirect:/training/profile"
     }
+
+    /**
+     * True when the request carries a real group-C/D declaration — any target role/aspiration/
+     * preference/do-not-discuss entry with non-blank text, a seniority/engagement/relocation
+     * choice, or a bespoke boundary. Blank list boxes (the form always posts its inputs, empty or
+     * not) do not count; this is what the §7.1 attestation gates.
+     */
+    private fun declaresContent(
+        targetRoles: List<String>?,
+        targetSeniority: String?,
+        employmentType: String?,
+        openToRelocation: String?,
+        aspirations: List<String>?,
+        statedPreferences: List<String>?,
+        doNotDiscussChecks: List<String>?,
+        doNotDiscussCustom: String?,
+    ): Boolean =
+        targetRoles.orEmpty().any { it.isNotBlank() } ||
+            !targetSeniority.isNullOrBlank() ||
+            !employmentType.isNullOrBlank() ||
+            parseTriState(openToRelocation) != null ||
+            aspirations.orEmpty().any { it.isNotBlank() } ||
+            statedPreferences.orEmpty().any { it.isNotBlank() } ||
+            doNotDiscussChecks.orEmpty().any { it.isNotBlank() } ||
+            !doNotDiscussCustom.isNullOrBlank()
+
+    /**
+     * "true"/"false" → the boolean; anything else (the blank "Prefer not to say" option, or an
+     * absent param) → null. Used only by [declaresContent] to decide whether a relocation *choice*
+     * was made and so needs the §7.1 attestation — a blank is a withdrawal, not a declaration. The
+     * keep-vs-clear decision lives in [SubjectProfileService.put], which reads the raw string.
+     */
+    private fun parseTriState(raw: String?): Boolean? =
+        when (raw?.trim()) {
+            "true" -> true
+            "false" -> false
+            else -> null
+        }
 
     /** Remove an upload before submit (also how a duplicate-file submit blocker is resolved). */
     @PostMapping("/assets/{assetId}/remove")
@@ -413,5 +538,10 @@ class SubjectTrainingController(
     companion object {
         /** The one all-purpose apology (§12.3: verbatim errors never render to a subject). */
         const val GENERIC_SORRY = "Something didn't go to plan on our side — we're looking into it."
+
+        /** Shown when a declaration is submitted without ticking the §7.1 attestation. */
+        const val DECLARED_ATTEST_REQUIRED =
+            "Before we save what you're looking for, please tick the box to confirm it's true and " +
+                "that you want your advocate to speak for you on it."
     }
 }

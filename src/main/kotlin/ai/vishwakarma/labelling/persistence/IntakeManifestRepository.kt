@@ -50,6 +50,8 @@ class IntakeManifestRepository(private val db: Firestore) {
             "reviewSubmittedAt" to reviewSubmittedAt.toTimestamp(),
             "consentAttestedAt" to consentAttestedAt.toTimestamp(),
             "consentAttestedBy" to consentAttestedBy,
+            "declaredAttestedAt" to declaredAttestedAt.toTimestamp(),
+            "declaredAttestedBy" to declaredAttestedBy,
             "updatedAt" to (updatedAt ?: Instant.now()).toTimestamp(),
         )
 
@@ -70,6 +72,8 @@ class IntakeManifestRepository(private val db: Firestore) {
             reviewSubmittedAt = instant("reviewSubmittedAt"),
             consentAttestedAt = instant("consentAttestedAt"),
             consentAttestedBy = getString("consentAttestedBy"),
+            declaredAttestedAt = instant("declaredAttestedAt"),
+            declaredAttestedBy = getString("declaredAttestedBy"),
             updatedAt = instant("updatedAt"),
         )
 

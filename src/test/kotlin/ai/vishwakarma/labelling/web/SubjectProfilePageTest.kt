@@ -28,6 +28,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -249,6 +251,104 @@ class SubjectProfilePageTest {
         mvc.perform(form()).andExpect(redirectedUrl("/training/profile"))
 
         assertEquals(0, profiles.putCalls)
+    }
+
+    // ---- C/D declared evidence + the §7.1 attestation gate (VA-149) ----------------
+
+    @Test
+    fun `a declaration without the attestation is refused before the service ever sees it`() {
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+
+        val result =
+            mvc.perform(form().param("aspirations", "Optimising for staff-level IC work"))
+                .andExpect(redirectedUrl("/training/profile"))
+                .andReturn()
+
+        // The gate is server-side: no write, subject-safe copy, and no audit stamp for a
+        // declaration the subject did not actually affirm.
+        assertEquals(0, profiles.putCalls)
+        assertEquals(
+            SubjectTrainingController.DECLARED_ATTEST_REQUIRED,
+            result.flashMap["error"],
+        )
+        verify(intake, never()).attestDeclared("s1", null)
+    }
+
+    @Test
+    fun `an attested declaration reaches the service and stamps the manifest`() {
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+        profiles.putResult = profileView().right()
+
+        mvc.perform(
+                form()
+                    .param("aspirations", "Optimising for staff-level IC work, not management")
+                    .param("targetSeniority", "Staff")
+                    .param("employmentType", "FTE")
+                    .param("doNotDiscussChecks", "health")
+                    .param("declaredAttested", "true")
+            )
+            .andExpect(redirectedUrl("/training/profile"))
+
+        assertEquals(1, profiles.putCalls)
+        val sent = profiles.lastPut!!
+        assertEquals(
+            listOf("Optimising for staff-level IC work, not management"),
+            sent.aspirations,
+        )
+        assertEquals("Staff", sent.targetSeniority)
+        assertEquals("FTE", sent.employmentType)
+        assertEquals(listOf("health"), sent.doNotDiscussChecks)
+        // The audited manifest stamp fires exactly once, and only on the declaring save.
+        verify(intake).attestDeclared("s1", null)
+    }
+
+    @Test
+    fun `a locale-only save neither needs nor records a declared attestation`() {
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+        profiles.putResult = profileView().right()
+
+        // `form()` posts A/B only — no C/D — so it is not a declaration and the box is irrelevant.
+        mvc.perform(form()).andExpect(redirectedUrl("/training/profile"))
+
+        assertEquals(1, profiles.putCalls)
+        verify(intake, never()).attestDeclared("s1", null)
+    }
+
+    @Test
+    fun `unticking every do-not-discuss box clears the field, not keeps it (the checkbox trap)`() {
+        // An unchecked checkbox posts nothing, so `doNotDiscussChecks` arrives null; the service
+        // reads a null list as "keep stored". The controller coalesces it to an empty list for this
+        // form (which always renders the checklist), so a subject can actually clear a boundary.
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+        profiles.putResult = profileView().right()
+
+        mvc.perform(form()).andExpect(redirectedUrl("/training/profile"))
+
+        assertEquals(emptyList(), profiles.lastPut!!.doNotDiscussChecks)
+        assertEquals(emptyList(), profiles.lastPut!!.aspirations)
+    }
+
+    @Test
+    fun `choosing Prefer not to say for relocation reaches the service as a blank, to clear it`() {
+        // The relocation select's empty option posts openToRelocation="" (present, empty). It is a
+        // withdrawal, not a declaration, so it trips no §7.1 attestation; the controller forwards
+        // the raw blank and the service reads it as a clear. The old `parseTriState("")` collapsed
+        // it to null, which the service kept as the stored stance — so a retracted "Not looking to
+        // relocate." went on being spoken. `form()` posts A/B only, so nothing else here declares.
+        phase(uploadPhase = true)
+        profiles.viewResult = profileView().right()
+        profiles.putResult = profileView().right()
+
+        mvc.perform(form().param("openToRelocation", ""))
+            .andExpect(redirectedUrl("/training/profile"))
+
+        assertEquals(1, profiles.putCalls)
+        assertEquals("", profiles.lastPut!!.openToRelocation)
+        verify(intake, never()).attestDeclared("s1", null)
     }
 
     @Test

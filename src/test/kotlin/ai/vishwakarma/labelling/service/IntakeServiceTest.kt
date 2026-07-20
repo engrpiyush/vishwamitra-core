@@ -24,6 +24,7 @@ import com.google.cloud.firestore.Firestore
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.mockito.Mockito.mock
 
@@ -652,5 +653,45 @@ class IntakeServiceTest {
         val second = service.attestConsent("s1", "dev-subject@example.com")
 
         assertTrue(!second.consentAttestedAt!!.isBefore(first.consentAttestedAt!!))
+    }
+
+    // ---- declared-narrative attestation (VA-149, profile §7.1) --------------
+
+    @Test
+    fun `attestDeclared stamps who and when on the manifest`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+
+        val attested = service.attestDeclared("s1", "subject@example.com")
+
+        assertTrue(attested.declaredAttestedAt != null)
+        assertEquals("subject@example.com", attested.declaredAttestedBy)
+    }
+
+    @Test
+    fun `manifest recompute carries the declared attestation stamp through`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+        val stamped = service.attestDeclared("s1", "subject@example.com")
+
+        // Every manifest read recomputes + saves; a field not carried through recompute is wiped —
+        // exactly the trap the consent stamp had, one field over.
+        val recomputed = service.manifest("s1")
+
+        assertEquals(stamped.declaredAttestedAt, recomputed.declaredAttestedAt)
+        assertEquals("subject@example.com", recomputed.declaredAttestedBy)
+    }
+
+    @Test
+    fun `the declared attestation is independent of consent — one never stamps the other`() {
+        seedSubject()
+        seed(asset(uploadStatus = AssetUploadStatus.STORED))
+
+        val declared = service.attestDeclared("s1", "subject@example.com")
+
+        // Declaring C/D is a distinct act from attesting upload consent; they must not leak into
+        // each other's audit slot (§7.1 — parallel, not shared).
+        assertNull(declared.consentAttestedAt)
+        assertNull(declared.consentAttestedBy)
     }
 }
