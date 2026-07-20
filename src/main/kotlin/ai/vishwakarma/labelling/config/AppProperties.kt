@@ -490,6 +490,23 @@ data class AppProperties(
         val tierHigh: Double = 0.75,
         val tierMedium: Double = 0.45,
         /**
+         * The belief floor stamped on a `SUBJECT_DECLARED` claim (SubjectProfile LLD §3.5, OD-1).
+         *
+         * Belief-of-declaration and external corroboration are different questions. "The subject
+         * declared X" is certain — it was typed on the authenticated surface — while whether X is
+         * corroborated is legitimately low and stays visible in [Claim.authenticitySignals] and in
+         * the LOW tier. Scoring a declaration as ordinary low-prior SELF evidence would sink it
+         * below the voicing bands and the O5 gate would never see it, which is the gap the whole
+         * feature exists to close.
+         *
+         * The default sits **above [tierMedium] and below [tierHigh]** on purpose: at 0.50 a
+         * declaration plans on the planner's row 3 — hedged and self-attributed ("as he tells it")
+         * — which is exactly the voice a declaration has earned, and can never reach row 1's
+         * assertive band on the strength of having been typed. It is a floor, never a ceiling: a
+         * declaration that genuinely picks up corroboration keeps the higher computed score.
+         */
+        val declaredBeliefFloor: Double = 0.50,
+        /**
          * Subject Authenticity Index (Stage 3.5 LLD §3): the subject-level aggregate. Mass
          * saturation midpoint m0 — `sat(m) = m/(m+m0)`; higher = sterner on thin evidence.
          */

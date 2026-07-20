@@ -3,6 +3,7 @@ package ai.vishwakarma.labelling.persistence
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimBasis
+import ai.vishwakarma.labelling.domain.ClaimOrigin
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.PublishedAttestor
 import ai.vishwakarma.labelling.domain.PublishedEntityMention
@@ -116,6 +117,9 @@ class ClaimRepository(private val db: Firestore) {
             "entityMentions" to entityMentions?.map { it.toMap() },
             "edgeCounts" to edgeCounts,
             "attestor" to attestor?.toMap(),
+            // SubjectProfile §3.2 — provenance, written only by the declared-claim materialiser.
+            "origin" to origin?.name,
+            "declaredType" to declaredType,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
             "stage2ProcessedAt" to stage2ProcessedAt.toTimestamp(),
         )
@@ -157,6 +161,10 @@ class ClaimRepository(private val db: Firestore) {
                     ?.mapNotNull { (k, v) -> (v as? Number)?.let { n -> k to n.toInt() } }
                     ?.toMap(),
             attestor = rawMap(get("attestor"))?.toAttestor(),
+            // Absent/garbage origin reads as null ⇒ EXTRACTED (`Claim.declared`), so every claim
+            // written before the feature keeps its exact pre-feature behaviour with no backfill.
+            origin = ClaimOrigin.fromOrNull(getString("origin")),
+            declaredType = getString("declaredType"),
             createdAt = instant("createdAt"),
             stage2ProcessedAt = instant("stage2ProcessedAt"),
         )

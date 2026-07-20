@@ -658,4 +658,91 @@ class ScorerTest {
         assertEquals(0.35, outcome.facts.first { it.factId == "F3" }.belief, 0.005)
         assertEquals(abs(outcome.i2Clamped).toLong(), 0L)
     }
+
+    // ---- SubjectProfile §3.5 declared belief floor (OD-1) ------------------------------------
+
+    /** A lone declared claim with no corroboration would score ~0.35; the floor lifts it. */
+    private fun declaredSnapshot(declared: Boolean) =
+        GraphSnapshot(
+            claims =
+                listOf(
+                    claimSnap("d1", "FD", tierSeed = "LOW", favorability = 0.5)
+                        .copy(declared = declared)
+                ),
+            facts = listOf(factSnap("FD", "d1", kind = "TIMELESS")),
+            attestors = listOf(attestor("subject:asha", 0.5)),
+            edges = emptyList(),
+        )
+
+    @Test
+    fun `a declared claim publishes at the belief floor with tier pinned LOW`() {
+        val floor = AppProperties.Stage3().declaredBeliefFloor
+        val declared = Scorer.score(declaredSnapshot(true), params()).claims.single()
+        val extracted = Scorer.score(declaredSnapshot(false), params()).claims.single()
+
+        // The same claim, extracted, sits at the low SELF prior well under the floor.
+        assertTrue(extracted.score < floor, "control should be below the floor: ${extracted.score}")
+        // Declared is lifted to the floor, and score == scoreBare so no phantom row-6 gap opens.
+        assertEquals(floor, declared.score, 0.005)
+        assertEquals(floor, declared.scoreBare, 0.005)
+        // Tier stays honest: being typed is not corroboration.
+        assertEquals("LOW", declared.tier)
+    }
+
+    @Test
+    fun `the floor never lowers an already-higher declared score`() {
+        // A well-corroborated declaration keeps its computed score — the floor is a floor, not a
+        // cap.
+        val snapshot =
+            GraphSnapshot(
+                claims =
+                    listOf(
+                        claimSnap("d1", "FD", tierSeed = "HIGH", favorability = 0.5)
+                            .copy(declared = true)
+                    ),
+                facts = listOf(factSnap("FD", "d1", kind = "TIMELESS")),
+                attestors = listOf(attestor("subject:asha", 0.5)),
+                edges = emptyList(),
+            )
+        val declared = Scorer.score(snapshot, params()).claims.single()
+        assertTrue(
+            declared.score > AppProperties.Stage3().declaredBeliefFloor,
+            "a HIGH-seed declaration should keep its higher score: ${declared.score}",
+        )
+    }
+
+    @Test
+    fun `a corpus fact contradicting a declaration still lands as conflict (floor is not immunity)`() {
+        // Declared fact FD vs an extracted fact FE that contradicts it: the floor governs FD's
+        // eligibility, but the CONTRADICTS edge is scored exactly as for extracted evidence, so the
+        // conflict signal is non-zero and the contradiction is not suppressed.
+        val snapshot =
+            GraphSnapshot(
+                claims =
+                    listOf(
+                        claimSnap("d1", "FD", tierSeed = "LOW", favorability = 0.5)
+                            .copy(declared = true),
+                        claimSnap(
+                            "e1",
+                            "FE",
+                            tierSeed = "HIGH",
+                            sourceClass = "DOCUMENTARY",
+                            attestorKey = "issuer:i1",
+                        ),
+                    ),
+                facts =
+                    listOf(
+                        factSnap("FD", "d1", kind = "TIMELESS"),
+                        factSnap("FE", "e1", kind = "TIMELESS"),
+                    ),
+                attestors = listOf(attestor("subject:asha", 0.5), attestor("issuer:i1", 0.85)),
+                edges = listOf(contradicts("FE", "FD", confidence = 0.9)),
+            )
+        val outcome = Scorer.score(snapshot, params())
+        val declaredFact = outcome.facts.single { it.factId == "FD" }
+        assertTrue(
+            declaredFact.signals.conflict > 0.0,
+            "the contradiction must still surface as conflict: ${declaredFact.signals.conflict}",
+        )
+    }
 }

@@ -8,16 +8,24 @@ import java.util.Locale
 /**
  * The manually-entered subject block (SubjectProfile LLD §2.1), `subject_profiles`, doc id =
  * subjectId — sparse and all-nullable exactly like [SubjectPersona]: a blank profile is legal and
- * resolves to today's behaviour. This slice carries **A** (locale & environment) and **B**
- * (knowledge freshness) only; the C/D declared-evidence fields and E contact fields arrive with
- * their own slices.
+ * resolves to today's behaviour. This carries **A** (locale & environment), **B** (knowledge
+ * freshness), **C** (candidacy / targeting) and **D** (declared narrative); the E contact fields
+ * arrive with slice 3.
  *
- * A/B are *context*, never a claimed fact about the person — they render into the generation prompt
- * as `{{locale}}` / `{{knowledge_as_of}}` and can therefore never introduce a fabrication (§10).
+ * The two halves are different *kinds* of thing and the code keeps them apart everywhere:
+ * - **A/B are context.** They render into the generation prompt as `{{locale}}` /
+ *   `{{knowledge_as_of}}`, never assert a fact about the person, and so carry no fabrication
+ *   surface (§10).
+ * - **C/D are declared evidence.** They become provenance-tagged `SUBJECT_DECLARED` claims at the
+ *   seal ([ai.vishwakarma.labelling.service.ProfileClaimMaterialiser]) and travel the ordinary
+ *   ledger path from there. Nothing in C/D reaches a prompt directly.
  *
  * [profileHash] is the SHA-256 over the *resolved* A/B scalars — the third drift axis beside
  * scoreRunId and personaHash ([Stage4Stamp], §6.4): an A/B-only edit changes no claim and no score,
- * so without it stale-locale notebooks would survive and export.
+ * so without it stale-locale notebooks would survive and export. C/D deliberately stay **out** of
+ * that hash: a C/D edit rewrites the claim set, which forces a fresh Stage 3 run and moves
+ * `scoreRunId`, so the drift sweep already catches it on the axis that actually changed. Folding
+ * them in would additionally change the hash of every existing A/B profile and archive the lot.
  */
 data class SubjectProfile(
     val subjectId: String,
@@ -35,6 +43,21 @@ data class SubjectProfile(
     // ---- B. Knowledge freshness ----
     /** Profile override for `{{knowledge_as_of}}`; null ⇒ the publish date is used (§4.3). */
     val knowledgeAsOf: LocalDate? = null,
+    // ---- C. Candidacy / targeting (declared evidence) ----
+    /** Roles the subject says he is targeting, e.g. "Staff Engineer". */
+    val targetRoles: List<String> = emptyList(),
+    /** Target band, e.g. "staff", "principal". */
+    val targetSeniority: String? = null,
+    val employmentType: EmploymentType? = null,
+    val openToRelocation: Boolean? = null,
+    // ---- D. Declared narrative (declared evidence) ----
+    /** "Optimising for staff-level IC work, not management." — the O5 gate's real source. */
+    val aspirations: List<String> = emptyList(),
+    val statedPreferences: List<String> = emptyList(),
+    /** Curated [DoNotDiscussVocabulary] keys the subject toggled (OD-9). */
+    val doNotDiscussChecks: List<String> = emptyList(),
+    /** One bespoke entry, inert until an admin approves it (OD-9). */
+    val doNotDiscussCustom: DoNotDiscussCustom? = null,
     // ---- audit ----
     val updatedBy: String? = null,
     val updatedAt: Instant? = null,
@@ -55,9 +78,27 @@ data class ResolvedSubjectProfile(
     val timezone: String = "",
     val primaryLanguage: String = "",
     val knowledgeAsOf: LocalDate? = null,
+    // ---- C/D: declared evidence, normalised (trimmed, blank-dropped, de-duplicated) ----
+    val targetRoles: List<String> = emptyList(),
+    val targetSeniority: String = "",
+    val employmentType: EmploymentType? = null,
+    val openToRelocation: Boolean? = null,
+    val aspirations: List<String> = emptyList(),
+    val statedPreferences: List<String> = emptyList(),
+    /** Only keys [DoNotDiscussVocabulary] still recognises, in vocabulary order. */
+    val doNotDiscussChecks: List<String> = emptyList(),
+    /** Present only when the admin approved it — [DoNotDiscussCustom.materialisable] (OD-9). */
+    val approvedDoNotDiscussCustom: String? = null,
 ) {
 
-    /** True when nothing at all is declared — the legacy-equivalent profile. */
+    /**
+     * True when nothing in **A/B** is declared — the legacy-equivalent profile.
+     *
+     * Deliberately blind to C/D: this predicate gates the `{{knowledge_as_of}}` publish-date rung
+     * (§12.2), so counting a declared aspiration here would start emitting a freshness clause into
+     * the prompt of a subject who set no locale and no date. C/D never reach a prompt; ask
+     * [declaredBlank] about them.
+     */
     val blank: Boolean
         get() =
             country.isBlank() &&
@@ -66,6 +107,20 @@ data class ResolvedSubjectProfile(
                 timezone.isBlank() &&
                 primaryLanguage.isBlank() &&
                 knowledgeAsOf == null
+
+    /**
+     * True when nothing in C/D is declared — the materialiser writes no claims for such a subject.
+     */
+    val declaredBlank: Boolean
+        get() =
+            targetRoles.isEmpty() &&
+                targetSeniority.isBlank() &&
+                employmentType == null &&
+                openToRelocation == null &&
+                aspirations.isEmpty() &&
+                statedPreferences.isEmpty() &&
+                doNotDiscussChecks.isEmpty() &&
+                approvedDoNotDiscussCustom == null
 
     /**
      * The `{{locale}}` substitution value, e.g. "the India market (INR), primary language en-IN"
@@ -98,6 +153,8 @@ data class ResolvedSubjectProfile(
      * may archive anything.
      */
     fun hashOrNull(): String? {
+        // A/B only, by construction: see the [SubjectProfile] class doc — C/D drift is carried by
+        // scoreRunId, and hashing them here would archive every existing A/B subject's notebooks.
         if (blank) return null
         val canonical =
             sortedMapOf(
@@ -147,7 +204,26 @@ object SubjectProfileDefaults {
             timezone = stored?.timezone.clean(),
             primaryLanguage = stored?.primaryLanguage.clean(),
             knowledgeAsOf = stored?.knowledgeAsOf,
+            targetRoles = stored?.targetRoles.cleanList(),
+            targetSeniority = stored?.targetSeniority.clean(),
+            employmentType = stored?.employmentType,
+            openToRelocation = stored?.openToRelocation,
+            aspirations = stored?.aspirations.cleanList(),
+            statedPreferences = stored?.statedPreferences.cleanList(),
+            // Unknown keys are dropped rather than carried: the write-time validator rejects them,
+            // so a survivor here is a key retired from the vocabulary after the doc was stored, and
+            // a retired boundary must stop materialising instead of failing the seal.
+            doNotDiscussChecks =
+                DoNotDiscussVocabulary.known(stored?.doNotDiscussChecks ?: emptyList()),
+            approvedDoNotDiscussCustom =
+                stored?.doNotDiscussCustom?.takeIf { it.materialisable }?.text?.trim(),
         )
 
     private fun String?.clean(): String = this?.trim() ?: ""
+
+    /** Trim, drop blanks, de-duplicate case-insensitively, keep first-declared order. */
+    private fun List<String>?.cleanList(): List<String> {
+        val seen = mutableSetOf<String>()
+        return orEmpty().map { it.trim() }.filter { it.isNotBlank() && seen.add(it.lowercase()) }
+    }
 }

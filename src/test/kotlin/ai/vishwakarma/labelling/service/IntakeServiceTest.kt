@@ -15,7 +15,9 @@ import ai.vishwakarma.labelling.gcs.IntakeStorage
 import ai.vishwakarma.labelling.gcs.SignedUpload
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AssetRepository
+import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
+import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
@@ -119,7 +121,24 @@ class IntakeServiceTest {
             intake = AppProperties.Intake(maxAssetSizeBytes = 1000, staleUploadHours = 24)
         )
     private val storage = FakeStorage(props)
-    private val service = IntakeService(assets, subjects, manifests, storage, liveConfig(props))
+
+    /** Records the subjectId the seal handed the materialiser (SubjectProfile §3.6). */
+    private val materialiser =
+        object :
+            ProfileClaimMaterialiser(
+                liveConfig(props),
+                mock(SubjectProfileRepository::class.java),
+                mock(ClaimRepository::class.java),
+            ) {
+            val calls = mutableListOf<String>()
+
+            override fun materialise(subjectId: String): MaterialisedClaims {
+                calls += subjectId
+                return MaterialisedClaims()
+            }
+        }
+    private val service =
+        IntakeService(assets, subjects, manifests, storage, liveConfig(props), materialiser)
 
     private val path = "intake/s1/resume_cv/2026-07-01/a1-resume.pdf"
 
@@ -305,6 +324,20 @@ class IntakeServiceTest {
         assertTrue(sealed.sealed)
         assertEquals("reviewer@vishwakarma.ai", sealed.sealedBy)
         assertTrue(sealed.sealBlockers.isEmpty())
+        // SubjectProfile §3.6 — the seal materialises declared claims for exactly this subject.
+        assertEquals(listOf("s1"), materialiser.calls)
+    }
+
+    @Test
+    fun `a refused seal never materialises declared claims`() {
+        seedSubject()
+        // Pending consent blocks the seal; the materialiser must not have run.
+        seed(asset(consentStatus = ConsentStatus.PENDING, uploadStatus = AssetUploadStatus.STORED))
+
+        val result = service.sealManifest("s1", "reviewer@vishwakarma.ai", "reviewed")
+
+        assertTrue(result.errorOrNull() != null)
+        assertTrue(materialiser.calls.isEmpty())
     }
 
     // ---- cross-asset dedup (§12.7 hardening, rank #1) --------------------------

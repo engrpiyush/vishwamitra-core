@@ -94,4 +94,77 @@ class SubjectProfileTest {
     }
 
     private fun ResolvedSubjectProfile.hash(): String = checkNotNull(hashOrNull())
+
+    // ---- C/D declared evidence (§2.1, §3.4) --------------------------------------------------
+
+    @Test
+    fun `C-or-D content does not change the A-or-B hash and does not un-blank A-or-B`() {
+        // The class-doc contract: C/D drift rides scoreRunId, never profileHash, so folding it into
+        // the hash would archive every existing A/B subject's notebooks.
+        val withCd =
+            worked.copy(
+                aspirations = listOf("Optimising for staff-level IC work, not management."),
+                targetSeniority = "staff",
+            )
+        assertEquals(
+            SubjectProfileDefaults.resolve(worked).hash(),
+            SubjectProfileDefaults.resolve(withCd).hash(),
+        )
+        // A profile that is A/B-blank but declares C/D still reads blank on the A/B axis (so the
+        // publish-date rung stays silent, §12.2) while declaredBlank is false.
+        val onlyCd =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(subjectId = "s1", aspirations = listOf("Staff IC."))
+            )
+        assertTrue(onlyCd.blank)
+        assertNull(onlyCd.hashOrNull())
+        assertTrue(!onlyCd.declaredBlank)
+    }
+
+    @Test
+    fun `resolve trims, drops blanks and de-duplicates declared lists case-insensitively`() {
+        val resolved =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    aspirations = listOf("  Staff IC  ", "", "staff ic", "Principal track"),
+                    targetRoles = listOf("Staff Engineer", "Staff Engineer"),
+                )
+            )
+        assertEquals(listOf("Staff IC", "Principal track"), resolved.aspirations)
+        assertEquals(listOf("Staff Engineer"), resolved.targetRoles)
+    }
+
+    @Test
+    fun `only recognised do-not-discuss keys survive resolution, in vocabulary order`() {
+        val resolved =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    // out of order, with an unknown key that must be dropped (a retired-vocab
+                    // guard)
+                    doNotDiscussChecks = listOf("politics", "not-a-real-topic", "health"),
+                )
+            )
+        // health precedes politics in the vocabulary; the junk key is gone.
+        assertEquals(listOf("health", "politics"), resolved.doNotDiscussChecks)
+    }
+
+    @Test
+    fun `a custom do-not-discuss entry materialises only once APPROVED`() {
+        fun resolvedWith(state: DoNotDiscussApproval) =
+            SubjectProfileDefaults.resolve(
+                SubjectProfile(
+                    subjectId = "s1",
+                    doNotDiscussCustom = DoNotDiscussCustom("my startup's cap table", state),
+                )
+            )
+
+        assertNull(resolvedWith(DoNotDiscussApproval.PENDING).approvedDoNotDiscussCustom)
+        assertNull(resolvedWith(DoNotDiscussApproval.REJECTED).approvedDoNotDiscussCustom)
+        assertEquals(
+            "my startup's cap table",
+            resolvedWith(DoNotDiscussApproval.APPROVED).approvedDoNotDiscussCustom,
+        )
+    }
 }

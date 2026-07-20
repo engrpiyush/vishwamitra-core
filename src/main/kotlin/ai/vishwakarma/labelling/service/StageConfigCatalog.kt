@@ -530,6 +530,13 @@ object StageConfigCatalog {
                 "Scoring dynamics",
                 "Score → refreshed tier band.",
             ),
+            ConfigField(
+                "declaredBeliefFloor",
+                "Declared belief floor",
+                DOUBLE,
+                "Scoring dynamics",
+                "Fixed floor for subject-declared claims; tier stays LOW and signals stay honest.",
+            ),
             // -- Subject Authenticity Index --
             ConfigField(
                 "aggMassMidpoint",

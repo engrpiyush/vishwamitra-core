@@ -56,6 +56,37 @@ enum class ClaimBasis {
 }
 
 /**
+ * Where a claim entered the ledger (SubjectProfile LLD §3.2). Deliberately **orthogonal** to
+ * [ClaimBasis]: a subject-declared aspiration is definitionally *stated*, so it keeps `claimBasis =
+ * STATED`, and a third `DECLARED` basis would silently mis-fire three code paths — contest is
+ * allowed only for INFERRED ([ai.vishwakarma.labelling.service.ClaimReviewService]), the scorer's
+ * `inferredPenalty` keys on INFERRED ([Scorer.prior]), and `needsDecision()` special-cases
+ * INFERRED.
+ *
+ * Null on a stored claim means [EXTRACTED] — every pre-feature claim reads back as extracted with
+ * no migration, which is why every consumer must go through [Claim.declared] rather than comparing
+ * the nullable field itself.
+ */
+enum class ClaimOrigin {
+    /** Stage 2 read it out of an [Asset]. The default for everything written before the feature. */
+    EXTRACTED,
+    /**
+     * The subject typed it on the authenticated profile surface and it was materialised at the
+     * Stage 1→2 seal ([ai.vishwakarma.labelling.service.ProfileClaimMaterialiser]). Declared is not
+     * guessed: the item is in the record because a real person put it there, which is what lets the
+     * evidence gate (PRECEDENCE I1) admit it without the model ever inferring it.
+     */
+    SUBJECT_DECLARED;
+
+    companion object {
+        fun fromOrNull(raw: String?): ClaimOrigin? =
+            raw?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { valueOf(it.uppercase()) }.getOrNull() }
+    }
+}
+
+/**
  * The pipeline's spine object: one atomic, traceable evidence unit about a subject, extracted in
  * Stage 2 from an [Asset]'s transcript/text. Written by Stage 2, scored by Stage 3
  * ([authenticityScore] stays null until then), read by Stage 4 for training-pair synthesis.
@@ -153,9 +184,36 @@ data class Claim(
     val edgeCounts: Map<String, Int>? = null,
     /** Whose word the claim rests on (§11.2), frozen at publish. */
     val attestor: PublishedAttestor? = null,
+    /**
+     * How the claim entered the ledger (§3.2). Null ≡ [ClaimOrigin.EXTRACTED] — read it through
+     * [declared], never by comparing this field, so back-compat is one decision in one place.
+     */
+    val origin: ClaimOrigin? = null,
+    /**
+     * The fine-grained *logical* ledger-item type a declared claim answers to —
+     * `stated-aspiration`, `subject-declared-engagement-model`, … ([DeclaredType]). Null for
+     * extracted claims.
+     *
+     * It exists because the enforceable evidence gate is coarse:
+     * [NotebookTemplate.requiredClaimTypes] projects onto the 5-value [ClaimType], while the
+     * `cat-27` evidenceGate prose keys on logical types that have no home in that enum (§3.4).
+     * Rather than grow [ClaimType] — which would touch the extractor prompt enumerations, the
+     * planner category map and the graph — the logical type rides here and
+     * [NotebookTemplate.requiredDeclaredTypes] selects on it, with the coarse projection still the
+     * outer gate (OD-3).
+     */
+    val declaredType: String? = null,
     val createdAt: Instant? = null,
     val stage2ProcessedAt: Instant? = null,
-)
+) {
+    /**
+     * Did the subject declare this on the authenticated surface (§3.2)? The single tolerant-null
+     * read of [origin]: a stored claim with no origin is extracted, so every pre-feature claim
+     * keeps exactly its old behaviour and nothing needs backfilling.
+     */
+    val declared: Boolean
+        get() = origin == ClaimOrigin.SUBJECT_DECLARED
+}
 
 /**
  * A claim's fact context as the Stage 3 publish freezes it onto the ledger (contract v2). All

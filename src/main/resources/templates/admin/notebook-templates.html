@@ -106,8 +106,13 @@
             </label>
             <label>Required claim types <span class="muted">(comma-separated; blank = fires for every subject)</span>
                 <input type="text" name="requiredClaimTypes" placeholder="WEAKNESS  ·  IDENTITY, EPISODE, VALUE, SKILL"
-                       title="Evidence gate: the planner only draws this template against a subject fact whose claims cover every listed type"
+                       title="Coarse gate (all-of): the planner only draws this template against a subject fact whose claims cover every listed type"
                        th:value="${editing != null ? #strings.listJoin(editing.requiredClaimTypes, ', ') : ''}"/>
+            </label>
+            <label>Required declared types <span class="muted">(comma-separated; blank = coarse gate only)</span>
+                <input type="text" name="requiredDeclaredTypes" placeholder="stated-aspiration, stated-track-preference"
+                       title="Fine gate (any-of): the row draws the subject-declared item whose declaredType matches one of these — the O5 handle"
+                       th:value="${editing != null ? #strings.listJoin(editing.requiredDeclaredTypes, ', ') : ''}"/>
             </label>
         </div>
         <label>Evidence gate <span class="muted">(authoritative prose: what the ledger must hold for this template to draw)</span>

@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.stage3
 
+import ai.vishwakarma.labelling.domain.ClaimOrigin
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.StageConfigService
 import org.neo4j.driver.Driver
@@ -307,7 +308,8 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                         c.text = row.text, c.basis = row.basis, c.sourceClass = row.sourceClass,
                         c.relationship = row.relationship, c.speakerRole = row.speakerRole,
                         c.tierSeed = row.tierSeed, c.favorability = row.favorability,
-                        c.claimedDate = row.claimedDate, c.sensitive = row.sensitive
+                        c.claimedDate = row.claimedDate, c.sensitive = row.sensitive,
+                        c.origin = row.origin
                     """
                         .trimIndent(),
                     mapOf("subjectId" to subjectId, "rows" to projection.claims.map { it.toMap() }),
@@ -1756,6 +1758,7 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                                    c.tierSeed AS tierSeed, c.sourceClass AS sourceClass,
                                    c.basis AS basis, c.favorability AS favorability,
                                    c.claimedDate AS claimedDate, c.assetId AS assetId,
+                                   c.origin AS origin,
                                    [ (c)-[:ATTESTED_BY]->(a:Attestor) | a.attestorKey ]
                                        AS attestorKeys
                             ORDER BY claimId
@@ -1777,6 +1780,12 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                                 attestorKey =
                                     r["attestorKeys"].asList { it.asString() }.minOrNull(),
                                 assetId = r["assetId"].takeUnless { it.isNull }?.asString(),
+                                // Tolerant like every other enum read here: a missing or unknown
+                                // origin is EXTRACTED, which is the pre-feature behaviour.
+                                declared =
+                                    ClaimOrigin.fromOrNull(
+                                        r["origin"].takeUnless { it.isNull }?.asString()
+                                    ) == ClaimOrigin.SUBJECT_DECLARED,
                             )
                         }
                 val facts =
@@ -1972,6 +1981,7 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                                c.tierSeed AS tierSeed, c.prior AS prior, c.score AS score,
                                c.scoreBare AS scoreBare, c.signals AS signals,
                                c.basis AS basis, c.sourceClass AS sourceClass,
+                               c.origin AS origin,
                                c.sensitive AS sensitive, c.claimedDate AS claimedDate,
                                a.attestorKey AS attestorKey, a.name AS attestorName,
                                a.kind AS attestorKind, a.trust AS attestorTrust,
@@ -2013,6 +2023,10 @@ class Stage3GraphRepository(private val driver: Driver, private val config: Stag
                             signalsJson = r["signals"].takeUnless { it.isNull }?.asString(),
                             basis = r["basis"].takeUnless { it.isNull }?.asString(),
                             sourceClass = r["sourceClass"].takeUnless { it.isNull }?.asString(),
+                            declared =
+                                ClaimOrigin.fromOrNull(
+                                    r["origin"].takeUnless { it.isNull }?.asString()
+                                ) == ClaimOrigin.SUBJECT_DECLARED,
                             sensitive = r["sensitive"].asBoolean(false),
                             claimedDate = r["claimedDate"].takeUnless { it.isNull }?.asString(),
                             attestorKey = r["attestorKey"].takeUnless { it.isNull }?.asString(),
@@ -2690,6 +2704,12 @@ data class ScoredClaimView(
     val sourceClass: String? = null,
     val sensitive: Boolean = false,
     val claimedDate: String? = null,
+    /**
+     * SubjectProfile §3.5 — the subject declared this. The publish tick needs it because the ledger
+     * tier is recomputed from the published score, and a declaration lifted to its belief floor
+     * would otherwise be re-labelled MEDIUM by arithmetic the scorer deliberately overrode.
+     */
+    val declared: Boolean = false,
     /** Whose word the claim rests on (§11.2) + its current global trust. */
     val attestorKey: String? = null,
     val attestorName: String? = null,

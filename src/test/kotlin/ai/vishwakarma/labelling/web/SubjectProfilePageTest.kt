@@ -5,12 +5,14 @@ import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.liveConfig
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
+import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.IntakeService
+import ai.vishwakarma.labelling.service.ProfileClaimMaterialiser
 import ai.vishwakarma.labelling.service.QuestionService
 import ai.vishwakarma.labelling.service.Stage2Service
 import ai.vishwakarma.labelling.service.SubjectProfileService
@@ -42,6 +44,11 @@ private class FakeProfileService :
         SubjectProfileRepository(mock(Firestore::class.java)),
         SubjectRepository(mock(Firestore::class.java)),
         IntakeManifestRepository(mock(Firestore::class.java)),
+        ProfileClaimMaterialiser(
+            liveConfig(),
+            SubjectProfileRepository(mock(Firestore::class.java)),
+            ClaimRepository(mock(Firestore::class.java)),
+        ),
     ) {
 
     lateinit var viewResult: Either<DomainError, SubjectProfileView>

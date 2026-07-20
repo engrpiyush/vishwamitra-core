@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.persistence
 
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import com.google.cloud.firestore.DocumentSnapshot
@@ -47,6 +48,7 @@ class NotebookTemplateRepository(private val db: Firestore) {
             "facets" to facets,
             "evidenceGate" to evidenceGate,
             "requiredClaimTypes" to requiredClaimTypes.map { it.name },
+            "requiredDeclaredTypes" to requiredDeclaredTypes,
             "outcomes" to outcomes,
             "version" to version,
             "migratedFrom" to migratedFrom,
@@ -79,6 +81,12 @@ class NotebookTemplateRepository(private val db: Firestore) {
                 ((get("requiredClaimTypes") as? List<String>) ?: emptyList()).mapNotNull {
                     ClaimType.fromOrNull(it)
                 },
+            // Unrecognised keys are dropped on read: a gate naming a declared type this build does
+            // not know would otherwise silently match nothing and mute the template for everyone.
+            requiredDeclaredTypes =
+                ((get("requiredDeclaredTypes") as? List<String>) ?: emptyList())
+                    .map { it.trim().lowercase() }
+                    .filter { DeclaredType.recognises(it) },
             outcomes = (get("outcomes") as? List<String>) ?: emptyList(),
             version = getLong("version")?.toInt() ?: 1,
             migratedFrom = getString("migratedFrom"),

@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.stage4
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PlannerPersona
 import ai.vishwakarma.labelling.domain.Stage4Category
@@ -219,20 +220,60 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                 )
         if (anchors.isEmpty()) return emptyList()
         return templates.flatMapIndexed { index, template ->
+            // Project every anchor to the members THIS template may actually draw, then drop the
+            // anchors left with nothing to say. The only thing [drawableMembers] strips is a
+            // declared
+            // do-not-discuss BOUNDARY: it is materialised as ClaimType.WEAKNESS (SubjectProfile
+            // §3.4)
+            // purely so it rides the ordinary ledger, but the OD-9 contract (§10, PRECEDENCE I2/I3)
+            // is
+            // that a boundary is enforced only by the serving-time warm-deflect posture and is
+            // NEVER
+            // spoken as evidence. Stripping it *before* the gates means it can neither satisfy a
+            // coarse
+            // WEAKNESS / adverse-fact gate — the 53 cat-13/cat-38-style rows carry no fine
+            // requiredDeclaredTypes — nor ride into generation as a member, so "what is his biggest
+            // weakness?" can never be answered by voicing the exact protected topic the subject
+            // asked
+            // to keep off the table. A boundary is drawable only by a template that explicitly opts
+            // it
+            // in via requiredDeclaredTypes (the opt-in a purpose-built refusal trainer would use).
+            val drawable =
+                anchors
+                    .map { (fact, members) -> fact to drawableMembers(members, template) }
+                    .filter { (_, members) -> members.isNotEmpty() }
             // Evidence gate (VA-87 safety): a template that asserts a negative/aspiration only
-            // draws
-            // against subject facts whose member claims cover every required claim type. An empty
-            // gate keeps the legacy pool (fires for every subject). A gated template with no
-            // eligible
-            // anchor plans zero units and is recorded `missed` in the coverage report — this is
-            // what
-            // stops the drafter inventing an ungrounded defect about a real person.
-            val eligible =
-                if (template.requiredClaimTypes.isEmpty()) anchors
+            // draws against subject facts whose member claims cover every required claim type. An
+            // empty gate keeps the legacy pool (fires for every subject). A gated template with no
+            // eligible anchor plans zero units and is recorded `missed` in the coverage report —
+            // this is what stops the drafter inventing an ungrounded defect about a real person.
+            val coarse =
+                if (template.requiredClaimTypes.isEmpty()) drawable
                 else
-                    anchors.filter { (_, members) ->
+                    drawable.filter { (_, members) ->
                         template.requiredClaimTypes.all { req ->
                             members.any { it.claim.claimType == req }
+                        }
+                    }
+            // The fine gate (SubjectProfile §3.4, OD-3). The coarse projection admits any claim of
+            // the right ClaimType, so a VALUE-gated cat-27 row would happily decline a role on the
+            // strength of an ordinary extracted VALUE claim that is not a stated direction at all.
+            // Requiring a matching `declaredType` makes the row draw the declaration the subject
+            // actually made, or draw nothing — which is that row's own designed behaviour ("where
+            // the eligible slice carries no stated direction, makes no decline at all").
+            //
+            // Matched against `members` rather than the whole fact on purpose: `members` is what
+            // the
+            // unit will carry into generation, so this guarantees the declared item is genuinely in
+            // the evidence the drafter sees, not merely somewhere in a fact behind the per-unit
+            // cap.
+            val eligible =
+                if (template.requiredDeclaredTypes.isEmpty()) coarse
+                else
+                    coarse.filter { (_, members) ->
+                        members.any { m ->
+                            m.claim.declared &&
+                                m.claim.declaredType in template.requiredDeclaredTypes
                         }
                     }
             if (eligible.isEmpty()) return@flatMapIndexed emptyList()
@@ -252,6 +293,31 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                     template = template,
                 )
             }
+        }
+    }
+
+    /**
+     * The members of an anchor fact that [template] may build a unit from. Identity for every
+     * ordinary claim; the one thing it removes is a declared do-not-discuss BOUNDARY
+     * ([DeclaredType.BOUNDARY]).
+     *
+     * A boundary is materialised as a `WEAKNESS` claim (SubjectProfile §3.4) so it travels the
+     * ledger like anything else, but the OD-9 contract is that it is enforced only by the serving
+     * I2/I3 warm-deflect posture and is never *spoken as evidence* (§10). The coarse WEAKNESS gate
+     * that the cat-13 / cat-38 weakness / adverse-fact rows carry has no fine
+     * [NotebookTemplate.requiredDeclaredTypes], so without this a boundary claim would satisfy
+     * `requiredClaimTypes=[WEAKNESS]` and be drawn as a development area — the exact protected
+     * topic the subject asked to keep off the table. A boundary therefore survives only for a
+     * template that explicitly names [DeclaredType.BOUNDARY] in its fine gate: the opt-in a
+     * purpose-built refusal trainer would use, and nothing else.
+     */
+    private fun drawableMembers(
+        members: List<EvidencedClaim>,
+        template: NotebookTemplate,
+    ): List<EvidencedClaim> {
+        if (DeclaredType.BOUNDARY in template.requiredDeclaredTypes) return members
+        return members.filterNot {
+            it.claim.declared && it.claim.declaredType == DeclaredType.BOUNDARY
         }
     }
 

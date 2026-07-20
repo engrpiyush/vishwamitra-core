@@ -102,6 +102,25 @@ data class NotebookTemplate(
      * template fires for every subject (legacy behaviour), so a blank gate is byte-compatible.
      */
     val requiredClaimTypes: List<ClaimType> = emptyList(),
+    /**
+     * The *fine-grained* half of [evidenceGate], as [DeclaredType] keys (SubjectProfile LLD §3.4,
+     * OD-3). `Stage4Planning` draws this template only against a subject fact one of whose member
+     * claims carries a `declaredType` listed here. Empty ⇒ no fine gate, so every existing template
+     * behaves exactly as before.
+     *
+     * **ANY-of, unlike [requiredClaimTypes]'s all-of** — and that asymmetry is the gate prose, not
+     * a shortcut. The authored gates read "a ledger item of type {stated-aspiration |
+     * stated-track-preference | self-disclosed-driver}": alternatives, one of which suffices. The
+     * coarse list reads "member claims cover every listed type": a conjunction. Each is enforced
+     * the way it is written.
+     *
+     * This is what closes the O5 gap the coarse projection leaves open: a `VALUE`-gated `cat-27`
+     * row also fires on any ordinary extracted VALUE claim, so the decline could rest on something
+     * that is not a stated direction at all. With the fine gate the row draws the declared
+     * aspiration or it draws nothing and reports `missed` — which is the row's own designed
+     * behaviour.
+     */
+    val requiredDeclaredTypes: List<String> = emptyList(),
     /** The O1–O9 training outcomes this template targets; doubles as a VA-60 eval handle. */
     val outcomes: List<String> = emptyList(),
     /** Incremented on every save (create = 1), the ExtractionPrompt idiom. */

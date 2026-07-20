@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.NotebookTemplateTaxonomy
@@ -53,6 +54,7 @@ class NotebookTemplateService(
         facets: String = "",
         evidenceGate: String = "",
         requiredClaimTypes: List<ClaimType> = emptyList(),
+        requiredDeclaredTypes: List<String> = emptyList(),
         outcomes: List<String> = emptyList(),
     ): Either<DomainError, NotebookTemplate> =
         validate(category, title, coverageTarget) {
@@ -67,6 +69,7 @@ class NotebookTemplateService(
                     facets = facets.trim(),
                     evidenceGate = evidenceGate.trim(),
                     requiredClaimTypes = requiredClaimTypes,
+                    requiredDeclaredTypes = declaredTypes(requiredDeclaredTypes),
                     outcomes = outcomes.map { it.trim() }.filter { it.isNotBlank() },
                     version = 1,
                     updatedBy = actor,
@@ -87,6 +90,7 @@ class NotebookTemplateService(
         facets: String = "",
         evidenceGate: String = "",
         requiredClaimTypes: List<ClaimType> = emptyList(),
+        requiredDeclaredTypes: List<String> = emptyList(),
         outcomes: List<String> = emptyList(),
     ): Either<DomainError, NotebookTemplate> {
         val existing =
@@ -102,6 +106,7 @@ class NotebookTemplateService(
                     facets = facets.trim(),
                     evidenceGate = evidenceGate.trim(),
                     requiredClaimTypes = requiredClaimTypes,
+                    requiredDeclaredTypes = declaredTypes(requiredDeclaredTypes),
                     outcomes = outcomes.map { it.trim() }.filter { it.isNotBlank() },
                     version = existing.version + 1,
                     updatedBy = actor,
@@ -127,6 +132,15 @@ class NotebookTemplateService(
                 DomainError.Invalid("Unknown category '$category'").left()
             else -> onValid().right()
         }
+
+    /**
+     * Normalise the fine evidence gate and drop anything [DeclaredType] does not recognise. Silent
+     * rather than a validation error on purpose: this is a *narrowing* control, so an unknown key
+     * that survived would gate on a `declaredType` nothing ever stamps and mute the template
+     * entirely — dropping it degrades to the coarse gate, which is the pre-feature behaviour.
+     */
+    private fun declaredTypes(raw: List<String>): List<String> =
+        raw.map { it.trim().lowercase() }.filter { DeclaredType.recognises(it) }.distinct()
 
     private fun FormatSpec.clean() =
         FormatSpec(

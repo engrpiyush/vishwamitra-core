@@ -2,7 +2,9 @@ package ai.vishwakarma.labelling.stage4
 
 import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.Claim
+import ai.vishwakarma.labelling.domain.ClaimOrigin
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.FormatSpec
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PersonaDefaults
@@ -41,6 +43,8 @@ class Stage4PlanningTest {
         factLabel: String? = null,
         attestorKind: String? = null,
         claimType: ClaimType = ClaimType.EPISODE,
+        origin: ClaimOrigin? = null,
+        declaredType: String? = null,
     ) =
         EvidencedClaim(
             Claim(
@@ -55,6 +59,8 @@ class Stage4PlanningTest {
                 favorability = favorability,
                 factStamp = factLabel?.let { PublishedFactStamp(factId = "f-$id", label = it) },
                 attestor = attestorKind?.let { PublishedAttestor(kind = it) },
+                origin = origin,
+                declaredType = declaredType,
                 scoreRunId = "pub-1",
                 publishContractVersion = 2,
             )
@@ -119,6 +125,7 @@ class Stage4PlanningTest {
         coverageTarget: Int = 1,
         personaLens: String = "",
         requiredClaimTypes: List<ClaimType> = emptyList(),
+        requiredDeclaredTypes: List<String> = emptyList(),
     ) =
         NotebookTemplate(
             id = id,
@@ -127,6 +134,7 @@ class Stage4PlanningTest {
             formatSpec = FormatSpec(personaLens = personaLens),
             coverageTarget = coverageTarget,
             requiredClaimTypes = requiredClaimTypes,
+            requiredDeclaredTypes = requiredDeclaredTypes,
         )
 
     // ---- mix weights (QA-3, QD-5) -----------------------------------------------------------
@@ -473,6 +481,254 @@ class Stage4PlanningTest {
         assertEquals(1, weak.size)
         // It drew the weakness claim, never the skill one — the gate constrains the anchor.
         assertEquals(listOf("c2"), weak.single().plan.sourceClaimIds)
+    }
+
+    // ---- SubjectProfile §3.4/§3.7: the fine declaredType gate (VA-148, Worked Example 1) ----
+
+    @Test
+    fun `the fine gate draws the declared aspiration, not an ordinary extracted VALUE`() {
+        // The cat-27 row-02 shape: VALUE-gated coarsely, but the decline must rest on a stated
+        // aspiration. Two VALUE facts — one declared aspiration, one ordinary extracted value.
+        val eligible =
+            listOf(
+                claim(
+                    "c-asp",
+                    claimType = ClaimType.VALUE,
+                    origin = ClaimOrigin.SUBJECT_DECLARED,
+                    declaredType = DeclaredType.STATED_ASPIRATION,
+                ),
+                claim("c-val", claimType = ClaimType.VALUE),
+            )
+        val facts =
+            listOf(
+                fact(
+                    "f-asp",
+                    members = listOf("c-asp"),
+                    label = "staff IC, not management",
+                    belief = 0.5
+                ),
+                fact("f-val", members = listOf("c-val"), label = "values clean code", belief = 0.9),
+            )
+        val templates =
+            listOf(
+                template(
+                    "cat-27-row-02",
+                    category = "role-fit-and-respectful-decline",
+                    coverageTarget = 4,
+                    requiredClaimTypes = listOf(ClaimType.VALUE),
+                    requiredDeclaredTypes =
+                        listOf(
+                            DeclaredType.STATED_ASPIRATION,
+                            DeclaredType.STATED_TRACK_PREFERENCE,
+                        ),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val drawn =
+            outcome.planned.filter { it.plan.templateCategory == "role-fit-and-respectful-decline" }
+        assertTrue(drawn.isNotEmpty(), "the row must draw the declared aspiration")
+        // Every drawn unit rests on the declared claim, never the ordinary extracted VALUE.
+        assertTrue(drawn.all { "c-asp" in it.plan.sourceClaimIds })
+        assertTrue(drawn.none { "c-val" in it.plan.sourceClaimIds })
+    }
+
+    @Test
+    fun `the fine gate draws nothing when the subject declared no matching direction`() {
+        // The row's own gate-failing behaviour: only an extracted VALUE exists, so the row is
+        // undrawable and reports `missed` rather than declining on an invented direction (§3.7).
+        val eligible = listOf(claim("c-val", claimType = ClaimType.VALUE))
+        val facts = listOf(fact("f-val", members = listOf("c-val"), label = "values clean code"))
+        val templates =
+            listOf(
+                template(
+                    "cat-27-row-02",
+                    category = "role-fit-and-respectful-decline",
+                    requiredClaimTypes = listOf(ClaimType.VALUE),
+                    requiredDeclaredTypes = listOf(DeclaredType.STATED_ASPIRATION),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        assertTrue(
+            outcome.planned.none { it.plan.templateCategory == "role-fit-and-respectful-decline" }
+        )
+        assertEquals(
+            CategoryCoverage("role-fit-and-respectful-decline", 1, 0),
+            outcome.coverage.first { it.category == "role-fit-and-respectful-decline" },
+        )
+    }
+
+    @Test
+    fun `a declaredType on an extracted claim never satisfies the fine gate`() {
+        // Belt and braces: matching turns on `declared`, not on a stray declaredType string, so a
+        // corrupt extracted claim carrying a declaredType cannot masquerade as a declaration.
+        val eligible =
+            listOf(
+                claim(
+                    "c-fake",
+                    claimType = ClaimType.VALUE,
+                    origin = ClaimOrigin.EXTRACTED,
+                    declaredType = DeclaredType.STATED_ASPIRATION,
+                )
+            )
+        val facts = listOf(fact("f-fake", members = listOf("c-fake"), label = "x"))
+        val templates =
+            listOf(
+                template(
+                    "cat-27-row-02",
+                    category = "role-fit-and-respectful-decline",
+                    requiredClaimTypes = listOf(ClaimType.VALUE),
+                    requiredDeclaredTypes = listOf(DeclaredType.STATED_ASPIRATION),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        assertTrue(
+            outcome.planned.none { it.plan.templateCategory == "role-fit-and-respectful-decline" }
+        )
+    }
+
+    // ---- SubjectProfile §10 / OD-9: a declared boundary is never spoken as evidence ---------
+
+    @Test
+    fun `a declared do-not-discuss boundary never satisfies a coarse WEAKNESS gate`() {
+        // VA-145/146 materialise a do-not-discuss topic as a ClaimType.WEAKNESS claim (declaredType
+        // =
+        // subject-declared-boundary, favorability 0.5). The cat-13 "weaknesses / The Standard Ask"
+        // row gates coarsely on requiredClaimTypes=[WEAKNESS] with no fine requiredDeclaredTypes,
+        // so
+        // without the boundary guard the claim is an eligible development-area anchor and the
+        // notebook
+        // answers "his biggest weakness?" by voicing the exact protected topic (§10, OD-9). It must
+        // draw NOTHING — a boundary is enforced only at serving, never spoken as evidence.
+        val eligible =
+            listOf(
+                claim(
+                    "c-bound",
+                    score = 0.5,
+                    claimType = ClaimType.WEAKNESS,
+                    favorability = 0.5,
+                    origin = ClaimOrigin.SUBJECT_DECLARED,
+                    declaredType = DeclaredType.BOUNDARY,
+                )
+            )
+        val facts =
+            listOf(
+                fact(
+                    "f-bound",
+                    members = listOf("c-bound"),
+                    label = "Prefers not to discuss health and medical history.",
+                    belief = 0.5,
+                )
+            )
+        val templates =
+            listOf(
+                template(
+                    "cat-13-standard-ask",
+                    category = "weaknesses",
+                    requiredClaimTypes = listOf(ClaimType.WEAKNESS),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        assertTrue(
+            outcome.planned.none { it.plan.templateCategory == "weaknesses" },
+            "a declared boundary must never be drawn as a development area",
+        )
+        assertEquals(
+            CategoryCoverage("weaknesses", 1, 0),
+            outcome.coverage.first { it.category == "weaknesses" },
+        )
+    }
+
+    @Test
+    fun `a declared boundary is not drawn by an ungated template either`() {
+        // The boundary fact is a fact like any other, so an ungated template (no
+        // requiredClaimTypes)
+        // would happily anchor on it and voice the protected topic. The guard covers the whole
+        // anchor
+        // pool, not just the coarse WEAKNESS gate: here the boundary is the highest-belief fact, so
+        // without the fix it lands in the first slot; the ordinary SKILL fact draws in its place.
+        val eligible =
+            listOf(
+                claim("c-skill", claimType = ClaimType.SKILL),
+                claim(
+                    "c-bound",
+                    score = 0.5,
+                    claimType = ClaimType.WEAKNESS,
+                    favorability = 0.5,
+                    origin = ClaimOrigin.SUBJECT_DECLARED,
+                    declaredType = DeclaredType.BOUNDARY,
+                ),
+            )
+        val facts =
+            listOf(
+                fact("f-skill", members = listOf("c-skill"), label = "backend depth", belief = 0.8),
+                fact(
+                    "f-bound",
+                    members = listOf("c-bound"),
+                    label = "Prefers not to discuss health and medical history.",
+                    belief = 0.9,
+                ),
+            )
+        val templates = listOf(template("tpl-open", category = "career-timeline"))
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val drawn = outcome.planned.filter { it.plan.templateId != null }
+        assertTrue(drawn.isNotEmpty(), "the ordinary fact must still draw")
+        assertTrue(
+            drawn.none { "c-bound" in it.plan.sourceClaimIds },
+            "the boundary claim must never anchor or ride into an ungated template unit",
+        )
+    }
+
+    @Test
+    fun `a boundary is drawn only when a template opts it in via requiredDeclaredTypes`() {
+        // The escape hatch the fix preserves: a purpose-built refusal trainer that names BOUNDARY
+        // in
+        // its fine gate still reaches the boundary, so the guard blocks mis-drawing, not the
+        // boundary.
+        val eligible =
+            listOf(
+                claim(
+                    "c-bound",
+                    score = 0.5,
+                    claimType = ClaimType.WEAKNESS,
+                    favorability = 0.5,
+                    origin = ClaimOrigin.SUBJECT_DECLARED,
+                    declaredType = DeclaredType.BOUNDARY,
+                )
+            )
+        val facts =
+            listOf(
+                fact(
+                    "f-bound",
+                    members = listOf("c-bound"),
+                    label = "Prefers not to discuss health and medical history.",
+                    belief = 0.5,
+                )
+            )
+        val templates =
+            listOf(
+                template(
+                    "cat-40-boundary-trainer",
+                    category = "contact-and-pii-gating",
+                    requiredClaimTypes = listOf(ClaimType.WEAKNESS),
+                    requiredDeclaredTypes = listOf(DeclaredType.BOUNDARY),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val drawn = outcome.planned.filter { it.plan.templateCategory == "contact-and-pii-gating" }
+        assertTrue(drawn.isNotEmpty(), "an opted-in template must still reach the boundary")
+        assertTrue(drawn.all { "c-bound" in it.plan.sourceClaimIds })
     }
 
     @Test

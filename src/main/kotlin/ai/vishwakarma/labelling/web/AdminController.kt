@@ -655,6 +655,7 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") facets: String,
         @RequestParam(required = false, defaultValue = "") evidenceGate: String,
         @RequestParam(required = false, defaultValue = "") requiredClaimTypes: String,
+        @RequestParam(required = false, defaultValue = "") requiredDeclaredTypes: String,
         @RequestParam(required = false, defaultValue = "") outcomes: String,
         ra: RedirectAttributes,
     ): String {
@@ -677,6 +678,7 @@ class AdminController(
                 facets = facets,
                 evidenceGate = evidenceGate,
                 requiredClaimTypes = parseClaimTypes(requiredClaimTypes),
+                requiredDeclaredTypes = parseTokens(requiredDeclaredTypes),
                 outcomes = parseTokens(outcomes),
             )
             .fold(
@@ -702,6 +704,7 @@ class AdminController(
         @RequestParam(required = false, defaultValue = "") facets: String,
         @RequestParam(required = false, defaultValue = "") evidenceGate: String,
         @RequestParam(required = false, defaultValue = "") requiredClaimTypes: String,
+        @RequestParam(required = false, defaultValue = "") requiredDeclaredTypes: String,
         @RequestParam(required = false, defaultValue = "") outcomes: String,
         ra: RedirectAttributes,
     ): String {
@@ -725,6 +728,7 @@ class AdminController(
                 facets = facets,
                 evidenceGate = evidenceGate,
                 requiredClaimTypes = parseClaimTypes(requiredClaimTypes),
+                requiredDeclaredTypes = parseTokens(requiredDeclaredTypes),
                 outcomes = parseTokens(outcomes),
             )
             .fold(

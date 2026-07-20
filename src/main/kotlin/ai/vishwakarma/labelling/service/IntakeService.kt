@@ -99,6 +99,11 @@ class IntakeService(
     private val manifests: IntakeManifestRepository,
     private val storage: IntakeStorage,
     private val config: StageConfigService,
+    /**
+     * SubjectProfile §3.6 — the seal is where the subject's declared groups C/D become claims, so
+     * the materialiser hangs off the one method that owns that moment ([sealManifest]).
+     */
+    private val declaredClaims: ProfileClaimMaterialiser,
 ) {
 
     fun listAssets(subjectId: String): List<Asset> = assets.findBySubject(subjectId)
@@ -512,6 +517,13 @@ class IntakeService(
      * Seal the manifest for the Stage 2 handoff. Gated by [IntakeManifest.sealBlockers]; requires a
      * mandatory operator [note] (the confirmation justification), audited in
      * [IntakeManifest.sealEvents].
+     *
+     * The seal is also where the subject's declared profile groups C/D become claims
+     * (SubjectProfile §3.6). That happens **before** the sealed manifest is persisted, on purpose:
+     * if materialisation fails, the manifest stays unsealed and the operator simply seals again,
+     * rather than leaving a frozen corpus whose declarations never made it in. Stage 2 cannot start
+     * until the manifest is sealed, so nothing can consume the half state, and materialisation is
+     * idempotent, so the retry converges.
      */
     fun sealManifest(
         subjectId: String,
@@ -527,6 +539,7 @@ class IntakeService(
         if (current.sealBlockers.isNotEmpty())
             return DomainError.Conflict("Cannot seal: ${current.sealBlockers.joinToString("; ")}")
                 .left()
+        declaredClaims.materialise(subjectId)
         val now = Instant.now()
         val sealed =
             current.copy(

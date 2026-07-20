@@ -1,5 +1,9 @@
 package ai.vishwakarma.labelling.service
 
+import ai.vishwakarma.labelling.domain.DoNotDiscussApproval
+import ai.vishwakarma.labelling.domain.DoNotDiscussCustom
+import ai.vishwakarma.labelling.domain.DoNotDiscussVocabulary
+import ai.vishwakarma.labelling.domain.EmploymentType
 import ai.vishwakarma.labelling.domain.ResolvedSubjectProfile
 import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
@@ -16,7 +20,18 @@ import java.util.Currency
 import java.util.Locale
 import org.springframework.stereotype.Service
 
-/** `PUT /api/subjects/{id}/profile` body — raw A/B answers; null/blank = not declared (§7). */
+/**
+ * `PUT /api/subjects/{id}/profile` body — raw answers; null/blank A/B = not declared (§7).
+ *
+ * **Two different null meanings, on purpose.** [put] rewrites the whole document, so A/B nulls
+ * *clear* their fields — the A/B forms always submit every box, and clearing one has to work. The
+ * C/D fields instead read null as **"this surface does not offer the field; keep what is stored"**,
+ * with an explicit empty list/string meaning "clear it". Without that, the subject's A/B-only
+ * training form (session 02, which predates C/D and has no inputs for them) would silently wipe the
+ * subject's declared aspirations on every locale save — the §12.7.4 whole-document-rewrite hazard,
+ * one slice later. The asymmetry is the safe direction: an omitted field can never destroy
+ * evidence.
+ */
 data class SubjectProfileUpdateRequest(
     val country: String? = null,
     val marketRegion: String? = null,
@@ -25,6 +40,24 @@ data class SubjectProfileUpdateRequest(
     val primaryLanguage: String? = null,
     /** ISO-8601 date text, e.g. "2026-07-15". */
     val knowledgeAsOf: String? = null,
+    // ---- C. Candidacy / targeting — null = keep stored ----
+    val targetRoles: List<String>? = null,
+    val targetSeniority: String? = null,
+    /** `FTE` / `CONTRACT` / `EITHER`; blank string clears. */
+    val employmentType: String? = null,
+    val openToRelocation: Boolean? = null,
+    // ---- D. Declared narrative — null = keep stored ----
+    val aspirations: List<String>? = null,
+    val statedPreferences: List<String>? = null,
+    /** Curated [DoNotDiscussVocabulary] keys; an unrecognised key is rejected, never dropped. */
+    val doNotDiscussChecks: List<String>? = null,
+    /**
+     * The subject's bespoke entry. Editing the text always resets approval to PENDING — approval is
+     * a decision about a specific string, so it can never survive that string being replaced. Blank
+     * clears the entry entirely. Admins approve/reject through [decideDoNotDiscussCustom], never
+     * here.
+     */
+    val doNotDiscussCustom: String? = null,
 )
 
 /** What the profile form reads: the sparse stored doc beside its full materialization. */
@@ -71,6 +104,7 @@ class SubjectProfileService(
     private val profiles: SubjectProfileRepository,
     private val subjects: SubjectRepository,
     private val manifests: IntakeManifestRepository,
+    private val declaredClaims: ProfileClaimMaterialiser,
 ) {
 
     fun view(subjectId: String): Either<DomainError, SubjectProfileView> {
@@ -108,6 +142,16 @@ class SubjectProfileService(
             return parsed
         }
 
+        val previous = profiles.findBySubject(subjectId)
+        val unknownChecks =
+            request.doNotDiscussChecks
+                .orEmpty()
+                .map { it.trim().lowercase() }
+                .filter { it.isNotBlank() && !DoNotDiscussVocabulary.contains(it) }
+        if (unknownChecks.isNotEmpty()) {
+            errors += "doNotDiscussChecks: " + unknownChecks.distinct().joinToString(", ")
+        }
+
         val stored =
             SubjectProfile(
                 subjectId = subjectId,
@@ -117,6 +161,29 @@ class SubjectProfileService(
                 timezone = parse(request.timezone, "timezone", ::timezone),
                 primaryLanguage = parse(request.primaryLanguage, "primaryLanguage", ::language),
                 knowledgeAsOf = parse(request.knowledgeAsOf, "knowledgeAsOf", LocalDate::parse),
+                // C/D: absent ⇒ keep what is stored (see the request KDoc).
+                targetRoles =
+                    request.targetRoles?.let { declaredList(it, "targetRoles", errors) }
+                        ?: previous?.targetRoles.orEmpty(),
+                targetSeniority =
+                    request.targetSeniority?.let { declaredLine(it, "targetSeniority", errors) }
+                        ?: previous?.targetSeniority,
+                employmentType =
+                    if (request.employmentType == null) previous?.employmentType
+                    else parse(request.employmentType, "employmentType", EmploymentType::valueOf),
+                openToRelocation = request.openToRelocation ?: previous?.openToRelocation,
+                aspirations =
+                    request.aspirations?.let { declaredList(it, "aspirations", errors) }
+                        ?: previous?.aspirations.orEmpty(),
+                statedPreferences =
+                    request.statedPreferences?.let { declaredList(it, "statedPreferences", errors) }
+                        ?: previous?.statedPreferences.orEmpty(),
+                doNotDiscussChecks =
+                    request.doNotDiscussChecks
+                        ?.map { it.trim().lowercase() }
+                        ?.filter { it.isNotBlank() } ?: previous?.doNotDiscussChecks.orEmpty(),
+                doNotDiscussCustom =
+                    customEntry(request.doNotDiscussCustom, previous?.doNotDiscussCustom, errors),
             )
         if (errors.isNotEmpty()) {
             return DomainError.Invalid("Invalid profile values — " + errors.joinToString("; "))
@@ -131,6 +198,80 @@ class SubjectProfileService(
             )
         profiles.save(toSave)
         return viewOf(subjectId, toSave).right()
+    }
+
+    /**
+     * The OD-9 admin decision on a pending bespoke do-not-discuss entry — approval is what lets
+     * that string materialise into a claim, so it is a first-class audited action rather than a
+     * field on [put] (which the *subject* can call).
+     *
+     * Deliberately **not** seal-gated: the entry is already frozen text; the admin is only
+     * recording a verdict on it, and admin review naturally lands *after* the early seal, so a
+     * verdict that could only be given before the seal would leave every post-seal pending entry
+     * permanently inert with no way to say so.
+     *
+     * A decision only reaches Stage 3/4 through [ProfileClaimMaterialiser], which runs at the seal
+     * ([IntakeService.sealManifest]). For a pre-seal approval the seal-time pass materialises it. A
+     * **post-seal** approval, though, is invisible to that pass — it already ran, with the entry
+     * still `PENDING` — so this method re-runs the materialiser itself while the corpus can still
+     * take a claim (idempotent; reconciliation also retracts a boundary a later rejection
+     * withdrew). Once Stage 2 has consumed the sealed manifest the corpus is frozen forever (§6.3),
+     * and a claim written now could never join the evidence set: rather than flip the doc to
+     * `APPROVED` and silently drop the boundary the subject asked for, the decision is refused with
+     * a clear signal.
+     */
+    fun decideDoNotDiscussCustom(
+        subjectId: String,
+        approve: Boolean,
+        actor: String?,
+    ): Either<DomainError, SubjectProfileView> {
+        if (!surfaceEnabled()) {
+            return DomainError.Conflict(
+                    "The subject profile is disabled (app.stage4.profile-enabled)"
+                )
+                .left()
+        }
+        val stored =
+            profiles.findBySubject(subjectId)
+                ?: return DomainError.NotFound("No profile for subject $subjectId").left()
+        val custom =
+            stored.doNotDiscussCustom
+                ?: return DomainError.Invalid(
+                        "Subject $subjectId has no custom do-not-discuss entry to decide"
+                    )
+                    .left()
+        // Read the seal state once. A frozen intake (sealed, and Stage 2 has consumed it — the
+        // unseal path is permanently closed) cannot accept a new declared claim, so a decision made
+        // now can never reach the ledger. Refuse it here rather than record a misleading APPROVED.
+        val manifest = manifests.findBySubject(subjectId)
+        if (manifest?.sealed == true && manifest.stage2StartedAt != null) {
+            return DomainError.Conflict(
+                    "The intake for subject $subjectId is frozen — Stage 2 has consumed the sealed " +
+                        "corpus, so this do-not-discuss decision can no longer reach the evidence " +
+                        "set. A fresh intake is required to change the declared boundaries."
+                )
+                .left()
+        }
+        val decided =
+            stored.copy(
+                doNotDiscussCustom =
+                    custom.copy(
+                        state =
+                            if (approve) DoNotDiscussApproval.APPROVED
+                            else DoNotDiscussApproval.REJECTED,
+                        approver = actor,
+                        at = Instant.now(),
+                    ),
+                updatedBy = actor,
+                updatedAt = Instant.now(),
+            )
+        profiles.save(decided)
+        // Post-seal decision: the seal-time materialiser has already run and will not run again
+        // unless someone re-seals, so re-run it now to land the approval (or retract a rejected
+        // boundary). Pre-seal, the eventual seal does it; the guard above proved the corpus is not
+        // yet frozen, so this is the same write the seal would have made.
+        if (manifest?.sealed == true) declaredClaims.materialise(subjectId)
+        return viewOf(subjectId, decided).right()
     }
 
     /**
@@ -169,6 +310,54 @@ class SubjectProfileService(
             sealed = isSealed(subjectId),
             enabled = surfaceEnabled(),
         )
+    }
+
+    // ---- C/D validators ---------------------------------------------------------------------
+
+    /**
+     * One declared line — an aspiration, a target role, a bespoke boundary. Blank ⇒ null (cleared).
+     *
+     * Bounded the way `marketRegion` is (§12.7.4), and for a *stronger* reason: this text is spoken
+     * by the advocate about a real, named person, so it must read as one sentence a human typed
+     * about himself. Over [DECLARED_LINE_MAX], or carrying a newline or a `{{token}}`/tag
+     * character, it is unreviewed prompt text wearing an aspiration's clothes — refused at the
+     * write, whichever surface sent it, rather than discovered in a generated notebook.
+     */
+    private fun declaredLine(raw: String, label: String, errors: MutableList<String>): String? {
+        val value = raw.trim().takeIf { it.isNotBlank() } ?: return null
+        if (value.length > DECLARED_LINE_MAX || !DECLARED_LINE.matches(value)) {
+            errors += "$label: '${value.take(60)}'"
+            return null
+        }
+        return value
+    }
+
+    /** A declared list: each entry validated as a line, blanks dropped, length capped. */
+    private fun declaredList(
+        raw: List<String>,
+        label: String,
+        errors: MutableList<String>,
+    ): List<String> {
+        if (raw.size > DECLARED_LIST_MAX) {
+            errors += "$label: ${raw.size} entries (max $DECLARED_LIST_MAX)"
+            return emptyList()
+        }
+        return raw.mapNotNull { declaredLine(it, label, errors) }
+    }
+
+    /**
+     * Resolve the bespoke do-not-discuss entry against what is stored. Null request ⇒ keep; blank ⇒
+     * clear; unchanged text ⇒ keep the existing approval; **changed text ⇒ back to PENDING**, since
+     * an approval is a verdict on one specific string and must never ride along to another.
+     */
+    private fun customEntry(
+        raw: String?,
+        previous: DoNotDiscussCustom?,
+        errors: MutableList<String>,
+    ): DoNotDiscussCustom? {
+        if (raw == null) return previous
+        val text = declaredLine(raw, "doNotDiscussCustom", errors) ?: return null
+        return if (text == previous?.text) previous else DoNotDiscussCustom(text = text)
     }
 
     // ---- field validators (blank is always legal — these only run on a non-blank value) ----
@@ -216,5 +405,18 @@ class SubjectProfileService(
          * outside the class on purpose — they are the shapes prompt text is made of.
          */
         val MARKET_REGION = Regex("""[\p{L}\p{N}][\p{L}\p{N} .,'&()/+-]*""")
+
+        /** One self-description, not a paragraph — comfortably longer than any real aspiration. */
+        const val DECLARED_LINE_MAX = 200
+
+        /** Enough for a real candidacy; far short of a bulk paste. */
+        const val DECLARED_LIST_MAX = 12
+
+        /**
+         * A single line of ordinary prose: opens on a letter or digit, then letters/digits/space
+         * and sentence punctuation. Braces, angle brackets and newlines stay outside the class —
+         * those are the shapes prompt text and markup are made of, not the shapes a career goal is.
+         */
+        val DECLARED_LINE = Regex("""[\p{L}\p{N}][\p{L}\p{N} .,;:!?'"&()/+—–-]*""")
     }
 }

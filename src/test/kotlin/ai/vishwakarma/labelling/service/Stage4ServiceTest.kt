@@ -462,6 +462,7 @@ class Stage4ServiceTest {
                     subjectProfiles,
                     subjects,
                     FakeS4ManifestRepo(),
+                    ProfileClaimMaterialiser(liveConfig(props), subjectProfiles, claims),
                 ),
             config = liveConfig(props),
         )

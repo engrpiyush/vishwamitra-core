@@ -27,6 +27,13 @@ data class ClaimRow(
     val sensitive: Boolean,
     /** Derived dependence/trust anchor — see [deriveAttestor]. */
     val attestorKey: String,
+    /**
+     * `EXTRACTED` / `SUBJECT_DECLARED` (SubjectProfile §3.2), null on pre-feature claims. It rides
+     * into the graph beside `basis`/`sourceClass` because the scorer's declared branch and the
+     * publish tier both read it, and a second source of truth for the same provenance is exactly
+     * how the ledger and the graph drift apart.
+     */
+    val origin: String? = null,
 ) {
     fun toMap(): Map<String, Any?> =
         mapOf(
@@ -43,6 +50,7 @@ data class ClaimRow(
             "claimedDate" to claimedDate,
             "sensitive" to sensitive,
             "attestorKey" to attestorKey,
+            "origin" to origin,
         )
 }
 
@@ -166,6 +174,7 @@ fun buildEvidenceProjection(
                 claimedDate = claim.claimedDate?.toString(),
                 sensitive = claim.sensitive,
                 attestorKey = attestor.key,
+                origin = claim.origin?.name,
             )
         }
 

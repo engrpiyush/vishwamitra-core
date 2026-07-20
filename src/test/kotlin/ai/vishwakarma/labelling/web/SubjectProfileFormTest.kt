@@ -6,10 +6,12 @@ import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.SubjectProfile
 import ai.vishwakarma.labelling.domain.SubjectProfileDefaults
 import ai.vishwakarma.labelling.liveConfig
+import ai.vishwakarma.labelling.persistence.ClaimRepository
 import ai.vishwakarma.labelling.persistence.IntakeManifestRepository
 import ai.vishwakarma.labelling.persistence.SubjectProfileRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.service.DomainError
+import ai.vishwakarma.labelling.service.ProfileClaimMaterialiser
 import ai.vishwakarma.labelling.service.SubjectProfileService
 import ai.vishwakarma.labelling.service.SubjectProfileUpdateRequest
 import com.google.cloud.firestore.Firestore
@@ -60,6 +62,11 @@ class SubjectProfileFormTest {
             profiles,
             FormSubjectRepo(),
             manifests,
+            ProfileClaimMaterialiser(
+                liveConfig(AppProperties(stage4 = AppProperties.Stage4(profileEnabled = true))),
+                profiles,
+                ClaimRepository(mock(Firestore::class.java)),
+            ),
         )
 
     private fun put(request: SubjectProfileUpdateRequest): DomainError? =

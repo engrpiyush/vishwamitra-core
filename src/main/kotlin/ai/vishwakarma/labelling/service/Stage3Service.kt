@@ -1088,7 +1088,7 @@ class Stage3Service(
                         claimId = row.claimId,
                         score = row.score,
                         signals = parseSignals(row.signalsJson),
-                        tier = tierOf(row.score),
+                        tier = tierOf(row.score, row.declared),
                         scoreRunId = run.id,
                         scoredAt = now,
                         scoreBare = row.scoreBare,
@@ -1248,8 +1248,15 @@ class Stage3Service(
         return raw.mapNotNull { (k, v) -> (v as? Number)?.let { k to it.toDouble() } }.toMap()
     }
 
-    private fun tierOf(score: Double): String =
+    /**
+     * The ledger tier for a published score. [declared] pins LOW (SubjectProfile §3.5): a declared
+     * claim publishes at its belief floor, and re-deriving the tier from that floor would announce
+     * MEDIUM corroboration that does not exist — the floor is a statement about *eligibility*, the
+     * tier is a statement about *evidence*, and only the first one was overridden.
+     */
+    private fun tierOf(score: Double, declared: Boolean = false): String =
         when {
+            declared -> "LOW"
             score >= config.stage3().tierHigh -> "HIGH"
             score >= config.stage3().tierMedium -> "MEDIUM"
             else -> "LOW"

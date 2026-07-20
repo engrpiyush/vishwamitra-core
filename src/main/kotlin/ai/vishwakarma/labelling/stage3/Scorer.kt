@@ -21,6 +21,12 @@ data class ClaimSnapshot(
     val claimedDate: String?,
     val attestorKey: String?,
     val assetId: String?,
+    /**
+     * SubjectProfile §3.5 — the subject declared this on the authenticated surface (`Claim.origin
+     * == SUBJECT_DECLARED`). Defaults false so every existing snapshot, fixture and pre-feature
+     * graph node scores exactly as before.
+     */
+    val declared: Boolean = false,
 )
 
 data class FactSnapshot(
@@ -116,6 +122,12 @@ data class ScoreOutcome(
  * - **I2 is enforced**: per-claim `score` is lifted to `scoreBare` if the fixed point ever lands
  *   below it (possible only through second-order rel() feedback); [ScoreOutcome.i2Clamped] counts
  *   the lifts so a systematic violation is visible instead of silent.
+ * - **Declared claims carry a belief floor** (SubjectProfile §3.5): a [ClaimSnapshot.declared]
+ *   claim publishes at no less than `declaredBeliefFloor`, with `tier` pinned LOW. This is
+ *   deliberately the *last* step and touches only the two per-claim numbers — fact beliefs, signals
+ *   and every edge are computed exactly as for extracted evidence, so a corpus fact that
+ *   contradicts a declaration still lands as a CONTRADICTS edge and still surfaces for review. The
+ *   floor buys eligibility, not immunity.
  */
 object Scorer {
 
@@ -147,20 +159,36 @@ object Scorer {
                 .map { claim ->
                     val fact = factById.getValue(claim.factId)
                     val raw = fact.belief
-                    val scoreBare = fact.beliefBare
-                    val published =
-                        if (raw < scoreBare) {
+                    val bare = fact.beliefBare
+                    val lifted =
+                        if (raw < bare) {
                             clamped++
-                            scoreBare
+                            bare
                         } else raw
+                    // The §3.5 declared branch. Both published numbers are lifted together, never
+                    // just `score`: leaving `scoreBare` at the corroboration-derived value would
+                    // manufacture a score-vs-bare gap out of nothing, and the planner reads that
+                    // gap
+                    // as row 6 ("context-mandatory — never voice this without its sidecar framing")
+                    // on a claim that has no sidecar to frame it with. Lifting both keeps them
+                    // equal for a plain declaration, so a genuine explanation effect is still the
+                    // only thing that can open that gap.
+                    val floor = if (claim.declared) params.stage3.declaredBeliefFloor else 0.0
+                    val published = maxOf(lifted, floor)
+                    val scoreBare = maxOf(bare, floor)
                     ClaimScore(
                         claimId = claim.claimId,
                         factId = claim.factId,
                         prior = prior(claim, params),
                         score = published,
                         scoreBare = scoreBare,
+                        // A declaration's tier stays LOW however high the floor is: the tier
+                        // answers
+                        // "how well corroborated is this?", and being typed by the subject is not
+                        // corroboration. The floor governs eligibility, the tier stays honest.
                         tier =
                             when {
+                                claim.declared -> "LOW"
                                 published >= params.stage3.tierHigh -> "HIGH"
                                 published >= params.stage3.tierMedium -> "MEDIUM"
                                 else -> "LOW"
