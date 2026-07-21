@@ -335,11 +335,13 @@ object Stage4Generation {
 }
 
 /**
- * Real GENERATE leg: one [GeminiDrafting.generate] call per conversation, parsed and re-tried once
- * — a second failure fails the phase, with the verbatim tail of the model output when it parsed
- * badly (§9.3). A [GeminiTruncation] retries at double the cap instead (the same cap would clip
- * identically). Token caps follow the Stage 3 lesson: an unbounded thinker can starve the output
- * budget.
+ * Real GENERATE leg: one [GeminiDrafting.generate] call per conversation, parsed, up to [ATTEMPTS]
+ * tries — exhausting them fails the phase, with the verbatim tail of the model output when it
+ * parsed badly (§9.3). A [GeminiTruncation] retries at double the cap instead (the same cap would
+ * clip identically), clamped to [MAX_CAP]. The third attempt is headroom for a `level:high` pin on
+ * the stage: high thinking spends freely from the shared cap, so a first-attempt clip becomes
+ * likely rather than rare, and the doubling retry must not be the last try. Token caps follow the
+ * Stage 3 lesson: an unbounded thinker can starve the output budget.
  */
 class GeminiStage4Drafter(
     private val gemini: GeminiDrafting,
@@ -380,7 +382,7 @@ class GeminiStage4Drafter(
                         ATTEMPTS,
                         e.message,
                     )
-                    cap *= 2
+                    cap = (cap * 2).coerceAtMost(MAX_CAP)
                     return@repeat
                 }
             runCatching {
@@ -401,7 +403,10 @@ class GeminiStage4Drafter(
     }
 
     companion object {
-        private const val ATTEMPTS = 2
+        private const val ATTEMPTS = 3
+        // Flash output ceiling (cf. ClaimExtractor.MAX_TOKENS) — the doubling ladder stops here:
+        // 16384 → 32768 → 65535. Unclamped, the third rung would be 65536 and risk a 400.
+        private const val MAX_CAP = 65_535
         private const val RAW_TAIL = 400
     }
 }

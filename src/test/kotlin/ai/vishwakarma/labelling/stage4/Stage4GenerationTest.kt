@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.stage4
 
+import ai.vishwakarma.labelling.config.AppProperties
 import ai.vishwakarma.labelling.domain.HedgeLevel
 import ai.vishwakarma.labelling.domain.PersonaDefaults
 import ai.vishwakarma.labelling.domain.PersonaStance
@@ -8,11 +9,15 @@ import ai.vishwakarma.labelling.domain.SubjectPersona
 import ai.vishwakarma.labelling.domain.TurnKind
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
+import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.drafting.GeminiTruncation
+import ai.vishwakarma.labelling.service.ProviderService
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.mockito.Mockito.mock
 
 /** [Stage4Generation] prompt assembly + parsing, and the VA-62 [DryRunStage4Drafter] double. */
 class Stage4GenerationTest {
@@ -167,6 +172,49 @@ class Stage4GenerationTest {
         assertEquals(request.question, first[0].text)
         assertTrue(first[1].text.startsWith("[dry-run qa · row 6 · hedged]"))
         assertTrue(first[1].text.contains("Avery"))
+    }
+
+    // ---- the GeminiTruncation retry ladder ---------------------------------------------
+
+    /** Clips the first [clips] calls with [GeminiTruncation], then answers a parseable pair. */
+    private class TruncatingGemini(private val clips: Int) :
+        GeminiDrafting(AppProperties(), mock(ProviderService::class.java)) {
+        val caps = mutableListOf<Int?>()
+
+        override fun generate(
+            prompt: String,
+            maxTokens: Int?,
+            thinkingBudget: Int?,
+            temperature: Double?,
+            pin: String?,
+        ): String {
+            caps += maxTokens
+            if (caps.size <= clips) throw GeminiTruncation("clipped")
+            return """[{"role":"user","text":"Q?"},{"role":"model","text":"A."}]"""
+        }
+    }
+
+    @Test
+    fun `a clipped attempt retries at double the cap and succeeds`() {
+        val gemini = TruncatingGemini(clips = 1)
+
+        val turns = GeminiStage4Drafter(gemini).draft(request())
+
+        assertEquals(2, turns.size)
+        assertEquals(listOf<Int?>(16_384, 32_768), gemini.caps)
+    }
+
+    @Test
+    fun `the ladder clamps at the flash output ceiling and fails cleanly when exhausted`() {
+        val gemini = TruncatingGemini(clips = 3)
+
+        val failure =
+            assertFailsWith<IllegalStateException> { GeminiStage4Drafter(gemini).draft(request()) }
+
+        // Three attempts: 16384 → 32768 → 65535 — never 65536, which would overrun the model
+        // output limit (cf. ClaimExtractor.MAX_TOKENS) and risk a 400.
+        assertEquals(listOf<Int?>(16_384, 32_768, 65_535), gemini.caps)
+        assertTrue(failure.message.orEmpty().contains("after 3 attempts"))
     }
 
     // ---- profile context injection (SubjectProfile LLD §4.1/§4.4) --------------------
