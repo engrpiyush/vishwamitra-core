@@ -10,6 +10,7 @@ import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.DraftPrompts
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.drafting.GeminiTruncation
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
@@ -335,14 +336,17 @@ object Stage4Generation {
 
 /**
  * Real GENERATE leg: one [GeminiDrafting.generate] call per conversation, parsed and re-tried once
- * — a second parse failure fails the phase with the verbatim tail of the model output (§9.3). Token
- * caps follow the Stage 3 lesson: an unbounded thinker can starve the output budget.
+ * — a second failure fails the phase, with the verbatim tail of the model output when it parsed
+ * badly (§9.3). A [GeminiTruncation] retries at double the cap instead (the same cap would clip
+ * identically). Token caps follow the Stage 3 lesson: an unbounded thinker can starve the output
+ * budget.
  */
 class GeminiStage4Drafter(
     private val gemini: GeminiDrafting,
-    // 8192: QD-2's 3–5-exchange conversations plus up-to-1024 thinking must fit — 4096 clipped
-    // mid-JSON on live flash even at 1–2 exchanges (observed 2026-07-13).
-    private val maxTokens: Int = 8192,
+    // 16384: QD-2's 3–5-exchange conversations must fit beside the thinking spend in one shared
+    // cap — 8192 clipped mid-JSON on live 3.5-flash (observed 2026-07-21, after 4096 clipped on
+    // 2.5 flash 2026-07-13). A truncated attempt retries at double the cap.
+    private val maxTokens: Int = 16_384,
     private val thinkingBudget: Int = 1024,
 ) : Stage4ConversationDrafter {
 
@@ -354,14 +358,31 @@ class GeminiStage4Drafter(
     override fun draft(request: Stage4GenerationRequest): List<Turn> {
         val prompt = Stage4Generation.buildPrompt(request)
         var lastError: String? = null
+        var cap = maxTokens
         repeat(ATTEMPTS) { attempt ->
             val raw =
-                gemini.generate(
-                    prompt,
-                    maxTokens = maxTokens,
-                    thinkingBudget = thinkingBudget,
-                    pin = ProviderService.PIN_STAGE4,
-                )
+                try {
+                    gemini.generate(
+                        prompt,
+                        maxTokens = cap,
+                        thinkingBudget = thinkingBudget,
+                        pin = ProviderService.PIN_STAGE4,
+                    )
+                } catch (e: GeminiTruncation) {
+                    // A clipped response can never parse; the same cap would clip again, so the
+                    // retry doubles it instead of burning the attempt on an identical call.
+                    lastError = e.message
+                    log.warn(
+                        "Plan {}: generation clipped at {} tokens (attempt {}/{}) — {}",
+                        request.plan.planId,
+                        cap,
+                        attempt + 1,
+                        ATTEMPTS,
+                        e.message,
+                    )
+                    cap *= 2
+                    return@repeat
+                }
             runCatching {
                     return Stage4Generation.parse(raw)
                 }
@@ -376,7 +397,7 @@ class GeminiStage4Drafter(
                     )
                 }
         }
-        error("generation unparseable after $ATTEMPTS attempts — $lastError")
+        error("generation failed after $ATTEMPTS attempts — $lastError")
     }
 
     companion object {

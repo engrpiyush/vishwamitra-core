@@ -12,6 +12,15 @@ import java.util.Base64
 import org.springframework.stereotype.Component
 
 /**
+ * The model stopped at `maxOutputTokens` — the returned text is a prefix of the intended output and
+ * will not parse. A distinct type so callers that can afford it retry with a bigger cap instead of
+ * re-diagnosing a mid-JSON clip from a Jackson end-of-input error (the 2026-07-21 Stage 4 GENERATE
+ * failure mode). Thinking spends from the same cap, so the message names it when the response
+ * reports it.
+ */
+class GeminiTruncation(message: String) : IllegalStateException(message)
+
+/**
  * Gemini drafting/generation for every consumer (tuning drafts, Stage 2 extraction, Stage 3 entity
  * extraction + judge, Stage 4 generation). Model + door + thinking semantics resolve per call
  * through the VA-76 stage pins: the caller's pin row (`stage2-extraction` | `stage3-judge` |
@@ -163,8 +172,17 @@ class GeminiDrafting(
     private fun extractText(response: String): String {
         val map = Json.parse(response) as? Map<String, Any?> ?: error("bad Gemini response")
         val candidates = map["candidates"] as? List<Map<String, Any?>> ?: error("no candidates")
-        val content =
-            candidates.firstOrNull()?.get("content") as? Map<String, Any?> ?: error("no content")
+        val candidate = candidates.firstOrNull() ?: error("no candidates")
+        if (candidate["finishReason"] == "MAX_TOKENS") {
+            val usage = map["usageMetadata"] as? Map<String, Any?>
+            val thoughts = (usage?.get("thoughtsTokenCount") as? Number)?.toInt()
+            throw GeminiTruncation(
+                "output clipped at maxOutputTokens (finishReason=MAX_TOKENS" +
+                    (thoughts?.let { ", thinking spent $it tokens of the shared cap" } ?: "") +
+                    ") — raise maxTokens or lower the thinking spend"
+            )
+        }
+        val content = candidate["content"] as? Map<String, Any?> ?: error("no content")
         val parts = content["parts"] as? List<Map<String, Any?>> ?: error("no parts")
         return parts.mapNotNull { it["text"] as? String }.joinToString("")
     }

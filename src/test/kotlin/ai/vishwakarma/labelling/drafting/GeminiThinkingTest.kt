@@ -23,10 +23,27 @@ class GeminiThinkingTest {
             GeminiThinking.config(null, "gemini-3.5-flash", 4096),
         )
         assertEquals(
+            mapOf<String, Any>("thinkingLevel" to "high"),
+            GeminiThinking.config(null, "gemini-3.5-flash", 8192),
+        )
+        assertEquals(
             mapOf<String, Any>("thinkingLevel" to "low"),
             GeminiThinking.config(null, "gemini-3.1-pro-preview", 0),
         )
         assertNull(GeminiThinking.config(null, "gemini-3.5-flash", null))
+    }
+
+    @Test
+    fun `derive keeps output-protection caps on low for 3_x models`() {
+        // A small 2.5-era budget is a cap guarding output space in the shared maxOutputTokens
+        // pool — `high` would ignore it and starve the output (the 2026-07-21 Stage 4 clip).
+        for (cap in listOf(512, 1024, 2048)) {
+            assertEquals(
+                mapOf<String, Any>("thinkingLevel" to "low"),
+                GeminiThinking.config(null, "gemini-3.5-flash", cap),
+                "budget $cap must derive to low",
+            )
+        }
     }
 
     @Test
