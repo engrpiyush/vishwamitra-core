@@ -9,6 +9,7 @@ import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.drafting.GeminiTruncation
 import ai.vishwakarma.labelling.serialization.Json
 import ai.vishwakarma.labelling.service.ExtractionPromptService
 import ai.vishwakarma.labelling.service.ProviderService
@@ -259,13 +260,27 @@ class GeminiStage4Judge(
         }
         val rubric = prompts.resolveKey(PROMPT_KEY).instructions
         val raw =
-            gemini.generate(
-                Stage4Judging.buildPrompt(request, rubric),
-                maxTokens = MAX_TOKENS,
-                thinkingBudget = THINKING_BUDGET,
-                temperature = ENSEMBLE_TEMPERATURE,
-                pin = ProviderService.PIN_STAGE4,
-            )
+            try {
+                gemini.generate(
+                    Stage4Judging.buildPrompt(request, rubric),
+                    maxTokens = MAX_TOKENS,
+                    thinkingBudget = THINKING_BUDGET,
+                    temperature = ENSEMBLE_TEMPERATURE,
+                    pin = ProviderService.PIN_STAGE4,
+                )
+            } catch (e: GeminiTruncation) {
+                // A level:high repin spends the shared MAX_TOKENS cap on thinking and clips the
+                // verdict JSON. A clipped sample casts no votes — the ensemble decides — exactly
+                // like an unparseable one, rather than throwing and failing the whole JUDGE tick.
+                // The systematic cap fix is VA-161; here we only stop one sample from being fatal.
+                log.warn(
+                    "Judge sample {} on plan {} clipped at the shared cap — casts no votes: {}",
+                    sampleIndex + 1,
+                    request.plan.planId,
+                    e.message,
+                )
+                return null
+            }
         return runCatching { Stage4Judging.parse(raw) }
             .getOrElse {
                 log.warn(

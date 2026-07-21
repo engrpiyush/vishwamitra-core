@@ -16,6 +16,7 @@ import ai.vishwakarma.labelling.persistence.SubjectFactRecord
 import ai.vishwakarma.labelling.persistence.TimelineLink
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -45,6 +46,7 @@ class Stage4PlanningTest {
         claimType: ClaimType = ClaimType.EPISODE,
         origin: ClaimOrigin? = null,
         declaredType: String? = null,
+        edgeCounts: Map<String, Int>? = null,
     ) =
         EvidencedClaim(
             Claim(
@@ -61,6 +63,7 @@ class Stage4PlanningTest {
                 attestor = attestorKind?.let { PublishedAttestor(kind = it) },
                 origin = origin,
                 declaredType = declaredType,
+                edgeCounts = edgeCounts,
                 scoreRunId = "pub-1",
                 publishContractVersion = 2,
             )
@@ -754,5 +757,108 @@ class Stage4PlanningTest {
         val second = plan(eligible, facts, templates = templates).planned.map { it.plan.planId }
 
         assertEquals(first, second)
+    }
+
+    // ---- the anchor/evidence invariant: {{fact}} always backs a claim in the unit (plan 0ab5f1a5)
+
+    @Test
+    fun `a template question never quotes a fact label whose backing claim the member cap dropped`() {
+        // The UCEC601 shape (plan 0ab5f1a5): a fact with more members than MAX_TEMPLATE_CLAIMS (4),
+        // where the claim whose label equals the fact label sorts LAST by id and is dropped by the
+        // `.take(4)` cap. The planned question must quote a label backed by a claim actually in the
+        // unit — never the dropped one, or the drafter denies a fact it was never handed.
+        val anchorLabel = "Completed the theory component of UCEC601 with a grade of 7 out of 10."
+        val eligible =
+            listOf(
+                claim("c1", factLabel = "UCEC604 laboratory component"),
+                claim("c2", factLabel = "SGPI VII standing"),
+                claim("c3", factLabel = "SGPI VI standing"),
+                claim("c4", factLabel = "UCEC603 coursework"),
+                // Sorts last by id; only this member bears the fact label, and the cap drops it.
+                claim("c5", factLabel = anchorLabel),
+            )
+        val facts =
+            listOf(fact("f1", members = listOf("c1", "c2", "c3", "c4", "c5"), label = anchorLabel))
+        val templates = listOf(template("tpl-a", category = "career-timeline"))
+
+        val outcome = plan(eligible, facts, templates = templates)
+
+        val unit = outcome.planned.single { it.plan.templateId != null }
+        // The label-bearing claim was capped out of the unit…
+        assertTrue("c5" !in unit.plan.sourceClaimIds)
+        // …so the question must not quote its label; the quoted label backs a drawn claim.
+        val quoted = Regex("\"([^\"]*)\"").find(unit.question)!!.groupValues[1]
+        assertNotEquals(anchorLabel, quoted)
+        val drawnLabels =
+            eligible
+                .filter { it.claim.id in unit.plan.sourceClaimIds }
+                .map { it.claim.factStamp!!.label }
+        assertTrue(quoted in drawnLabels, "quoted label \"$quoted\" must back a claim in the unit")
+    }
+
+    @Test
+    fun `a multi-claim group question falls back to a drawn member when the labelled claim is out`() {
+        // The fact's label is the label of a claim that never made the eligible slice, so it is
+        // absent from the unit. The question must fall back to a drawn member's label rather than
+        // quoting evidence the drafter was never handed.
+        val eligible =
+            listOf(
+                claim("c1", score = 0.7, factLabel = "backend migration"),
+                claim("c2", score = 0.9, factLabel = "payments rollout"),
+            )
+        // c-gone is the label-bearing member but is absent from `eligible` (ineligible / filtered).
+        val facts =
+            listOf(
+                fact(
+                    "f1",
+                    members = listOf("c-gone", "c1", "c2"),
+                    label = "led the compiler rewrite",
+                )
+            )
+
+        val outcome = plan(eligible, facts, mix = mix(multiClaim = 1.0))
+
+        val group = outcome.planned.single { it.plan.category == Stage4Category.MULTI_CLAIM }
+        assertTrue("c-gone" !in group.plan.sourceClaimIds)
+        val quoted = Regex("\"([^\"]*)\"").find(group.question)!!.groupValues[1]
+        assertNotEquals("led the compiler rewrite", quoted)
+        // Fallback is the best drawn member — highest score, so c2's label.
+        assertEquals("payments rollout", quoted)
+    }
+
+    @Test
+    fun `a fact group question never quotes an excluded row-5 member even when it scores highest`() {
+        // planFactGroup drops a row-5 (unexplained CONFIRMED conflict) member from the group's
+        // sourceClaimIds — the evidence block the drafter sees — but row 5 is scored BEFORE the
+        // bands, so such a claim can still hold the top authenticity score. Drawing {{fact}} from
+        // the
+        // full member list would then quote that excluded claim's label, a fact with no evidence
+        // line
+        // — the same ungrounded-fact denial the anchor-cap case caused. The label must come from a
+        // member that survives into the block.
+        val eligible =
+            listOf(
+                // Excluded row-5 member, yet the highest scorer — the fallback's default pick.
+                claim(
+                    "c-excluded",
+                    score = 0.95,
+                    factLabel = "Alpha",
+                    edgeCounts = mapOf("contradictsConfirmed" to 1),
+                ),
+                claim("c-kept", score = 0.6, factLabel = "Beta"),
+            )
+        // The fact label matches no member, so branch 1 falls through to the score-ranked fallback.
+        val facts = listOf(fact("f1", members = listOf("c-excluded", "c-kept"), label = "Gamma"))
+
+        val outcome = plan(eligible, facts, mix = mix(multiClaim = 1.0))
+
+        val group = outcome.planned.single { it.plan.category == Stage4Category.MULTI_CLAIM }
+        // The row-5 member is excluded from the evidence the drafter is handed…
+        assertTrue("c-excluded" !in group.plan.sourceClaimIds)
+        assertTrue("c-kept" in group.plan.sourceClaimIds)
+        // …so the quoted label is the surviving member's, never the excluded high-scorer's.
+        val quoted = Regex("\"([^\"]*)\"").find(group.question)!!.groupValues[1]
+        assertEquals("Beta", quoted)
+        assertNotEquals("Alpha", quoted)
     }
 }

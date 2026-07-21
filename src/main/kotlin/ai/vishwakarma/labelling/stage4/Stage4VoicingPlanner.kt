@@ -166,6 +166,17 @@ class Stage4VoicingPlanner(
             is PlanUnit.QuestionUnit -> planQuestion(unit, persona, personaHash)
         }
 
+    /**
+     * Whether [e], voiced as its own claim, is SFT-eligible — i.e. NOT the row-5
+     * unexplained-CONFIRMED exclusion. [planFactGroup] narrows a group's
+     * [VoicingPlan.sourceClaimIds] to exactly these members (keeping every member only when all of
+     * them are excluded), so the PLAN phase reads this to draw a quoted question label solely from
+     * a claim the group's evidence block will actually carry — never a dropped row-5 member whose
+     * label would have no backing line. It delegates to [claimRow] so the row logic stays the
+     * single source of truth for eligibility.
+     */
+    fun sftEligibleAlone(e: EvidencedClaim): Boolean = claimRow(e).sftEligible
+
     // ---- rows 1–8: claim-backed voices ---------------------------------------------------
 
     private fun planClaim(

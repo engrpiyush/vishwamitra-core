@@ -1,5 +1,10 @@
 # JIRA drafts — Stage 4 GENERATE follow-ups
 
+> **Round 2 (2026-07-22, generation-quality)** — filed after live notebook review, same epic VA-48:
+> - [VA-163](https://vishx.atlassian.net/browse/VA-163) **Bug, In Progress** — GQ-1…4: bracket-tag leak (claim ids + `[F1]`), ledger-verbatim guest questions, the UCEC601 anchor/evidence **denial** (planner label invariant), judge truncation no-vote. Code via ultracode workflow this session.
+> - [VA-164](https://vishx.atlassian.net/browse/VA-164) **Task ⚠CAL** — KB visibility tier (LLD §9.5, GQ-6): posture-labeled full-ledger background (`ASSERT`/`HEDGE`/`ACKNOWLEDGE-ONLY`, weak claims tagged never filtered), judge symmetry, blocked on the A/B overclaim gate.
+> - LLD v1.9 pushed (page 251953154 v10): §9.2/§9.3 GQ amendments, new §9.5, §17 GQ round. VA-161 carries a scope comment (judge site pulled forward).
+
 Follow-up tickets that fall out of commit `73b294d`
 *fix(stage4): stop 3.x thinkingLevel mapping from starving GENERATE output* (2026-07-21).
 That fix closed the live GENERATE clip, but left two loose ends worth tracking rather than doing inline.

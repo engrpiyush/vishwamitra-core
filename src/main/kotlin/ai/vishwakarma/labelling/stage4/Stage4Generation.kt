@@ -128,6 +128,8 @@ object Stage4Generation {
             Stage4VoicingPlanner.F5,
             "F6: if the guest self-identifies (recruiter, engineer, …), adapt register — facts " +
                 "and confidence levels stay exactly as planned.",
+            "F7: bracketed ids and tags on the evidence and constraint lines are internal " +
+                "provenance — never write bracketed ids or tags in any reply.",
         )
 
     /** Text-only turn schema — the v1 advocate has no tools (LLD §13). */
@@ -335,6 +337,56 @@ object Stage4Generation {
 }
 
 /**
+ * Post-parse prose hygiene for drafted advocate turns (LLD §9.3). The evidence and constraint lines
+ * the drafter reads carry internal notation that is provenance for the model, never advocate
+ * speech: the evidence line's own claim id (`[<claimId>]`), the fixed card's rule tags
+ * (`[F1]`…`[F7]`), and the constraint lines' design-decision tags (`(C7)`, `(D9)`, `(S4-D1)`, …). A
+ * drafter that echoes any of them leaks internal notation straight into the training transcript
+ * (SITUATIONAL prose on run 13FHACaAP24374r6F643 leaked 28 id tokens plus `[F1]`/`[F6]`), and it
+ * may recast a tag into a bracketed (`[D9]`) or a parenthesized (`(D9)`) form. [scrub] removes
+ * those provenance tokens — the plan's own source claim ids, and the C/D/E/F rule/decision families
+ * in either wrapper — and tidies the spacing the removal leaves behind; every other bracketed or
+ * parenthesized span (`[sic]`, `(2019)`, `(AI)`, …) is deliberately left untouched.
+ */
+object Stage4Prose {
+
+    /**
+     * Internal provenance tags on the fixed-card / constraint lines: the rule tags (`F1`…`F99`) and
+     * the design-decision tags (`C7`, `D8`, `D9`, `D10`, `E13`, `E15`, `S4-D1`, …), in either
+     * wrapper — the model may echo a tag bracketed (`[D9]`) or parenthesized (`(D9)`), the forms it
+     * recast the observed `[F1]`/`[F6]` leak into. Scoped to the C/D/E/F families (and the `S4-D`
+     * compound) so ordinary asides like `[sic]`, `(2019)` or `(AI)` are never touched.
+     */
+    private val PROVENANCE_TAG = Regex("""[\[(](?:S4-)?[CDEF]\d{1,2}[\])]""")
+    private val SPACE_RUN = Regex(" {2,}")
+    private val SPACE_BEFORE_PUNCT = Regex(" +([.,;:!?])")
+    // Directional quotes are unambiguous, so a space stranded just inside one (left by a removed
+    // token) is safe to close up. Straight quotes are left to the space-run collapse: removing a
+    // space next to a bare " could weld a legitimately spaced opening/closing quote onto its word.
+    private val OPEN_QUOTE_SPACE = Regex("([“‘]) +")
+    private val CLOSE_QUOTE_SPACE = Regex(" +([”’])")
+
+    /**
+     * Strip the [claimIds]' own `[id]` tokens and every provenance rule/decision tag — `[F<n>]`,
+     * `(D9)`, `(S4-D1)`, … in either wrapper — from [text], then tidy the gaps: collapse doubled
+     * spaces, drop a space before terminal punctuation, close directional quote-space artifacts,
+     * and trim. Non-provenance brackets and parentheses survive.
+     */
+    fun scrub(text: String, claimIds: Collection<String>): String {
+        var out = text
+        for (id in claimIds) {
+            if (id.isNotBlank()) out = out.replace("[$id]", "")
+        }
+        out = PROVENANCE_TAG.replace(out, "")
+        return out.replace(SPACE_RUN, " ")
+            .replace(SPACE_BEFORE_PUNCT, "$1")
+            .replace(OPEN_QUOTE_SPACE, "$1")
+            .replace(CLOSE_QUOTE_SPACE, "$1")
+            .trim()
+    }
+}
+
+/**
  * Real GENERATE leg: one [GeminiDrafting.generate] call per conversation, parsed, up to [ATTEMPTS]
  * tries — exhausting them fails the phase, with the verbatim tail of the model output when it
  * parsed badly (§9.3). A [GeminiTruncation] retries at double the cap instead (the same cap would
@@ -362,6 +414,14 @@ class GeminiStage4Drafter(
         var lastError: String? = null
         var cap = maxTokens
         repeat(ATTEMPTS) { attempt ->
+            log.info(
+                "Plan {}: GENERATE call — attempt {}/{}, cap {} tokens",
+                request.plan.planId,
+                attempt + 1,
+                ATTEMPTS,
+                cap,
+            )
+            val callStarted = System.currentTimeMillis()
             val raw =
                 try {
                     gemini.generate(
@@ -385,8 +445,23 @@ class GeminiStage4Drafter(
                     cap = (cap * 2).coerceAtMost(MAX_CAP)
                     return@repeat
                 }
-            runCatching {
-                    return Stage4Generation.parse(raw)
+            runCatching { Stage4Generation.parse(raw) }
+                .onSuccess { turns ->
+                    // Scrub any leaked evidence-line claim ids / fixed-card rule tags before the
+                    // turns are stored — internal provenance, never advocate speech (§9.3).
+                    val scrubbed =
+                        turns.map {
+                            it.copy(text = Stage4Prose.scrub(it.text, request.plan.sourceClaimIds))
+                        }
+                    log.info(
+                        "Plan {}: drafted {} turn(s) in {} ms (attempt {}/{})",
+                        request.plan.planId,
+                        scrubbed.size,
+                        System.currentTimeMillis() - callStarted,
+                        attempt + 1,
+                        ATTEMPTS,
+                    )
+                    return scrubbed
                 }
                 .onFailure {
                     lastError = "${it.message}; raw tail: ${raw.takeLast(RAW_TAIL)}"

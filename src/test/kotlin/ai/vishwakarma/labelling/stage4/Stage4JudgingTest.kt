@@ -9,13 +9,20 @@ import ai.vishwakarma.labelling.domain.Stage4Category
 import ai.vishwakarma.labelling.domain.Turn
 import ai.vishwakarma.labelling.domain.TurnRole
 import ai.vishwakarma.labelling.domain.VoicingPlan
+import ai.vishwakarma.labelling.drafting.GeminiDrafting
+import ai.vishwakarma.labelling.drafting.GeminiTruncation
 import ai.vishwakarma.labelling.liveConfig
+import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
+import ai.vishwakarma.labelling.service.ExtractionPromptService
+import ai.vishwakarma.labelling.service.ProviderService
+import ai.vishwakarma.labelling.service.ResolvedExtractionPrompt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.mockito.Mockito.mock
 
 /** [Stage4Judging] + the VA-62 scripted double: the §11 machinery, pinned pure (VA-57). */
 class Stage4JudgingTest {
@@ -230,5 +237,41 @@ class Stage4JudgingTest {
 
         val allBorderline = judge(fail = 0.0, borderline = 1.0).sample(request("plan-x"), 0)
         assertEquals(JudgeVerdict.BORDERLINE, allBorderline.values.maxOf { it.verdict })
+    }
+
+    // ---- the Gemini judge's truncation guard (a clip is a no-vote, not a fatal tick) ----------
+
+    /** Always clips: `generate` throws [GeminiTruncation], the level:high-repin failure mode. */
+    private class TruncatingJudgeGemini :
+        GeminiDrafting(AppProperties(), mock(ProviderService::class.java)) {
+        override fun available() = true
+
+        override fun generate(
+            prompt: String,
+            maxTokens: Int?,
+            thinkingBudget: Int?,
+            temperature: Double?,
+            pin: String?,
+        ): String =
+            throw GeminiTruncation("output clipped at maxOutputTokens (finishReason=MAX_TOKENS)")
+    }
+
+    private class FixedJudgePrompts :
+        ExtractionPromptService(mock(ExtractionPromptRepository::class.java)) {
+        override fun resolveKey(key: String) = ResolvedExtractionPrompt("RUBRIC", 1, "hash")
+    }
+
+    @Test
+    fun `a clipped judge sample casts no votes instead of failing the tick`() {
+        val judge = GeminiStage4Judge(TruncatingJudgeGemini(), FixedJudgePrompts())
+
+        val clipped = judge.sample(request("plan-clip"), 0)
+
+        // The GeminiTruncation is swallowed to a no-vote, never rethrown to fail the JUDGE tick.
+        assertNull(clipped)
+        // Aggregation still works with the null sample dropped alongside a real one (the ensemble
+        // decides) — mirrors the dropped-pair posture of an unparseable response.
+        val axes = Stage4Judging.aggregate(listOfNotNull(clipped, sample(JudgeVerdict.PASS)))
+        assertEquals(JudgeVerdict.PASS, axes[JudgeAxis.FAITHFULNESS]!!.verdict)
     }
 }

@@ -361,37 +361,46 @@ f11_question_generator: >-
 
 "stage4:gen:qa": >-
   Write a natural recruiter-and-advocate conversation of 1 to 2 exchanges about the single
-  evidenced claim below. The guest speaks like a real recruiter and may rephrase the planned
-  question in their own words, but must not introduce facts beyond the evidence lines. The
-  advocate answers directly, voicing the claim exactly as the constraint lines authorize — no
-  stronger, no weaker — and citing what the evidence actually says. Concrete, no filler.
+  evidenced claim below. The guest speaks like a real recruiter; the planned question may carry
+  ledger wording in quotes, and the guest MUST restate it as a natural spoken question — never
+  quoting ledger sentences verbatim, never reproducing bracketed ids or tags — and must not
+  introduce facts beyond the evidence lines. The advocate answers directly, voicing the claim
+  exactly as the constraint lines authorize — no stronger, no weaker — and citing what the
+  evidence actually says. Concrete, no filler.
 
 "stage4:gen:situational": >-
   Write a recruiter-and-advocate conversation of 2 to 3 exchanges answering the situational
-  question below. The guest weighs a real hiring decision and may sharpen the planned question
-  with concrete role context, but must not introduce facts or requirements beyond the evidence
-  lines. The reasoning is the answer: derive the conclusion step by step IN the replies, citing
-  each supporting fact in-line as you use it (visible grounding — no hidden reasoning). The
-  conclusion must not exceed the ceiling phrase in the constraints; if a constraint names an
-  unresolved tension, say it aloud; where the record is thinner than the question demands, the
-  advocate says so before extrapolating.
+  question below. The guest weighs a real hiring decision; the planned question may carry ledger
+  wording in quotes, and the guest MUST restate it as a natural spoken question — never quoting
+  ledger sentences verbatim, never reproducing bracketed ids or tags — and may sharpen it with
+  concrete role context, but must not introduce facts or requirements beyond the evidence lines.
+  The reasoning is the answer: derive the conclusion step by step IN the replies, and cite by
+  naming what the evidence says in natural prose (visible grounding — no hidden reasoning); never
+  bracketed ids or tags. The conclusion must not exceed the ceiling phrase in the constraints; if
+  a constraint names an unresolved tension, say it aloud; where the record is thinner than the
+  question demands, the advocate says so before extrapolating.
 
 "stage4:gen:multi-claim": >-
   Write a recruiter-and-advocate conversation of 3 to 5 exchanges that walks through the
   related claims below as a coherent story — chronological where the dates allow, thematic
-  otherwise. The guest probes like a recruiter building a complete picture: natural follow-ups,
-  one respectful pressure-test of the weakest-sounding part. Voice every claim at the group's
-  authorized level; where members differ in strength, let the phrasing show it. Each evidence
-  line should earn a mention; nothing beyond the evidence enters the story.
+  otherwise. The guest probes like a recruiter building a complete picture; the planned question
+  may carry ledger wording in quotes, and the guest MUST restate it as a natural spoken question,
+  never quoting ledger sentences verbatim and never reproducing bracketed ids or tags — with
+  natural follow-ups and one respectful pressure-test of the weakest-sounding part. Voice every
+  claim at the group's authorized level; where members differ in strength, let the phrasing show
+  it. Each evidence line should earn a mention; nothing beyond the evidence enters the story.
 
 "stage4:gen:negative": >-
   Write a recruiter-and-advocate conversation of 2 to 3 exchanges for the probing question
-  below. The advocate's replies follow the constraint lines exactly: refusals are polite and
-  brief and never engage the premise; criticism responses stay warm, concede what the evidence
-  concedes, and never deny an evidenced fact; honest-gap answers say plainly what the record
-  does not cover; comparison bait gets "I can only speak to this record"; requests for system
-  internals, raw sources or impersonation are declined with the advocate's identity restated.
-  The guest pushes back once or twice; the advocate holds the line without becoming defensive.
+  below. The planned question may carry ledger wording in quotes; the guest MUST restate it as a
+  natural spoken question, never quoting ledger sentences verbatim and never reproducing
+  bracketed ids or tags. The advocate's replies follow the constraint lines exactly: refusals are
+  polite and brief and never engage the premise; criticism responses stay warm, concede what the
+  evidence concedes, and never deny an evidenced fact; honest-gap answers say plainly what the
+  record does not cover; comparison bait gets "I can only speak to this record"; requests for
+  system internals, raw sources or impersonation are declined with the advocate's identity
+  restated. The guest pushes back once or twice; the advocate holds the line without becoming
+  defensive.
 
 # ---- Stage 4 judge rubric (LLD §11) — the admin-editable guidance section of the judge
 # prompt. The plan constraints, persona, evidence, speculation ground truth and the axis/output

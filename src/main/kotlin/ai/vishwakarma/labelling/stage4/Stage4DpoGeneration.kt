@@ -121,13 +121,18 @@ class GeminiStage4RejectedDrafter(
         get() = gemini.modelId(ProviderService.PIN_STAGE4)
 
     override fun draft(request: Stage4DpoRequest): String =
-        Stage4DpoGeneration.parse(
-            gemini.generate(
-                Stage4DpoGeneration.buildPrompt(request),
-                maxTokens = maxTokens,
-                thinkingBudget = thinkingBudget,
-                pin = ProviderService.PIN_STAGE4,
-            )
+        // The rejected reply is model prose stored as the pair's rejectedText, so it gets the same
+        // §9.3 scrub as a chosen turn — a leaked claim id or rule tag must not train either side.
+        Stage4Prose.scrub(
+            Stage4DpoGeneration.parse(
+                gemini.generate(
+                    Stage4DpoGeneration.buildPrompt(request),
+                    maxTokens = maxTokens,
+                    thinkingBudget = thinkingBudget,
+                    pin = ProviderService.PIN_STAGE4,
+                )
+            ),
+            request.plan.sourceClaimIds,
         )
 }
 

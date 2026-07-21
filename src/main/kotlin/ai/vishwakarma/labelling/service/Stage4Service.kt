@@ -574,6 +574,12 @@ class Stage4Service(
 
             val frozen = frozenParams(run)
             val batch = pending.take(frozen.generateBatchPerPoll)
+            log.info(
+                "Run {}: GENERATE — {} plan(s) pending, drafting {} this tick",
+                run.id,
+                pending.size,
+                batch.size,
+            )
             batch.forEach { p ->
                 generateOne(
                     run,
@@ -670,6 +676,7 @@ class Stage4Service(
                     )
             )
 
+        val draftStarted = System.currentTimeMillis()
         val (turns, llmModel, createdBy) =
             when {
                 cached != null -> Triple(cached.turns, cached.llmModel, "stage4-cache:${run.id}")
@@ -718,6 +725,19 @@ class Stage4Service(
                 createdAt = now,
                 updatedAt = now,
             )
+        )
+        log.info(
+            "Run {}: GENERATE plan {} ({}) — {} — {} turn(s), {} ms",
+            run.id,
+            p.plan.planId,
+            category,
+            when {
+                cached != null -> "cache copy, no LLM call"
+                category == Stage4Category.META -> "meta render, no LLM call"
+                else -> "LLM draft via ${llmModel ?: "gemini"}"
+            },
+            turns.size,
+            System.currentTimeMillis() - draftStarted,
         )
     }
 
@@ -823,7 +843,15 @@ class Stage4Service(
             val subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject"
             val evidenceById = eligibleClaims(run.subjectId, scoreRunId).associateBy { it.claim.id }
             val params = frozenParams(run)
-            pending.take(params.judgeBatchPerPoll).forEach { e ->
+            val batch = pending.take(params.judgeBatchPerPoll)
+            log.info(
+                "Run {}: JUDGE — {} example(s) pending, judging {} this tick (ensemble k={})",
+                run.id,
+                pending.size,
+                batch.size,
+                params.ensembleK,
+            )
+            batch.forEach { e ->
                 judgeOne(run, e, subjectName, persona, presetStyle, evidenceById, params.ensembleK)
             }
             run.copy(
@@ -860,7 +888,19 @@ class Stage4Service(
                     },
                 expectedHedge = expectedHedge(run, plan.plan, evidenceById),
             )
-        val samples = (0 until ensembleK).mapNotNull { judge.sample(request, it) }
+        val judgeStarted = System.currentTimeMillis()
+        val samples =
+            (0 until ensembleK).mapNotNull { i ->
+                log.info(
+                    "Run {}: judging example {} (plan {}) — sample {}/{}",
+                    run.id,
+                    example.id,
+                    planId,
+                    i + 1,
+                    ensembleK,
+                )
+                judge.sample(request, i)
+            }
         check(samples.isNotEmpty()) {
             "judge cast no votes on example ${example.id} ($ensembleK unusable samples)"
         }
@@ -903,6 +943,15 @@ class Stage4Service(
                     )
             }
         sftExamples.save(routed)
+        log.info(
+            "Run {}: example {} judged {} — {}/{} sample(s) voted, {} ms",
+            run.id,
+            example.id,
+            overall,
+            samples.size,
+            ensembleK,
+            System.currentTimeMillis() - judgeStarted,
+        )
     }
 
     /**

@@ -288,7 +288,7 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                     }
                 Candidate(
                     unit = unit,
-                    question = templateQuestion(template, anchor.label),
+                    question = templateQuestion(template, questionLabelOf(anchor.label, members)),
                     claimIds = members.map { it.claim.id },
                     template = template,
                 )
@@ -445,7 +445,7 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                         unit = PlanUnit.FactGroupUnit(members, unitKey = fact.factId),
                         question =
                             template
-                                .replace("{{fact}}", "\"${fact.label}\"")
+                                .replace("{{fact}}", "\"${questionLabelOf(fact.label, members)}\"")
                                 .replace("{{subject}}", subjectName),
                         claimIds = members.map { it.claim.id },
                     )
@@ -487,7 +487,7 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                     unit = PlanUnit.FactGroupUnit(members, unitKey = "chain:${head.factId}"),
                     question =
                         template
-                            .replace("{{fact}}", "\"${head.label}\"")
+                            .replace("{{fact}}", "\"${questionLabelOf(head.label, members)}\"")
                             .replace("{{subject}}", subjectName),
                     claimIds = members.map { it.claim.id },
                 )
@@ -634,6 +634,35 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
 
     private fun labelOf(e: EvidencedClaim): String =
         e.claim.factStamp?.label?.takeIf { it.isNotBlank() } ?: e.claim.text
+
+    /**
+     * The label a fact/chain unit's planned question quotes — always the label of a claim the
+     * drafter is actually handed an evidence line for. A fact's own label is the label of one of
+     * its member claims, but the member cap ([MAX_TEMPLATE_CLAIMS]) and the eligibility gates can
+     * drop exactly that claim while other members ride into the unit; quoting the anchor label then
+     * hands the drafter a `{{fact}}` whose backing claim is absent from the evidence lines, and —
+     * told to introduce nothing beyond them — it denies a real evidenced fact (the UCEC601 plan
+     * 0ab5f1a5 shape).
+     *
+     * The drawn set alone is not enough: a fact group's evidence block is the plan's
+     * sourceClaimIds, which [Stage4VoicingPlanner.planFactGroup] narrows to the SFT-eligible
+     * members (row-5 unexplained-confirmed members are dropped — and, since row 5 is scored ahead
+     * of the bands, such a claim can still hold the top score). So restrict the label source to the
+     * members that survive into that block — the eligible ones, or all of them when the planner
+     * keeps them all because none are eligible. Then keep [anchorLabel] when a surviving entry
+     * still bears it; otherwise quote the best surviving member's label (highest score, claim.id
+     * tie-break for determinism). Member selection is untouched — only the label source moves — so
+     * a re-run over the same drawn members reproduces the identical planId.
+     */
+    private fun questionLabelOf(anchorLabel: String, members: List<EvidencedClaim>): String {
+        val sourceable = members.filter { planner.sftEligibleAlone(it) }.ifEmpty { members }
+        if (sourceable.any { labelOf(it) == anchorLabel }) return anchorLabel
+        val best =
+            sourceable
+                .sortedWith(compareByDescending<EvidencedClaim> { it.score }.thenBy { it.claim.id })
+                .firstOrNull()
+        return best?.let { labelOf(it) } ?: anchorLabel
+    }
 
     /**
      * Word [SHINGLE_SIZE]-shingles over lowercased alphanumeric tokens; short texts fall back to

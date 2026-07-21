@@ -343,4 +343,86 @@ class Stage4GenerationTest {
 
         assertEquals(text, Stage4Generation.substituteContext(text, "the IN market", "2026-01-01"))
     }
+
+    // ---- the bracket-tag scrub (A6: no internal provenance in advocate prose) ----------------
+
+    @Test
+    fun `scrub removes leaked claim ids and rule tags and tidies the gap`() {
+        val leaked =
+            "He proposed new methodologies [Jc52sXCEAghIXXXOzMV4]. The credit went to the team " +
+                "rather than Piyush himself [F1]."
+
+        val clean = Stage4Prose.scrub(leaked, listOf("Jc52sXCEAghIXXXOzMV4", "unused"))
+
+        assertTrue("[Jc52sXCEAghIXXXOzMV4]" !in clean, clean)
+        assertTrue("[F1]" !in clean, clean)
+        // No orphan space before the period the token used to precede, no doubled spaces.
+        assertTrue(clean.contains("proposed new methodologies. The credit"), clean)
+        assertTrue(clean.contains("Piyush himself."), clean)
+        assertTrue("  " !in clean, clean)
+    }
+
+    @Test
+    fun `scrub leaves non-provenance brackets untouched`() {
+        val text = "Published in [2019], still marked [sic] in the record."
+
+        val clean = Stage4Prose.scrub(text, listOf("c1", "someClaimId"))
+
+        // Neither `[2019]` nor `[sic]` is a claim id or an `[F<n>]` tag, so the prose is unchanged.
+        assertEquals(text, clean)
+    }
+
+    @Test
+    fun `scrub strips design-decision tags in either wrapper but spares ordinary parentheses`() {
+        // The constraint lines carry design-decision tags — `(D9)`, `(C7)`, `(S4-D1)`, … — the same
+        // internal provenance F7 forbids. A drafter can echo them bracketed or parenthesized, the
+        // way it recast the observed `[F1]` leak; both forms must go, while parentheses that merely
+        // look tag-ish (a year, an initialism, a quarter) stay put — the scrub is scoped, not
+        // greedy.
+        val leaked =
+            "I'd frame that as growth [D9], attributed by role (C7), grounded (S4-D1) — " +
+                "shipped in (2019), an (AI) rollout for (Q3)."
+
+        val clean = Stage4Prose.scrub(leaked, listOf("c1"))
+
+        assertTrue("[D9]" !in clean, clean)
+        assertTrue("(C7)" !in clean, clean)
+        assertTrue("(S4-D1)" !in clean, clean)
+        assertTrue(clean.contains("(2019)"), clean)
+        assertTrue(clean.contains("(AI)"), clean)
+        assertTrue(clean.contains("(Q3)"), clean)
+        // The removals tidy their gaps — no orphan space before punctuation, no doubled spaces.
+        assertTrue(
+            clean.contains("I'd frame that as growth, attributed by role, grounded —"),
+            clean
+        )
+        assertTrue("  " !in clean, clean)
+    }
+
+    /** Returns a fixed leaking JSON draft regardless of the prompt (mirrors TruncatingGemini). */
+    private class LeakingGemini(private val json: String) :
+        GeminiDrafting(AppProperties(), mock(ProviderService::class.java)) {
+        override fun generate(
+            prompt: String,
+            maxTokens: Int?,
+            thinkingBudget: Int?,
+            temperature: Double?,
+            pin: String?,
+        ): String = json
+    }
+
+    @Test
+    fun `a leaked draft is scrubbed end-to-end through the drafter`() {
+        // request()'s plan carries sourceClaimIds = [c1]; the draft leaks that id and an F-tag.
+        val leaking =
+            """[{"role":"user","kind":"TEXT","text":"What was her role?"},""" +
+                """{"role":"model","kind":"TEXT","text":"She led the migration [c1], not the team [F6]."}]"""
+
+        val turns = GeminiStage4Drafter(LeakingGemini(leaking)).draft(request())
+
+        val modelText = turns.last().text
+        assertTrue("[c1]" !in modelText, modelText)
+        assertTrue("[F6]" !in modelText, modelText)
+        assertTrue(modelText.contains("She led the migration, not the team."), modelText)
+    }
 }
