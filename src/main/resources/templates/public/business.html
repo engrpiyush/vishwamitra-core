@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{public/shell :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-173: the "For businesses" use-case catalog on the apex — the business door from the two-door
+  root. Friendly capability language only; the host filter 404s everything else, and this page
+  sets no cookies. One use case ships today (Sales Rep, whose brochure lives one level deeper at
+  /business/sales-rep); the grid is built to grow — add a card per new use case.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero landing-hero--wide">
+            <span class="brand-mark"></span>
+            <h1>For businesses</h1>
+            <p class="lede">Choose what you want built from your company's knowledge. Every answer
+                is verified before the rep speaks it — and the model is yours to own.</p>
+
+            <div class="stage-picker">
+                <a class="stage-card" th:href="@{/business/sales-rep}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    <span class="stage-card-title">Sales Rep</span>
+                    <p class="muted">An AI sales rep built from your company's knowledge.</p>
+                </a>
+                <!-- More business use cases land here as we add them. -->
+            </div>
+            <p class="panel-fineprint">More rep types are on the way.</p>
+        </section>
+    </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
+</div>
+
+</body>
+</html>

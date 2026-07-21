@@ -118,9 +118,10 @@ class SubjectHostFilter(
 
     /**
      * §8.4: the public-apex world — stamp the marker, rewrite onto the internal `/p` prefix, 404
-     * anything that isn't the landing (the brand page), `/construct` (the product front door), a
-     * policy page, the data-collection guide or a shared static asset. No login machinery, no
-     * logout, no subject or operator route exists here.
+     * anything that isn't the landing (the brand page), `/construct` (the product front door), the
+     * VA-173 two-door catalog (`/individuals`, `/business` and its deeper product pages such as
+     * `/business/sales-rep`), a policy page, the data-collection guide or a shared static asset. No
+     * login machinery, no logout, no subject or operator route exists here.
      */
     private fun servePublic(
         request: HttpServletRequest,
@@ -135,6 +136,12 @@ class SubjectHostFilter(
             path == "/" -> filterChain.doFilter(rewritten(request, "/p"), response)
             path == "/construct" ->
                 filterChain.doFilter(rewritten(request, "/p/construct"), response)
+            // VA-173: the two-door catalog world — the individuals door and the businesses door
+            // (plus the businesses catalog's deeper product pages, e.g. /business/sales-rep).
+            path == "/individuals" ->
+                filterChain.doFilter(rewritten(request, "/p/individuals"), response)
+            path == "/business" || path.startsWith("/business/") ->
+                filterChain.doFilter(rewritten(request, "/p$path"), response)
             path.startsWith("/policies/") ->
                 filterChain.doFilter(rewritten(request, "/p$path"), response)
             else -> response.sendError(HttpServletResponse.SC_NOT_FOUND)

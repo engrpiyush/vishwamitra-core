@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{public/shell :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-173: the "For individuals" use-case catalog on the apex — the individuals door from the
+  two-door root. Friendly capability language only (no operator or stage vocabulary); the host
+  filter 404s everything else, and this page sets no cookies. One use case ships today (Career
+  Advocate); the grid is built to grow — add a card per new use case.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero landing-hero--wide">
+            <span class="brand-mark"></span>
+            <h1>For individuals</h1>
+            <p class="lede">Choose what your advocate is for. Each one speaks for one person,
+                grounded in real evidence they chose to share and reviewed themselves.</p>
+
+            <div class="stage-picker">
+                <a class="stage-card" th:href="@{/construct}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <span class="stage-card-title">Career Advocate</span>
+                    <p class="muted">An advocate that speaks for you — grounded in the evidence
+                        you choose and review.</p>
+                </a>
+                <!-- More individual use cases land here as we add them. -->
+            </div>
+            <p class="panel-fineprint">More advocate use cases are on the way.</p>
+        </section>
+    </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
+</div>
+
+</body>
+</html>

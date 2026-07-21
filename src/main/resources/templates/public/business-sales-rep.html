@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{public/shell :: head(${pageTitle})}"></head>
+<body>
+
+<!--
+  VA-173: the AI Sales Rep brochure — the deep product page under the "For businesses" catalog
+  (/business → /business/sales-rep). Apex, cookieless, capability language only. No signup form,
+  no pricing, no external assets: the single action is the design-partner mailto.
+-->
+<div class="landing">
+    <main class="landing-main">
+        <section class="landing-hero landing-hero--wide">
+            <span class="brand-mark"></span>
+            <h1>Sales Rep</h1>
+            <p class="lede">An AI sales rep built from what your company knows — and owned
+                by you.</p>
+
+            <!-- Three premise lines. -->
+            <div class="landing-strip">
+                <div>
+                    <h3>It learns only your material</h3>
+                    <p>Every fact verified before the rep ever speaks it.</p>
+                </div>
+                <div>
+                    <h3>You own the weights</h3>
+                    <p>The model is your asset, not a rented service.</p>
+                </div>
+                <div>
+                    <h3>It runs on our infrastructure or your hardware</h3>
+                    <p>Business hours or always-on.</p>
+                </div>
+            </div>
+
+            <!-- Three offerings, in order. -->
+            <div class="landing-strip">
+                <div class="panel">
+                    <h3>Knowledge Audit</h3>
+                    <p>We map what your docs actually say: the contradictions, the stale answers,
+                        the gaps your customers fall into. Delivered before any model exists.</p>
+                </div>
+                <div class="panel">
+                    <h3>Hosted Rep</h3>
+                    <p>A tuned rep serving on our infrastructure during your business hours,
+                        chatting from your site.</p>
+                </div>
+                <div class="panel">
+                    <h3>Owned Weights</h3>
+                    <p>The full bundle: model weights, serving image, evaluation report, runbook.
+                        Yours to run.</p>
+                </div>
+            </div>
+
+            <!-- Scope discipline: refusal and handoff are a trained, proven behaviour. -->
+            <div class="panel" style="margin-top: 2.75rem; text-align: left;">
+                <p><strong>It escalates to a human — that's a feature.</strong> We train refusal
+                    and handoff behavior, and prove it with a compliance report.</p>
+            </div>
+
+            <!-- TODO(owner): confirm design-partner contact address -->
+            <a class="landing-cta" style="margin-top: 2.5rem;"
+               href="mailto:hello@vishwakarma.ai?subject=Design%20partner%20inquiry">Become a design partner</a>
+        </section>
+    </main>
+    <footer th:replace="~{public/shell :: publicfoot}"></footer>
+</div>
+
+</body>
+</html>

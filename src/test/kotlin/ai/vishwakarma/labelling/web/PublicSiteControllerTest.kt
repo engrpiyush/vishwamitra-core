@@ -7,19 +7,18 @@ import ai.vishwakarma.labelling.security.SubjectHostFilter
 import ai.vishwakarma.labelling.service.SubjectDirectory
 import com.google.cloud.firestore.Firestore
 import kotlin.test.Test
-import org.hamcrest.Matchers.containsString
 import org.mockito.Mockito.mock
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.view
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 
 /**
- * The matrix-landing round, end-to-end through the real host filter + controller + message writing
- * (standalone MockMvc): the apex serves the brand page BYTES on the first dispatch — no servlet
- * forward exists on this path (a forward loops on top of the filter's rewritten request;
- * StackOverflowError found live at cutover, 2026-07-18).
+ * VA-173 two-door round, end-to-end through the real host filter + controller (standalone MockMvc):
+ * the apex root renders the two-door bifurcation view, and `/construct` the individuals front door.
+ * Both are Thymeleaf views (not servlet forwards), so the rewritten `/p` request never re-enters
+ * the dispatcher — the loop that once forced the raw static page to be streamed by hand cannot
+ * recur (StackOverflowError found live at the earlier cutover, 2026-07-18).
  */
 class PublicSiteControllerTest {
 
@@ -45,7 +44,7 @@ class PublicSiteControllerTest {
             .build()
 
     @Test
-    fun `apex root serves the brand page body directly`() {
+    fun `apex root renders the two-door bifurcation view`() {
         mvc.perform(
                 get("/").with {
                     it.serverName = "vishwakarma.ai"
@@ -53,11 +52,7 @@ class PublicSiteControllerTest {
                 }
             )
             .andExpect(status().isOk)
-            .andExpect(content().contentTypeCompatibleWith("text/html"))
-            .andExpect(content().string(containsString("The Resume is Dead")))
-            .andExpect(content().string(containsString("/construct")))
-            .andExpect(content().string(containsString("/policies/terms")))
-            .andExpect(content().string(containsString("/user-guide/")))
+            .andExpect(view().name("public/root"))
     }
 
     @Test

@@ -270,6 +270,11 @@ class SecurityConfig {
                 authorize("/error", permitAll)
                 authorize("/p", permitAll)
                 authorize("/p/construct", permitAll)
+                // VA-173: the two-door catalog world — individuals + businesses doors and the
+                // businesses catalog's deeper product pages (e.g. /p/business/sales-rep).
+                authorize("/p/individuals", permitAll)
+                authorize("/p/business", permitAll)
+                authorize("/p/business/**", permitAll)
                 authorize("/p/policies/**", permitAll)
                 // Matrix-landing round: the data-collection guide is linked from the apex footer.
                 authorize("/user-guide/**", permitAll)
