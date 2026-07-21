@@ -14,11 +14,10 @@ import org.springframework.web.server.ResponseStatusException
  * The public-apex world (VA-71, LLD §8.4; VA-173 two-door round): the vishwakarma.ai root is the
  * two-door bifurcation (individuals ⟂ business), each door opening a use-case catalog
  * (`/individuals`, `/business`), plus the individuals product front door at `/construct`. Mappings
- * live under the
- * internal `/p` prefix [ai.vishwakarma.labelling.security.SubjectHostFilter] rewrites apex paths
- * onto; every handler 404s without the [PublicHost] marker (defense in depth — MVC maps these
- * routes globally, but only the apex host may render them). Friendly capability language only — no
- * stage vocabulary, no model identifiers, no operator links (§12.3).
+ * live under the internal `/p` prefix [ai.vishwakarma.labelling.security.SubjectHostFilter]
+ * rewrites apex paths onto; every handler 404s without the [PublicHost] marker (defense in depth —
+ * MVC maps these routes globally, but only the apex host may render them). Friendly capability
+ * language only — no stage vocabulary, no model identifiers, no operator links (§12.3).
  */
 @Controller
 @RequestMapping("/p")
@@ -62,8 +61,8 @@ class PublicSiteController {
     }
 
     /**
-     * VA-173: the "For businesses" use-case catalog — the business door from the two-door root.
-     * One use case today (Sales Rep → `/business/sales-rep`); the grid is built to grow.
+     * VA-173: the "For businesses" use-case catalog — the business door from the two-door root. One
+     * use case today (Sales Rep → `/business/sales-rep`); the grid is built to grow.
      */
     @GetMapping("/business")
     fun business(request: HttpServletRequest, model: Model): String {
