@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recording Sessions — Sales Rep Guide — Vishwakarma.ai</title>
+<meta name="description" content="Three scripted recording sessions with ready-to-read prompt lists: the founder pitch, the product walkthrough, and an objection-handling drill.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../guide.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap site-in">
+    <a href="index.html" class="brand">
+      <svg class="mk" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Vishwakarma.ai">
+        <rect x="1" y="1" width="30" height="30" stroke="#00FF85" stroke-width="1.4"/>
+        <path d="M8 9 L16 24 L24 9" stroke="#00FF85" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="14.2" y="8" width="3.6" height="3.6" fill="#00FF85"/>
+      </svg>
+      Vishwakarma<b>.ai</b>
+    </a>
+    <nav class="pages" aria-label="Guide pages">
+      <a href="index.html">Overview</a>
+      <a href="what-to-collect.html">What to Collect</a>
+      <a href="recording-sessions.html" aria-current="page">Recording Sessions</a>
+      <a href="quality-and-boundaries.html">Quality &amp; Boundaries</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <div class="hero">
+      <div class="kicker">Sales Rep Guide · 03 — Recording Sessions</div>
+      <h1>Say it once, <em>on the record.</em></h1>
+      <p class="lede">
+        Documents tell the rep <em>what</em>; recordings tell it <em>why</em>, and how you sound saying
+        it. Three sessions do the job — the founder pitch, the product walkthrough, and an
+        objection-handling drill. Each has a ready-to-read prompt list. Just press record and work down.
+      </p>
+    </div>
+
+    <section id="basics">
+      <h2><span class="num">§1</span>Recording basics</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h4>Gear &amp; setting</h4>
+          <p>A modern phone or laptop mic is enough. Quiet room, no background music, mic close. For a
+          screen demo, use your call platform's own recording. Audio clarity beats video polish.</p>
+        </div>
+        <div class="card">
+          <h4>Keep takes short</h4>
+          <p>Aim for the times below, and stop rather than ramble — a session that runs long becomes a
+          second take, not a marathon file. Several focused recordings process better than one long one.</p>
+        </div>
+        <div class="card">
+          <h4>Convert audio to FLAC</h4>
+          <p>Record however you like, then convert audio to <strong>FLAC</strong> before uploading — see
+          the command below. Keep screen demos as mp4/mov/webm. Name files with speaker and month:
+          <span class="mono">2026-03-founder-pitch.flac</span>.</p>
+        </div>
+        <div class="card">
+          <h4>Don't over-edit</h4>
+          <p>Trimming dead air at the ends is fine; splicing the middle isn't. A clean, honest take is
+          what you want — the rep learns from how you actually explain things, stumbles and all.</p>
+        </div>
+      </div>
+
+      <pre class="cmd"># one file → mono 48 kHz FLAC (ideal for speech)
+ffmpeg -i session.m4a -ac 1 -ar 48000 -c:a flac session.flac
+
+# pull just the audio out of a demo screen-recording
+ffmpeg -i demo.mp4 -vn -ac 1 -ar 48000 -c:a flac demo-audio.flac</pre>
+
+      <div class="callout">
+        <span class="tag">A word on consent</span>
+        <p>
+          If anyone other than you is on a recording — a teammate, your best salesperson playing the
+          skeptic — have them say their name and that they agree to be recorded for training your rep, at
+          the very start. One line: <span class="mono">"I'm [name], and I agree to this recording being
+          used to train the sales rep."</span> Then begin.
+        </p>
+      </div>
+    </section>
+
+    <hr class="sep">
+
+    <section id="session-founder">
+      <h2><span class="num">§2</span>Session 1 — The founder pitch</h2>
+      <p>
+        The story only you can tell. Speak as if to a customer who just asked "so what is this, really?"
+        — plain, honest, no marketing gloss. Say numbers and dates out loud. This is where the rep gets
+        its conviction and its sense of <em>why the product exists</em>.
+      </p>
+      <details class="bank" open>
+        <summary><span class="t">Founder pitch — prompts</span><span class="m">~15 min · 8 prompts</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>In two sentences, what is this product and who is it for?
+              <span class="why">The rep will fall back on this whenever it needs a clean one-liner. Make it sharp.</span></li>
+            <li>What problem were you living with that made you build this? Tell the specific moment.</li>
+            <li>How did people cope before your product existed — what did they use, and why did it fall short?</li>
+            <li>What does your product do differently, and why does that matter to the customer?</li>
+            <li>Who is this <em>not</em> for? Where do you honestly tell people to look elsewhere?
+              <span class="why">Knowing the wrong-fit customer keeps the rep from overselling — high-value grounding.</span></li>
+            <li>What's the one thing customers are most surprised by, in a good way, once they start?</li>
+            <li>Where is the company headed — what are you building toward over the next year or two?</li>
+            <li>If a customer trusted you with one sentence of advice before they buy, what would it be?</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <section id="session-walkthrough">
+      <h2><span class="num">§3</span>Session 2 — The product walkthrough</h2>
+      <p>
+        Screen-share and drive the product the way you would for a new customer. Narrate every click —
+        say what you're doing, why, and what the customer should notice. Go in the order a real user
+        would. This teaches the rep the actual flow, the right names for things, and where people stall.
+      </p>
+      <details class="bank">
+        <summary><span class="t">Product walkthrough — prompts</span><span class="m">~20 min · 9 prompts</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>Start at sign-up or first login. What's the very first thing a new customer does, step by step?</li>
+            <li>Walk the single most common task end to end — the thing 80% of customers come to do.
+              <span class="why">This is the flow the rep will explain most often. Be precise about the exact steps and button names.</span></li>
+            <li>Point out the three features you most wish customers used more, and show each one.</li>
+            <li>Where do people usually get confused or stuck? Show the spot and how you'd unstick them.</li>
+            <li>Demonstrate one setup or configuration step that customers often ask for help with.</li>
+            <li>Show how the product connects to other tools they might already use, if it does.</li>
+            <li>What's a "power user" move — something advanced that delights people once they find it?</li>
+            <li>Which buttons or settings should a new customer <em>not</em> touch yet, and why?</li>
+            <li>Wrap up: what does success look like for a customer a month in?</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <section id="session-objections">
+      <h2><span class="num">§4</span>Session 3 — Objection handling</h2>
+      <p>
+        Sit down with your <strong>best salesperson or support agent</strong> and have a colleague play a
+        <strong>skeptical customer</strong> — pushing back, comparing to rivals, hunting for reasons to
+        say no. Your expert answers naturally. This is the highest-value session: it teaches the rep how
+        to hold its ground honestly, and where to gracefully hand off.
+      </p>
+      <p>
+        Have the skeptic actually voice each objection; your expert responds in their own words. Keep it
+        real — if the honest answer is "that's a fair point, here's the trade-off," record that.
+      </p>
+      <details class="bank">
+        <summary><span class="t">Objection handling — skeptic's prompts</span><span class="m">~20 min · 10 prompts</span></summary>
+        <div class="body">
+          <ol class="qs">
+            <li>"This looks expensive. Why does it cost what it costs?"
+              <span class="why">Teaches value framing — and reinforces pointing at the live pricing page for exact numbers.</span></li>
+            <li>"How are you different from [the obvious competitor]? Convince me."</li>
+            <li>"We already use something for this. Why would we switch?"</li>
+            <li>"What happens to my data? How do I know it's safe?"
+              <span class="why">The answer must match your security statement from the What-to-Collect page — same words, no improvising.</span></li>
+            <li>"What if it doesn't work for us — can I get my money back?"
+              <span class="why">Record the true refund answer; this becomes a boundary the rep must state exactly.</span></li>
+            <li>"I've heard your product can't do [X]. Is that true?"</li>
+            <li>"This seems too complicated for my team. How hard is it really?"</li>
+            <li>"Who else like us actually uses this? Prove it works."</li>
+            <li>"I need [feature you don't have]. Deal-breaker?"
+              <span class="why">Teaches the rep to be honest about gaps and hand off instead of bluffing.</span></li>
+            <li>"I'm not ready to decide. What should I do next?"</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <div class="next">
+      <a href="what-to-collect.html">← What to Collect</a>
+      <a href="quality-and-boundaries.html">Next: Quality &amp; Boundaries →</a>
+    </div>
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap foot-in">
+    <span>© 2026 VISHX INNOVATIONS · VISHWAKARMA.AI</span>
+    <span>SALES REP GUIDE · 03/04</span>
+  </div>
+</footer>
+
+</body>
+</html>
