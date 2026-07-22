@@ -296,8 +296,14 @@ class GeminiStage4Judge(
     companion object {
         /** The `extraction_prompts` document id for the §11 judge rubric (reserved key). */
         const val PROMPT_KEY = ExtractionPromptService.STAGE4_JUDGE_KEY
-        /** Four axis verdicts with rationales — wide margin at 4k. */
-        const val MAX_TOKENS = 4_096
+        /**
+         * Four axis verdicts with rationales are a few hundred tokens — but on a 3.x model the
+         * thinking spend shares this cap and a *level* (low or high) is not bounded by
+         * [THINKING_BUDGET]: a live low-level sample spent 3930 of the old 4096 cap and clipped
+         * (2026-07-22), costing its vote. 16384 mirrors the GENERATE lesson: room for a 4–8K
+         * thinking spend beside the output, ceiling not spend, so the ensemble keeps its votes.
+         */
+        const val MAX_TOKENS = 16_384
         /** Compliance checking is reasoning-heavy but single-example — half Stage 3's cap. */
         const val THINKING_BUDGET = 2_048
         /** Vote-diversity temperature, mirroring Stage 3's `ensemble-temperature` default. */
