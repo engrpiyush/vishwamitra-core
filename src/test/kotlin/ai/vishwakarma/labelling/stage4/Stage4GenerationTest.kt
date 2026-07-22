@@ -344,6 +344,107 @@ class Stage4GenerationTest {
         assertEquals(text, Stage4Generation.substituteContext(text, "the IN market", "2026-01-01"))
     }
 
+    // ---- kb-generation (VA-164): flag-off byte-identity + the spec-mode prompt ----------------
+
+    private fun specPlan() =
+        request()
+            .plan
+            .copy(
+                templateId = "tpl-recency",
+                templateCategory = "career-timeline",
+                specTitle = "Recency Windowing",
+                specIntent = "probe how current the record is",
+                specPersonaLens = "a recruiter",
+                specFormatConstraints =
+                    listOf("Turn shape: 4-6 turn probe", "Name one concrete date"),
+            )
+
+    private fun specRequest() =
+        request()
+            .copy(
+                plan = specPlan(),
+                kbGeneration = true,
+                knowledgeBase =
+                    listOf(
+                        "\"Led the migration\" — ASSERT; score 0.82 (HIGH)",
+                        "\"Mentored two juniors\" — HEDGE; score 0.55",
+                    ),
+                kbStandingRules = Stage4KnowledgeBase.STANDING_RULES,
+            )
+
+    @Test
+    fun `kb-generation off leaves the prompt byte-for-byte, even with a KB populated`() {
+        val legacy = Stage4Generation.buildPrompt(request())
+
+        val off =
+            Stage4Generation.buildPrompt(
+                request()
+                    .copy(
+                        kbGeneration = false,
+                        knowledgeBase = listOf("a KB line"),
+                        kbStandingRules = "rules",
+                    )
+            )
+
+        assertEquals(legacy, off)
+    }
+
+    @Test
+    fun `kb-generation on but a spec-less plan keeps the legacy prompt byte-for-byte`() {
+        val legacy = Stage4Generation.buildPrompt(request())
+
+        // request()'s plan carries no spec (hasSpec == false), so buildPrompt needs BOTH the flag
+        // AND a spec to switch branches — a NEGATIVE/META plan in a kb-generation run stays legacy.
+        val on =
+            Stage4Generation.buildPrompt(
+                request()
+                    .copy(
+                        kbGeneration = true,
+                        knowledgeBase = listOf("a KB line"),
+                        kbStandingRules = Stage4KnowledgeBase.STANDING_RULES,
+                    )
+            )
+
+        assertEquals(legacy, on)
+    }
+
+    @Test
+    fun `spec-mode prompt carries the KB, the spec and the never-deny rules`() {
+        val prompt = Stage4Generation.buildPrompt(specRequest())
+
+        // The KB tier + its standing rules.
+        assertTrue(prompt.contains("Knowledge base"), prompt)
+        assertTrue(prompt.contains("\"Led the migration\" — ASSERT; score 0.82 (HIGH)"), prompt)
+        assertTrue(prompt.contains(Stage4KnowledgeBase.STANDING_RULES), prompt)
+        assertTrue(prompt.contains("never deny or contradict"), prompt)
+        // The spec (title / intent / persona lens / format constraints).
+        assertTrue(prompt.contains("Recency Windowing"), prompt)
+        assertTrue(prompt.contains("probe how current the record is"), prompt)
+        assertTrue(prompt.contains("a recruiter"), prompt)
+        assertTrue(prompt.contains("Turn shape: 4-6 turn probe"), prompt)
+        // The authorization tier is untouched: fixed card (incl F7), constraints, focus evidence.
+        assertTrue(prompt.contains("F7:"), prompt)
+        assertTrue(
+            prompt.contains("Context-mandatory: never voice this claim without its sidecar."),
+            prompt,
+        )
+        assertTrue(prompt.contains("[c1] \"Led the migration\""), prompt)
+    }
+
+    @Test
+    fun `spec-mode replaces the phrased question with the drafter-writes-it schema`() {
+        val prompt = Stage4Generation.buildPrompt(specRequest())
+
+        // The drafter composes the opening — the request's phrased question never appears…
+        assertTrue("What was her role in the payments migration?" !in prompt, prompt)
+        // …and neither legacy question label rides.
+        assertTrue("Guest question (the conversation's first turn, verbatim):" !in prompt, prompt)
+        assertTrue("Planned guest question" !in prompt, prompt)
+        // The spec-mode turn schema tells the model to write the first turn itself.
+        assertTrue(prompt.contains("YOU write it"), prompt)
+        assertTrue("the guest's question EXACTLY as given" !in prompt, prompt)
+    }
+
     // ---- the bracket-tag scrub (A6: no internal provenance in advocate prose) ----------------
 
     @Test

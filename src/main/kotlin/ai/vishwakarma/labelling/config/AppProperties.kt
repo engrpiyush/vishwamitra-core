@@ -626,6 +626,19 @@ data class AppProperties(
          */
         val judgeEnabled: Boolean = true,
         /**
+         * VA-164 (LLD §9.5): restructure GENERATE as KNOWLEDGE BASE + template SPEC — the model
+         * writes the whole conversation, including the guest's opening question, instead of voicing
+         * a phrased ledger sentence. Default false is the hard flag-off guarantee: every existing
+         * prompt, plan id and judge prompt stays byte-for-byte what it is today (proven by test).
+         * Frozen into the run paramsSnapshot like [judgeEnabled], read at PLAN/GENERATE/JUDGE.
+         */
+        val kbGeneration: Boolean = false,
+        /**
+         * Cap on KB lines rendered per conversation (VA-164). Over the cap the first [kbMaxClaims]
+         * claims by id are kept and the drop is logged with its count.
+         */
+        val kbMaxClaims: Int = 400,
+        /**
          * Fraction of PASS-judged conversations routed to the human queue. v1 IGNORES this and
          * enforces 1.0 — 100% human review (QA-4); the dial exists for the designed v1.1
          * relaxation, gated on measured judge–human agreement.

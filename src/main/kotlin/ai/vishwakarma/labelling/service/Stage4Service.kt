@@ -41,6 +41,7 @@ import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
 import ai.vishwakarma.labelling.stage4.Stage4Judging
+import ai.vishwakarma.labelling.stage4.Stage4KnowledgeBase
 import ai.vishwakarma.labelling.stage4.Stage4Planning
 import arrow.core.Either
 import arrow.core.left
@@ -135,6 +136,9 @@ class Stage4Service(
     private val log = LoggerFactory.getLogger(Stage4Service::class.java)
 
     private val planning = Stage4Planning()
+
+    /** kb-generation (VA-164): renders the posture-labelled KB tier from the eligible set. */
+    private val kbRenderer = Stage4KnowledgeBase()
 
     /** Same §10.3 computer (and default bands) the voicing planner derives with — the symmetry. */
     private val hedging = SituationalHedging()
@@ -443,6 +447,8 @@ class Stage4Service(
                     dedupeJaccardThreshold = params.dedupeJaccardThreshold,
                     // VA-88: the library (taxonomy order) drives planning; empty ⇒ legacy trio.
                     templates = notebookTemplates.list(),
+                    // VA-164: with a library present, freeze specs instead of phrased questions.
+                    kbGeneration = params.kbGeneration,
                 )
             val now = Instant.now()
             outcome.planned.forEach {
@@ -451,7 +457,9 @@ class Stage4Service(
                         subjectId = run.subjectId,
                         scoreRunId = scoreRunId,
                         personaHash = personaHash,
-                        question = it.question,
+                        // Spec plans carry no phrased question (kb-generation) — persist null, not
+                        // the empty placeholder, so `question == null` reads as "has a spec".
+                        question = it.question.ifBlank { null },
                         plan = it.plan,
                         createdAt = now,
                     )
@@ -573,6 +581,15 @@ class Stage4Service(
             }
 
             val frozen = frozenParams(run)
+            // kb-generation (VA-164): the KB tier is a per-publish derivation over the eligible set
+            // — built once per tick and shared by every spec plan drafted this poll. Empty when the
+            // flag is off, so the request stays byte-for-byte legacy on that path.
+            val knowledgeBase =
+                if (frozen.kbGeneration)
+                    kbRenderer.render(evidenceById.values.toList(), frozen.kbMaxClaims)
+                else emptyList()
+            val kbStandingRules =
+                if (frozen.kbGeneration) Stage4KnowledgeBase.STANDING_RULES else ""
             val batch = pending.take(frozen.generateBatchPerPoll)
             log.info(
                 "Run {}: GENERATE — {} plan(s) pending, drafting {} this tick",
@@ -591,6 +608,9 @@ class Stage4Service(
                     evidenceById,
                     frozen.locale,
                     frozen.knowledgeAsOf,
+                    frozen.kbGeneration,
+                    knowledgeBase,
+                    kbStandingRules,
                 )
             }
             run.copy(counters = run.counters + generateCounters(run), phaseSince = Instant.now())
@@ -610,6 +630,10 @@ class Stage4Service(
         /** The run-frozen profile scalars (§4.3); blank ⇒ today's prompt, byte for byte. */
         locale: String,
         knowledgeAsOf: String,
+        /** kb-generation (VA-164): the frozen flag + the per-tick KB tier passed to the drafter. */
+        kbGeneration: Boolean,
+        knowledgeBase: List<String>,
+        kbStandingRules: String,
     ) {
         val category = p.plan.category
         val row = rowFor(p.plan)
@@ -706,6 +730,13 @@ class Stage4Service(
                                 promptHash = row.hash,
                                 locale = locale,
                                 knowledgeAsOf = knowledgeAsOf,
+                                // Spec-mode grounding — buildPrompt uses it only when the flag is
+                                // on
+                                // AND the plan carries a spec; otherwise it is ignored (legacy
+                                // path).
+                                kbGeneration = kbGeneration,
+                                knowledgeBase = knowledgeBase,
+                                kbStandingRules = kbStandingRules,
                             )
                         ),
                         drafter.model,
@@ -843,6 +874,17 @@ class Stage4Service(
             val subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject"
             val evidenceById = eligibleClaims(run.subjectId, scoreRunId).associateBy { it.claim.id }
             val params = frozenParams(run)
+            // kb-generation (VA-164) judge symmetry: the KB tier is the same per-publish derivation
+            // GENERATE built — rendered once per tick from the eligible set and handed to every
+            // spec
+            // example judged this poll. Empty when the flag is off, so the request stays byte-for-
+            // byte legacy on that path.
+            val knowledgeBase =
+                if (params.kbGeneration)
+                    kbRenderer.render(evidenceById.values.toList(), params.kbMaxClaims)
+                else emptyList()
+            val kbStandingRules =
+                if (params.kbGeneration) Stage4KnowledgeBase.STANDING_RULES else ""
             val batch = pending.take(params.judgeBatchPerPoll)
             log.info(
                 "Run {}: JUDGE — {} example(s) pending, judging {} this tick (ensemble k={})",
@@ -852,7 +894,18 @@ class Stage4Service(
                 params.ensembleK,
             )
             batch.forEach { e ->
-                judgeOne(run, e, subjectName, persona, presetStyle, evidenceById, params.ensembleK)
+                judgeOne(
+                    run,
+                    e,
+                    subjectName,
+                    persona,
+                    presetStyle,
+                    evidenceById,
+                    params.ensembleK,
+                    params.kbGeneration,
+                    knowledgeBase,
+                    kbStandingRules,
+                )
             }
             run.copy(
                     counters = run.counters + judgeCounters(run, stamp),
@@ -870,6 +923,10 @@ class Stage4Service(
         presetStyle: String,
         evidenceById: Map<String, EvidencedClaim>,
         ensembleK: Int,
+        /** kb-generation (VA-164): the frozen flag + the per-tick KB tier passed to the judge. */
+        kbGeneration: Boolean,
+        knowledgeBase: List<String>,
+        kbStandingRules: String,
     ) {
         val planId = checkNotNull(example.stamp?.planId)
         val plan =
@@ -887,6 +944,11 @@ class Stage4Service(
                         evidenceById[id]?.let { evidenceLine(it) }
                     },
                 expectedHedge = expectedHedge(run, plan.plan, evidenceById),
+                // Spec-mode judging — buildPrompt uses these only when the flag is on AND the plan
+                // carries a spec; otherwise they are ignored (legacy judge prompt, byte for byte).
+                kbGeneration = kbGeneration,
+                knowledgeBase = knowledgeBase,
+                kbStandingRules = kbStandingRules,
             )
         val judgeStarted = System.currentTimeMillis()
         val samples =
@@ -1209,6 +1271,8 @@ class Stage4Service(
                 "judgeBatchPerPoll" to effective.judgeBatchPerPoll,
                 "ensembleK" to effective.ensembleK,
                 "judgeEnabled" to effective.judgeEnabled,
+                "kbGeneration" to effective.kbGeneration,
+                "kbMaxClaims" to effective.kbMaxClaims,
                 "reviewSampleRate" to effective.reviewSampleRate,
                 "dpoEnabled" to effective.dpoEnabled,
                 "evalHoldoutFraction" to effective.evalHoldoutFraction,
@@ -1228,6 +1292,9 @@ class Stage4Service(
         val judgeBatchPerPoll: Int,
         val ensembleK: Int,
         val judgeEnabled: Boolean,
+        /** VA-164: KB + spec generation, and the per-conversation KB line cap. */
+        val kbGeneration: Boolean,
+        val kbMaxClaims: Int,
         /** The profile scalars GENERATE injects; blank on pre-profile runs (§4.3). */
         val locale: String,
         val knowledgeAsOf: String,
@@ -1270,6 +1337,8 @@ class Stage4Service(
                 (raw["judgeBatchPerPoll"] as? Number)?.toInt() ?: base.judgeBatchPerPoll,
             ensembleK = (raw["ensembleK"] as? Number)?.toInt() ?: base.ensembleK,
             judgeEnabled = (raw["judgeEnabled"] as? Boolean) ?: base.judgeEnabled,
+            kbGeneration = (raw["kbGeneration"] as? Boolean) ?: base.kbGeneration,
+            kbMaxClaims = (raw["kbMaxClaims"] as? Number)?.toInt() ?: base.kbMaxClaims,
             // No live fallback: these two are run-frozen by definition, and a pre-profile run must
             // keep injecting nothing however the profile has changed since.
             locale = (raw["locale"] as? String).orEmpty(),

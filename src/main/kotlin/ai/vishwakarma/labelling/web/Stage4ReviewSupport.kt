@@ -81,6 +81,13 @@ data class PlanPanelView(
     val constraints: List<String>,
     val claims: List<PlanClaimView>,
     val sftEligible: Boolean,
+    /**
+     * The kb-generation (VA-164) spec: when the planner froze a spec instead of a phrased
+     * [question], the panel renders the spec's title/intent so "why this phrasing" still reads.
+     * Null on every legacy plan (which carries a [question] instead).
+     */
+    val specTitle: String? = null,
+    val specIntent: String? = null,
 )
 
 /** The subject's current publish + persona pair — what a stamp must match to be current. */
@@ -174,6 +181,8 @@ class Stage4ReviewPanels(
             constraints = plan.constraints,
             claims = plan.sourceClaimIds.map { claimView(it) },
             sftEligible = plan.sftEligible,
+            specTitle = plan.specTitle,
+            specIntent = plan.specIntent,
         )
     }
 

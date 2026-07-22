@@ -53,6 +53,10 @@ class Stage4PlanRepository(private val db: Firestore) {
             "sftEligible" to plan.sftEligible,
             "templateId" to plan.templateId,
             "templateCategory" to plan.templateCategory,
+            "specTitle" to plan.specTitle,
+            "specIntent" to plan.specIntent,
+            "specPersonaLens" to plan.specPersonaLens,
+            "specFormatConstraints" to plan.specFormatConstraints,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
 
@@ -76,6 +80,11 @@ class Stage4PlanRepository(private val db: Firestore) {
                     sftEligible = getBoolean("sftEligible") ?: true,
                     templateId = getString("templateId"),
                     templateCategory = getString("templateCategory"),
+                    specTitle = getString("specTitle"),
+                    specIntent = getString("specIntent"),
+                    specPersonaLens = getString("specPersonaLens"),
+                    specFormatConstraints =
+                        (get("specFormatConstraints") as? List<String>) ?: emptyList(),
                 ),
             createdAt = instant("createdAt"),
         )

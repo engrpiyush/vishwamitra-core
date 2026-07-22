@@ -206,6 +206,13 @@
                 <p style="margin:0 0 0.5rem;"><strong th:text="${planPanel.voice}">voice</strong></p>
                 <p class="muted" th:if="${planPanel.question != null}" style="margin:0 0 0.5rem; font-size:0.88em;">
                     planned question: <em th:text="${planPanel.question}">q</em></p>
+                <!-- VA-164: a kb-generation plan froze a spec, not a phrased question — the drafter
+                     wrote the opening. Show the spec so "why this phrasing" still reads. -->
+                <p class="muted" th:if="${planPanel.question == null and planPanel.specTitle != null}"
+                   style="margin:0 0 0.5rem; font-size:0.88em;">
+                    conversation spec: <em th:text="${planPanel.specTitle}">title</em><span
+                        th:if="${planPanel.specIntent != null}"
+                        th:text="' — ' + ${planPanel.specIntent}"> — intent</span></p>
                 <p class="muted" style="margin:0 0 0.2rem; font-size:0.85em;">Constraints in force
                     (embedded verbatim in the generation prompt):</p>
                 <ul class="comments" style="margin:0 0 0.6rem;">

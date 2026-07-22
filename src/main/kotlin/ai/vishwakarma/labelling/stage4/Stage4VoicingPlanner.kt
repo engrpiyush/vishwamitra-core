@@ -144,8 +144,8 @@ sealed interface PlanUnit {
  * Thresholds default to the Stage 3 tier bands and are constructor-injectable for calibration.
  */
 class Stage4VoicingPlanner(
-    private val tierHigh: Double = 0.75,
-    private val tierMedium: Double = 0.45,
+    private val tierHigh: Double = SituationalHedging.TIER_HIGH,
+    private val tierMedium: Double = SituationalHedging.TIER_MEDIUM,
     /**
      * Row 6 trigger: explained score exceeding the bare score by at least this (scoreBare ≪ score).
      */

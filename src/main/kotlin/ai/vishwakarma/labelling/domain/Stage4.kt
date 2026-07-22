@@ -218,7 +218,30 @@ data class VoicingPlan(
     val templateId: String? = null,
     /** The template's evaluation-trait category slug at plan time. */
     val templateCategory: String? = null,
-)
+    /**
+     * The kb-generation QUESTION SPEC (VA-164): under `app.stage4.kb-generation` the planner stops
+     * phrasing a guest question and instead freezes the conversation's *spec* — the template title,
+     * intent, persona lens and format constraints — so the drafter writes the whole conversation
+     * (the guest's opening question included) from the KB rather than voicing a ledger sentence
+     * verbatim. Populated only for the fact-driven spec trio; null on every legacy/probe-bank plan,
+     * so a plan serializes byte-identically when the flag is off. The focus claims are already
+     * [sourceClaimIds] — not duplicated here. Distinctness is carried by the unit
+     * key + [templateId] (two templates over the same evidence keep distinct planIds); the spec
+     * derives from the template, so it never enters the planId hash.
+     */
+    val specTitle: String? = null,
+    val specIntent: String? = null,
+    val specPersonaLens: String? = null,
+    val specFormatConstraints: List<String> = emptyList(),
+) {
+    /**
+     * A kb-generation spec plan: the planner froze a spec instead of a phrased question, so
+     * GENERATE and JUDGE take their spec-mode branch. Keys off [specTitle] (every spec carries a
+     * template title); false on every legacy plan.
+     */
+    val hasSpec: Boolean
+        get() = specTitle != null
+}
 
 /**
  * One `stage4_plans` doc (doc id = [VoicingPlan.planId]): the plan plus the subject/publish/

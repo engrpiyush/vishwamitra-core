@@ -108,6 +108,7 @@ class Stage4PlanningTest {
         cap: Int = 6,
         threshold: Double = 0.85,
         templates: List<NotebookTemplate> = emptyList(),
+        kbGeneration: Boolean = false,
     ) =
         planning.plan(
             subjectName = "Asha",
@@ -119,6 +120,7 @@ class Stage4PlanningTest {
             maxConversationsPerClaim = cap,
             dedupeJaccardThreshold = threshold,
             templates = templates,
+            kbGeneration = kbGeneration,
         )
 
     private fun template(
@@ -127,6 +129,9 @@ class Stage4PlanningTest {
         title: String = id,
         coverageTarget: Int = 1,
         personaLens: String = "",
+        intent: String = "",
+        turnShape: String = "",
+        expectedBehaviours: List<String> = emptyList(),
         requiredClaimTypes: List<ClaimType> = emptyList(),
         requiredDeclaredTypes: List<String> = emptyList(),
     ) =
@@ -134,7 +139,13 @@ class Stage4PlanningTest {
             id = id,
             category = category,
             title = title,
-            formatSpec = FormatSpec(personaLens = personaLens),
+            formatSpec =
+                FormatSpec(
+                    personaLens = personaLens,
+                    intent = intent,
+                    turnShape = turnShape,
+                    expectedBehaviours = expectedBehaviours,
+                ),
             coverageTarget = coverageTarget,
             requiredClaimTypes = requiredClaimTypes,
             requiredDeclaredTypes = requiredDeclaredTypes,
@@ -757,6 +768,137 @@ class Stage4PlanningTest {
         val second = plan(eligible, facts, templates = templates).planned.map { it.plan.planId }
 
         assertEquals(first, second)
+    }
+
+    // ---- VA-164: kb-generation question specs -------------------------------------------------
+
+    @Test
+    fun `spec mode freezes a spec, not a phrased question, on each template unit`() {
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates =
+            listOf(
+                template(
+                    "tpl-a",
+                    category = "career-timeline",
+                    title = "Recency Windowing",
+                    personaLens = "a recruiter",
+                    intent = "probe how current the record is",
+                    turnShape = "4-6 turn probe",
+                    expectedBehaviours = listOf("Name one concrete date"),
+                )
+            )
+
+        val outcome = plan(eligible, facts, templates = templates, kbGeneration = true)
+
+        val spec = outcome.planned.single { it.plan.hasSpec }
+        assertEquals("Recency Windowing", spec.plan.specTitle)
+        assertEquals("probe how current the record is", spec.plan.specIntent)
+        assertEquals("a recruiter", spec.plan.specPersonaLens)
+        assertTrue(spec.plan.specFormatConstraints.contains("Turn shape: 4-6 turn probe"))
+        assertTrue(spec.plan.specFormatConstraints.contains("Name one concrete date"))
+        // The planner phrased nothing — the drafter writes the opening question from the spec.
+        assertTrue(spec.question.isEmpty())
+        assertTrue(spec.plan.templateId == "tpl-a")
+    }
+
+    @Test
+    fun `flag-off keeps the phrased question and no spec — byte-compatible`() {
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates =
+            listOf(template("tpl-a", category = "career-timeline", personaLens = "a recruiter"))
+
+        val off = plan(eligible, facts, templates = templates, kbGeneration = false)
+
+        val templated = off.planned.single { it.plan.templateId != null }
+        assertTrue(!templated.plan.hasSpec)
+        assertTrue(templated.plan.specTitle == null)
+        // The phrased question still rides — exactly today's behaviour.
+        assertTrue(templated.question.startsWith("As a recruiter: "))
+    }
+
+    @Test
+    fun `spec plan ids are deterministic and distinct for two templates on the same anchor`() {
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates =
+            listOf(
+                template("tpl-a", category = "career-timeline"),
+                template("tpl-b", category = "peer"),
+            )
+
+        val first = plan(eligible, facts, templates = templates, kbGeneration = true).planned
+        val second = plan(eligible, facts, templates = templates, kbGeneration = true).planned
+
+        // Deterministic across re-runs.
+        assertEquals(first.map { it.plan.planId }, second.map { it.plan.planId })
+        // Two templates over the SAME anchor stay distinct conversations (tpl:spec:a vs
+        // tpl:spec:b).
+        val specPlans = first.filter { it.plan.hasSpec }
+        assertEquals(2, specPlans.size)
+        assertEquals(2, specPlans.map { it.plan.planId }.distinct().size)
+    }
+
+    @Test
+    fun `the spec-mode template key differs from its flag-off planId, so a mode flip re-drafts`() {
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates = listOf(template("tpl-a", category = "career-timeline"))
+
+        val off = plan(eligible, facts, templates = templates, kbGeneration = false)
+        val on = plan(eligible, facts, templates = templates, kbGeneration = true)
+
+        val offId = off.planned.single { it.plan.templateId != null }.plan.planId
+        val onId = on.planned.single { it.plan.hasSpec }.plan.planId
+        // Distinct planIds → distinct generation-cache keys → a mode flip drafts fresh rather than
+        // serving the stale phrased-question turns the identical key would cache-hit.
+        assertNotEquals(offId, onId)
+    }
+
+    @Test
+    fun `spec-mode coverage still collapses a duplicated slot onto one anchor`() {
+        // The unitKey dedupe must reproduce the flag-off collapse: tpl-b's two slots rotate onto
+        // the
+        // single anchor and fold to one, so peer plans 1 of its target 2 (the §9.2 arithmetic).
+        val eligible = (1..2).map { claim("c$it") }
+        val facts = listOf(fact("f1", members = listOf("c1", "c2"), label = "payments migration"))
+        val templates =
+            listOf(
+                template("tpl-a", category = "career-timeline"),
+                template("tpl-b", category = "peer", coverageTarget = 2),
+            )
+
+        val outcome = plan(eligible, facts, templates = templates, kbGeneration = true)
+
+        val byCategory = outcome.coverage.associateBy { it.category }
+        assertEquals(CategoryCoverage("career-timeline", 1, 1), byCategory["career-timeline"])
+        assertEquals(CategoryCoverage("peer", 2, 1), byCategory["peer"])
+        assertTrue(outcome.deduped >= 1, "the duplicated slot dedupes on its unit key")
+    }
+
+    @Test
+    fun `NEGATIVE and META plans are byte-identical whether the flag is on or off`() {
+        // The probe banks carry no spec and must not shift under kb-generation — their planIds,
+        // rows and phrased questions stay exactly as they are on the flag-off path.
+        val eligible = listOf(claim("c1", favorability = 0.2))
+        val facts = listOf(fact("f1", members = listOf("c1"), label = "payments migration"))
+        val templates = listOf(template("tpl-a", category = "career-timeline"))
+
+        val off = plan(eligible, facts, templates = templates, kbGeneration = false)
+        val on = plan(eligible, facts, templates = templates, kbGeneration = true)
+
+        fun banks(outcome: PlanningOutcome) =
+            outcome.planned
+                .filter {
+                    it.plan.category == Stage4Category.NEGATIVE ||
+                        it.plan.category == Stage4Category.META
+                }
+                .map { Triple(it.plan.planId, it.plan.rowId, it.question) }
+
+        assertEquals(banks(off), banks(on))
+        // And none of them ever carries a spec.
+        assertTrue(on.planned.filter { it.plan.hasSpec }.all { it.plan.templateId != null })
     }
 
     // ---- the anchor/evidence invariant: {{fact}} always backs a claim in the unit (plan 0ab5f1a5)

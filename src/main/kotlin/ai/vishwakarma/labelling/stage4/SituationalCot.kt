@@ -393,8 +393,8 @@ data class HedgeVerdict(
  *    tension named aloud (and the phrase capped at "reasonable to expect").
  */
 class SituationalHedging(
-    private val tierHigh: Double = 0.75,
-    private val tierMedium: Double = 0.45,
+    private val tierHigh: Double = TIER_HIGH,
+    private val tierMedium: Double = TIER_MEDIUM,
 ) {
 
     fun compute(chain: List<SupportingFact>): HedgeVerdict {
@@ -465,4 +465,14 @@ class SituationalHedging(
                 "load-bearing fact below MEDIUM band (%.2f)".format(facts.minOf { it.belief })
             else -> "fewer than 2 independent facts and none anchored"
         }
+
+    companion object {
+        /**
+         * The Stage 3 tier bands — the single source of truth for the HIGH/MEDIUM cutoffs. Both
+         * [Stage4VoicingPlanner] and [Stage4KnowledgeBase] default their own band params from these
+         * so a calibration change lands in exactly one place; each stays constructor-injectable.
+         */
+        const val TIER_HIGH = 0.75
+        const val TIER_MEDIUM = 0.45
+    }
 }

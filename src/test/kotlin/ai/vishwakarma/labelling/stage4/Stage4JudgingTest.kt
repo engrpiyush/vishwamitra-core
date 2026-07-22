@@ -210,6 +210,99 @@ class Stage4JudgingTest {
         assertTrue(prompt.contains("no usable facts"))
     }
 
+    // ---- kb-generation (VA-164): judge symmetry — flag-off byte-identity + the spec-mode block
+    // ----
+
+    private fun specPlan(planId: String = "plan-spec") =
+        plan(planId)
+            .copy(
+                templateId = "tpl-recency",
+                templateCategory = "career-timeline",
+                specTitle = "Recency Windowing",
+                specIntent = "probe how current the record is",
+                specPersonaLens = "a recruiter",
+                specFormatConstraints = listOf("Turn shape: 4-6 turn probe"),
+            )
+
+    private fun specRequest() =
+        request()
+            .copy(
+                plan = specPlan(),
+                kbGeneration = true,
+                knowledgeBase =
+                    listOf(
+                        "\"Led the migration\" — ASSERT; score 0.82 (HIGH)",
+                        "\"Mentored two juniors\" — ACKNOWLEDGE-ONLY; score 0.30",
+                    ),
+                kbStandingRules = Stage4KnowledgeBase.STANDING_RULES,
+            )
+
+    @Test
+    fun `kb-generation off leaves the judge prompt byte-for-byte, even with a KB populated`() {
+        val legacy = Stage4Judging.buildPrompt(request(), rubric = "RUBRIC-TEXT")
+
+        val off =
+            Stage4Judging.buildPrompt(
+                request()
+                    .copy(
+                        kbGeneration = false,
+                        knowledgeBase = listOf("a KB line"),
+                        kbStandingRules = "rules",
+                    ),
+                rubric = "RUBRIC-TEXT",
+            )
+
+        assertEquals(legacy, off)
+    }
+
+    @Test
+    fun `kb-generation on but a spec-less plan keeps the legacy judge prompt byte-for-byte`() {
+        val legacy = Stage4Judging.buildPrompt(request(), rubric = "RUBRIC-TEXT")
+
+        // request()'s plan carries no spec (hasSpec == false), so buildPrompt needs BOTH the flag
+        // AND a spec to switch branches — a NEGATIVE/META plan in a kb-generation run stays legacy.
+        val on =
+            Stage4Judging.buildPrompt(
+                request()
+                    .copy(
+                        kbGeneration = true,
+                        knowledgeBase = listOf("a KB line"),
+                        kbStandingRules = Stage4KnowledgeBase.STANDING_RULES,
+                    ),
+                rubric = "RUBRIC-TEXT",
+            )
+
+        assertEquals(legacy, on)
+    }
+
+    @Test
+    fun `spec-mode judge prompt carries the KB, the spec and the compliance guidance`() {
+        val prompt = Stage4Judging.buildPrompt(specRequest(), rubric = "RUBRIC-TEXT")
+
+        // The rubric row still frames it; the KB block rides between the rubric and the transcript.
+        assertTrue(prompt.contains("RUBRIC-TEXT"), prompt)
+        // The KB tier + its standing rules (the same grounding surface GENERATE used).
+        assertTrue(prompt.contains("Knowledge base the advocate was grounded on"), prompt)
+        assertTrue(prompt.contains("\"Led the migration\" — ASSERT; score 0.82 (HIGH)"), prompt)
+        assertTrue(prompt.contains(Stage4KnowledgeBase.STANDING_RULES), prompt)
+        assertTrue(prompt.contains("never deny or contradict"), prompt)
+        // The spec (title / intent / persona lens) — how the drafter chose the opening.
+        assertTrue(prompt.contains("Recency Windowing"), prompt)
+        assertTrue(prompt.contains("probe how current the record is"), prompt)
+        assertTrue(prompt.contains("a recruiter"), prompt)
+        // The spec-mode compliance guidance, riding the four axes as prompt instructions.
+        assertTrue(prompt.contains("voiced at or below its posture label is grounded"), prompt)
+        assertTrue(prompt.contains("ACKNOWLEDGE-ONLY claim that is asserted"), prompt)
+        assertTrue(prompt.contains("ignores the spec's intent"), prompt)
+        // Placement: the KB block sits before the transcript, not tacked after the verdict schema.
+        assertTrue(
+            prompt.indexOf("Knowledge base the advocate") <
+                prompt.indexOf("Conversation under judgment:"),
+            prompt,
+        )
+        assertTrue(prompt.contains("guest: What did she lead?"), prompt)
+    }
+
     // ---- the VA-62 scripted double ---------------------------------------------------
 
     @Test

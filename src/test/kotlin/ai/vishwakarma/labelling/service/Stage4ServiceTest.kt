@@ -683,6 +683,9 @@ class Stage4ServiceTest {
         val snapshot = run.paramsSnapshot!!
         assertTrue(snapshot.contains("\"fresh\":true"))
         assertTrue(snapshot.contains("\"situational\":0.0"))
+        // VA-164: the kb-generation dials are frozen at submit like every other §16 knob.
+        assertTrue(snapshot.contains("\"kbGeneration\":false"))
+        assertTrue(snapshot.contains("\"kbMaxClaims\":400"))
 
         pollUntil(svc, run.id, Stage4RunStatus.GENERATING)
         assertTrue(plans.store.isNotEmpty())
@@ -717,6 +720,17 @@ class Stage4ServiceTest {
                 .err()
 
         assertIs<DomainError.Invalid>(err)
+    }
+
+    @Test
+    fun `a kb-generation run freezes the flag true into its snapshot`() {
+        seedPublished()
+        val svc = service(AppProperties(stage4 = AppProperties.Stage4(kbGeneration = true)))
+
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+
+        assertTrue(run.paramsSnapshot!!.contains("\"kbGeneration\":true"))
+        assertTrue(run.paramsSnapshot!!.contains("\"kbMaxClaims\":400"))
     }
 
     // ---- VA-54: SELECT guards + eligible set + drift sweep ------------------------------

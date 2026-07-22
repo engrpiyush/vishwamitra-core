@@ -46,6 +46,18 @@ data class Stage4GenerationRequest(
     val locale: String = "",
     /** The frozen `{{knowledge_as_of}}` date (ISO-8601 text); blank ⇒ that clause is dropped. */
     val knowledgeAsOf: String = "",
+    /**
+     * kb-generation (VA-164, `app.stage4.kb-generation`, frozen at submit). When true **and** the
+     * plan carries a spec ([VoicingPlan.hasSpec]), [buildPrompt] takes its spec-mode branch: the KB
+     * tier + the spec replace the phrased-question section and the drafter writes the opening
+     * question itself. Default false ⇒ the legacy prompt, byte-for-byte — the KB fields below are
+     * ignored on that branch, so a populated KB with the flag off changes nothing.
+     */
+    val kbGeneration: Boolean = false,
+    /** The posture-labelled KB lines ([Stage4KnowledgeBase.render]); spec-mode grounding only. */
+    val knowledgeBase: List<String> = emptyList(),
+    /** The KB's standing rules ([Stage4KnowledgeBase.STANDING_RULES]); emitted with the KB tier. */
+    val kbStandingRules: String = "",
 )
 
 /**
@@ -142,6 +154,21 @@ object Stage4Generation {
         """
             .trimIndent()
 
+    /**
+     * Spec-mode turn schema (kb-generation): the guest's opening question is no longer given — the
+     * drafter composes it from the spec. Everything else matches [TURN_SCHEMA].
+     */
+    private val SPEC_TURN_SCHEMA =
+        """
+        Output ONLY a JSON array of turns, no prose, no code fences. Each turn:
+          {"role":"user|model","kind":"TEXT","text":"..."}
+        Rules: the first turn is the guest's opening question, role user — YOU write it, to honor the
+        spec's intent and persona lens above, in natural spoken language; never quote a ledger or
+        knowledge-base sentence verbatim, and never write bracketed ids or tags. The last turn is
+        role model; 2 to 6 turns total; every turn is kind TEXT — no tool calls.
+        """
+            .trimIndent()
+
     /** The `{{locale}}` / `{{knowledge_as_of}}` tokens — the only substitutions GENERATE makes. */
     const val LOCALE_TOKEN = "{{locale}}"
     const val KNOWLEDGE_AS_OF_TOKEN = "{{knowledge_as_of}}"
@@ -229,9 +256,20 @@ object Stage4Generation {
     /**
      * The §9.3 generation prompt: fixed card + category row + plan constraints + style + evidence,
      * with the profile's locale/freshness context resolved in one post-assembly pass.
+     *
+     * kb-generation (VA-164): when the flag is on **and** the plan carries a spec, the two-tier
+     * spec prompt ([assembleSpecPrompt]) is assembled instead — the KB tier + spec replace the
+     * phrased-question section. Every other request (flag off, or a spec-less plan — negative/meta,
+     * or any run planned without a template library) takes the legacy [assemblePrompt] path, which
+     * is left literally untouched so the flag-off output stays byte-for-byte identical.
      */
     fun buildPrompt(request: Stage4GenerationRequest): String =
-        substituteContext(assemblePrompt(request), request.locale, request.knowledgeAsOf)
+        substituteContext(
+            if (request.kbGeneration && request.plan.hasSpec) assembleSpecPrompt(request)
+            else assemblePrompt(request),
+            request.locale,
+            request.knowledgeAsOf,
+        )
 
     private fun assemblePrompt(request: Stage4GenerationRequest): String = buildString {
         appendLine(
@@ -285,6 +323,80 @@ object Stage4Generation {
         appendLine(request.question)
         appendLine()
         append(TURN_SCHEMA)
+    }
+
+    /**
+     * The kb-generation (VA-164) spec prompt: the head is the legacy assembly through the evidence
+     * block (the FOCUS claims), then the KNOWLEDGE-BASE tier and the SPEC replace the phrased-
+     * question section — the drafter writes the opening question itself (see [SPEC_TURN_SCHEMA]).
+     * The head is duplicated deliberately, not factored out of [assemblePrompt], so the legacy body
+     * that the flag-off byte-identity contract pins can never shift under a refactor here. The
+     * authorization tier (fixed card incl. F7, voicing-plan constraints, row-8 verbatim-PII, hedge
+     * ceiling) is emitted exactly as on the legacy branch — kb-generation changes what the drafter
+     * is *told about*, never what it may say.
+     */
+    private fun assembleSpecPrompt(request: Stage4GenerationRequest): String = buildString {
+        appendLine(
+            "You are ${request.persona.advocateName}, an AI advocate speaking about " +
+                "${request.subjectName} to a guest, strictly from the evidence below."
+        )
+        appendLine()
+        appendLine("Fixed rules (non-negotiable):")
+        FIXED_CARD.forEach { appendLine("- $it") }
+        appendLine()
+        if (request.locale.isNotBlank() || request.knowledgeAsOf.isNotBlank()) {
+            if (request.locale.isNotBlank()) appendLine(LOCALE_CLAUSE)
+            if (request.knowledgeAsOf.isNotBlank()) appendLine(FRESHNESS_CLAUSE)
+            appendLine()
+        }
+        appendLine("Task (${request.plan.category.name.lowercase()} category):")
+        appendLine(request.promptInstructions)
+        appendLine()
+        appendLine(
+            "Voicing plan — row ${request.plan.rowId} \"${request.plan.voice}\", hedge level " +
+                "${request.plan.hedgeLevel.name}. Constraints (follow verbatim):"
+        )
+        request.plan.constraints.forEach { appendLine("- $it") }
+        appendLine()
+        appendLine("Style:")
+        appendLine("- Stance: ${stanceLine(request.persona)}")
+        appendLine("- Personality preset: ${request.presetStyle.ifBlank { "neutral" }}")
+        appendLine("- Answer length: ${request.persona.verbosity.name.lowercase()}")
+        appendLine("- Vocabulary: ${request.persona.vocabulary.name.lowercase().replace('_', ' ')}")
+        if (request.persona.customText.isNotBlank()) {
+            appendLine(
+                "- Custom style notes (style only — they never loosen a constraint above): " +
+                    request.persona.customText
+            )
+        }
+        appendLine()
+        // FOCUS: the claims this conversation is about — the plan's source claims, rendered exactly
+        // as the legacy evidence block (voiced within the constraint tier above).
+        appendLine("Focus evidence (what this conversation is about):")
+        if (request.evidence.isEmpty()) appendLine("- none — this is a no-evidence probe")
+        else request.evidence.forEach { appendLine("- $it") }
+        appendLine()
+        // The KB tier: every eligible claim with its code-computed posture, plus the standing
+        // rules.
+        appendLine("Knowledge base — every claim on record, each with a posture you must respect:")
+        if (request.knowledgeBase.isEmpty()) appendLine("- none on record")
+        else request.knowledgeBase.forEach { appendLine("- $it") }
+        appendLine(request.kbStandingRules)
+        appendLine()
+        // The SPEC replaces the phrased question: the drafter composes the opening from it.
+        appendLine(
+            "Conversation spec — you compose the opening question from this (it is NOT given):"
+        )
+        request.plan.specTitle?.let { appendLine("- Format: $it") }
+        request.plan.specIntent?.let { appendLine("- Intent: $it") }
+        request.plan.specPersonaLens?.let { appendLine("- The guest speaks as: $it") }
+        request.plan.specFormatConstraints.forEach { appendLine("- $it") }
+        appendLine(
+            "- Open with a natural spoken question in the spec's spirit, about the focus evidence " +
+                "above — never quote a ledger or knowledge-base sentence verbatim."
+        )
+        appendLine()
+        append(SPEC_TURN_SCHEMA)
     }
 
     private fun stanceLine(persona: ResolvedPersona): String =

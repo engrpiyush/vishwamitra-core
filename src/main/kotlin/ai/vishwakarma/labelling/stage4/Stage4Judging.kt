@@ -37,6 +37,19 @@ data class Stage4JudgeRequest(
     val evidence: List<String>,
     /** Non-null only for SITUATIONAL: the judge-time §10.3 re-derivation ([SituationalHedging]). */
     val expectedHedge: HedgeVerdict? = null,
+    /**
+     * kb-generation (VA-164) judge symmetry. When true **and** the plan carries a spec
+     * ([VoicingPlan.hasSpec]), [buildPrompt] shows the judge the same posture-labelled KB the
+     * drafter grounded on plus the conversation spec, and adds the spec-mode compliance guidance —
+     * so a KB mention voiced within its posture reads as grounded, not invented. Default false ⇒
+     * the legacy judge prompt, byte-for-byte — the KB fields below are ignored on that branch, so a
+     * populated KB with the flag off changes nothing.
+     */
+    val kbGeneration: Boolean = false,
+    /** The posture-labelled KB lines ([Stage4KnowledgeBase.render]); spec-mode judging only. */
+    val knowledgeBase: List<String> = emptyList(),
+    /** The KB's standing rules ([Stage4KnowledgeBase.STANDING_RULES]); emitted with the KB tier. */
+    val kbStandingRules: String = "",
 )
 
 /** One ensemble member's take on one axis: the verdict plus its one-line why. */
@@ -104,7 +117,15 @@ object Stage4Judging {
     fun turnsHash(turns: List<Turn>): String =
         sha12(turns.joinToString("\n") { "${it.role.name}|${it.kind.name}|${it.text}" })
 
-    /** The §11 judge prompt: rubric row + plan contract + persona + evidence + transcript. */
+    /**
+     * The §11 judge prompt: rubric row + plan contract + persona + evidence + transcript.
+     *
+     * kb-generation (VA-164): when the flag is on **and** the plan carries a spec, the same
+     * posture-labelled KB the drafter grounded on, the conversation spec, and the spec-mode
+     * compliance guidance are inserted before the transcript — the GENERATE/JUDGE symmetry (§4).
+     * Every other request (flag off, or a spec-less plan) skips that block, so the legacy judge
+     * prompt stays byte-for-byte identical (the rubric row itself never carries KB/spec text).
+     */
     fun buildPrompt(request: Stage4JudgeRequest, rubric: String): String = buildString {
         appendLine(
             "You are a strict quality judge for AI-advocate training conversations about " +
@@ -158,6 +179,47 @@ object Stage4Judging {
                         "must be named aloud."
                 )
             }
+            appendLine()
+        }
+        // kb-generation (VA-164) symmetry: the judge sees the same posture-labelled KB the drafter
+        // grounded on, the conversation spec, and the spec-mode compliance guidance. Emitted only
+        // when the flag is on AND the plan carries a spec, so a legacy judge prompt is
+        // byte-for-byte.
+        if (request.kbGeneration && request.plan.hasSpec) {
+            appendLine(
+                "Knowledge base the advocate was grounded on — every claim on record, each with " +
+                    "the posture it may be voiced at:"
+            )
+            if (request.knowledgeBase.isEmpty()) appendLine("- none on record")
+            else request.knowledgeBase.forEach { appendLine("- $it") }
+            appendLine(request.kbStandingRules)
+            appendLine()
+            appendLine(
+                "Conversation spec — the advocate composed the opening question from this (it was " +
+                    "not given):"
+            )
+            request.plan.specTitle?.let { appendLine("- Format: $it") }
+            request.plan.specIntent?.let { appendLine("- Intent: $it") }
+            request.plan.specPersonaLens?.let { appendLine("- The guest speaks as: $it") }
+            appendLine()
+            appendLine("Additional checks for this knowledge-base conversation:")
+            appendLine(
+                "- A knowledge-base mention voiced at or below its posture label is grounded — " +
+                    "compliant on faithfulness, not a beyond-evidence invention."
+            )
+            appendLine(
+                "- FAIL an ACKNOWLEDGE-ONLY claim that is asserted or advanced rather than merely " +
+                    "acknowledged when the guest raises it (faithfulness / voice compliance)."
+            )
+            appendLine(
+                "- FAIL any claim voiced more confidently than its posture allows, or a focus " +
+                    "claim voiced above its hedge ceiling (voice compliance)."
+            )
+            appendLine(
+                "- FAIL an opening question that ignores the spec's intent or persona lens, or " +
+                    "that quotes a ledger or knowledge-base sentence verbatim (voice compliance / " +
+                    "persona consistency)."
+            )
             appendLine()
         }
         appendLine("Conversation under judgment:")

@@ -69,14 +69,27 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
          * is REPLACED by template × fact units; empty ⇒ the legacy trio plans as before.
          */
         templates: List<NotebookTemplate> = emptyList(),
+        /**
+         * kb-generation (VA-164, `app.stage4.kb-generation`). When on **and** a template library is
+         * present, the template units freeze a QUESTION SPEC instead of a phrased guest question:
+         * the drafter writes the conversation from the KB + spec. Off (the default), OR with no
+         * library, planning is byte-for-byte what it is today — the phrased trio and every legacy
+         * unit key are untouched. Spec mode rides the VA-88 template path only, the one path that
+         * carries a real FormatSpec (title/intent/persona lens/format constraints).
+         */
+        kbGeneration: Boolean = false,
     ): PlanningOutcome {
         val byId = eligible.associateBy { it.claim.id }
+        // Spec mode is the template path with the flag on — the legacy trio has no FormatSpec to
+        // draw a spec from, so it keeps phrasing questions even when the flag is set.
+        val specMode = kbGeneration && templates.isNotEmpty()
         // VA-88: a non-empty template library replaces "blind" fact/claim-driven planning for the
         // fact-driven trio. The probe banks are exempt either way (QD-5): refusal/injection/
         // identity coverage is a fixed curriculum, not a template concern.
         val templateDriven = templates.isNotEmpty()
         val templateUnits =
-            if (templateDriven) templateCandidates(templates, facts, byId) else emptyList()
+            if (templateDriven) templateCandidates(templates, facts, byId, specMode)
+            else emptyList()
         val candidates =
             mapOf(
                 Stage4Category.QA to (if (templateDriven) emptyList() else qaCandidates(eligible)),
@@ -122,10 +135,24 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         // Dedupe before the cap: a unit the cap would drop must not have suppressed a duplicate
         // that survives. Exact Jaccard over word shingles — MinHash is this measure's at-scale
         // approximation; POC question counts make the exact pairwise form the simpler equal.
+        //
+        // Spec units (kb-generation) carry no phrased question — the drafter writes it from the
+        // spec — so there are no shingles to compare. They are structurally unique by their unit
+        // key
+        // (templateId × anchor factId), so dedupe folds to unit-key identity: two template slots
+        // that
+        // rotate onto the same anchor collapse to one, exactly as identical phrased questions did
+        // on
+        // the legacy path (so the coverage arithmetic is unchanged).
         val kept = mutableListOf<Candidate>()
         val keptShingles = mutableListOf<Set<String>>()
+        val keptSpecKeys = mutableSetOf<String>()
         var deduped = 0
         for (candidate in allocated) {
+            if (specMode && candidate.template != null) {
+                if (keptSpecKeys.add(candidate.unit.unitKey)) kept += candidate else deduped++
+                continue
+            }
             val shingles = shinglesOf(candidate.question)
             if (keptShingles.any { jaccard(it, shingles) >= dedupeJaccardThreshold }) {
                 deduped++
@@ -152,8 +179,16 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
             surviving.map { candidate ->
                 val base = planner.plan(candidate.unit, persona, personaHash)
                 val plan =
-                    candidate.template?.let {
-                        base.copy(templateId = it.id, templateCategory = it.category)
+                    candidate.template?.let { template ->
+                        val stamped =
+                            base.copy(
+                                templateId = template.id,
+                                templateCategory = template.category
+                            )
+                        // kb-generation: freeze the spec on the plan so GENERATE/JUDGE branch on it
+                        // and the drafter writes the opening question itself. Derived from the
+                        // template (already in the unit key), so the spec never enters the planId.
+                        if (specMode) stamped.withSpec(template) else stamped
                     } ?: base
                 PlannedConversation(candidate.question, plan)
             }
@@ -201,6 +236,10 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         templates: List<NotebookTemplate>,
         facts: List<SubjectFactRecord>,
         byId: Map<String, EvidencedClaim>,
+        /**
+         * kb-generation: freeze a spec, not a phrased question (the drafter writes the opening).
+         */
+        specMode: Boolean,
     ): List<Candidate> {
         val anchors =
             facts
@@ -279,7 +318,17 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
             if (eligible.isEmpty()) return@flatMapIndexed emptyList()
             (0 until template.coverageTarget).map { slot ->
                 val (anchor, members) = eligible[(index + slot) % eligible.size]
-                val unitKey = "tpl:${template.id}:${anchor.factId}"
+                // Spec-mode template units take a distinct `tpl:spec:` key so their planId differs
+                // from the same template's phrased (flag-off) planId — that is what buys the free
+                // cache separation between modes the design promises ((planId,
+                // generatorPromptHash)):
+                // a run that flips kb-generation plans NEW ids and drafts fresh, rather than
+                // serving
+                // the stale phrased draft the identical key would cache-hit. Flag-off keeps the
+                // legacy key byte-for-byte, so no existing planId shifts.
+                val unitKey =
+                    if (specMode) "tpl:spec:${template.id}:${anchor.factId}"
+                    else "tpl:${template.id}:${anchor.factId}"
                 val unit =
                     if (members.size >= 2) {
                         PlanUnit.FactGroupUnit(members, unitKey = unitKey)
@@ -288,7 +337,12 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                     }
                 Candidate(
                     unit = unit,
-                    question = templateQuestion(template, questionLabelOf(anchor.label, members)),
+                    // Spec mode phrases nothing — the drafter opens the conversation from the spec;
+                    // the empty question is folded to null on the plan (dedupe keys on the unit
+                    // key).
+                    question =
+                        if (specMode) ""
+                        else templateQuestion(template, questionLabelOf(anchor.label, members)),
                     claimIds = members.map { it.claim.id },
                     template = template,
                 )
@@ -329,6 +383,27 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         val lens =
             template.formatSpec.personaLens.takeIf { it.isNotBlank() }?.let { "As $it: " } ?: ""
         return "$lens${template.title} — can you take me through \"$factLabel\"?"
+    }
+
+    /**
+     * Freeze the kb-generation spec (VA-164) onto a template plan from the template's FormatSpec:
+     * title, intent, persona lens, and format constraints (turn shape + expected behaviours). Blank
+     * FormatSpec fields collapse to null/empty; [VoicingPlan.hasSpec] fires on the title, which
+     * every template carries. Purely derived from the template, so it is deterministic and (like
+     * the template stamp) sits outside the planId hash.
+     */
+    private fun VoicingPlan.withSpec(template: NotebookTemplate): VoicingPlan {
+        val spec = template.formatSpec
+        val constraints = buildList {
+            spec.turnShape.takeIf { it.isNotBlank() }?.let { add("Turn shape: $it") }
+            addAll(spec.expectedBehaviours)
+        }
+        return copy(
+            specTitle = template.title,
+            specIntent = spec.intent.ifBlank { null },
+            specPersonaLens = spec.personaLens.ifBlank { null },
+            specFormatConstraints = constraints,
+        )
     }
 
     // ---- Q&A: one unit per eligible claim, best-evidenced first ----------------------------

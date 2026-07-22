@@ -106,6 +106,11 @@ class Stage4Controller(
             "runJudgeDisabled",
             run?.let { !snapshotFlag(it, "judgeEnabled", default = true) } ?: false,
         )
+        // VA-164: a run planned/generated under kb-generation is badged from its frozen snapshot.
+        model.addAttribute(
+            "runKbGeneration",
+            run?.let { snapshotFlag(it, "kbGeneration") } ?: false,
+        )
         model.addAttribute("mixDefaults", config.stage4().mix)
         // The QA-4 gate's dashboard: current-stamp examples by status. Export is a filter, not a
         // gate — unreviewed examples are silently left behind — so the counts sit beside the

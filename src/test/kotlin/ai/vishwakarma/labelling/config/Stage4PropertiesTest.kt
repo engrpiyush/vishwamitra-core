@@ -19,6 +19,9 @@ class Stage4PropertiesTest {
         assertEquals(6, stage4.maxConversationsPerClaim)
         assertEquals(0.85, stage4.dedupeJaccardThreshold)
         assertEquals(true, stage4.judgeEnabled)
+        // VA-164 kb-generation ships dark — default off keeps every prompt/planId byte-for-byte.
+        assertEquals(false, stage4.kbGeneration)
+        assertEquals(400, stage4.kbMaxClaims)
         assertEquals(1.0, stage4.reviewSampleRate)
         assertEquals(false, stage4.dpoEnabled)
         assertEquals(0.10, stage4.evalHoldoutFraction)

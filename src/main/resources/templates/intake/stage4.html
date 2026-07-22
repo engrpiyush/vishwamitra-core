@@ -257,6 +257,8 @@
                           title="Frozen at submit (paramsSnapshot) — this run's generator and judge were scripted doubles">dry-run</span>
                     <span class="badge badge--warning" th:if="${runJudgeDisabled}"
                           title="Frozen at submit — examples reached the queue unjudged and unsorted (QD-6)">judge off</span>
+                    <span class="badge badge--info" th:if="${runKbGeneration}"
+                          title="Frozen at submit — knowledge-base + spec generation: the drafter writes the opening question (VA-164)">kb-generation</span>
                 </div>
                 <form th:if="${active}" method="post" class="inline-form"
                       th:action="@{/intake/stage4/runs/{rid}/poll(rid=${run.id})}">
