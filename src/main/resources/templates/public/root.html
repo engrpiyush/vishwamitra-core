@@ -1,40 +1,846 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<head th:replace="~{public/shell :: head(${pageTitle})}"></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vishwakarma.ai — Custom AI, built from what you know</title>
+<meta name="description" content="Vishwakarma.ai is the one-stop shop for custom language models — built from your verified knowledge and owned by you. For individuals and for businesses. Launching 2026.">
+<meta property="og:title" content="Vishwakarma.ai — Custom AI, built from what you know">
+<meta property="og:description" content="Custom language models built from your own verified knowledge — and yours to own. For individuals and for businesses. Launching 2026.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://vishwakarma.ai">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- reCAPTCHA v3 — this is the vishwakarma.ai key (domain-locked). Must match RECAPTCHA_SITE_KEY below. -->
+<script src="https://www.google.com/recaptcha/api.js?render=6Le1e0otAAAAAKOCsNqAei1zGf6vlfOcD5wnaGx7" async defer></script>
+<style>
+  :root{
+    --black:#02060A;
+    --green:#00FF85;
+    --green-dim:#19C46A;
+    --green-soft:#7FFFC0;
+    --green-faint:#3A6B53;
+    --red:#FF6B6B;
+    --text:#C8F6DD;
+    --text-2:#8FCBAB;
+    --text-soft:#5C8A72;
+    --line:rgba(0,255,120,.16);
+    --line-soft:rgba(0,255,120,.09);
+    --maxw:1180px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    background:var(--black);color:var(--text);
+    -webkit-font-smoothing:antialiased;line-height:1.6;
+    overflow-x:hidden;position:relative;
+  }
+  ::selection{background:var(--green);color:var(--black)}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 30px}
+  h1,h2,h3{font-family:'Space Grotesk',sans-serif;font-weight:600;letter-spacing:-.02em;line-height:1.08}
+
+  /* v3 badge hidden; Google attribution shown in the footer (required by Google's terms) */
+  .grecaptcha-badge{visibility:hidden!important}
+
+  /* ---- CODE RAIN ---- */
+  #rain{position:fixed;inset:0;z-index:0;display:block;opacity:.55}
+  .veil{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse 90% 70% at 50% 30%,rgba(2,6,10,.55),rgba(2,6,10,.86) 75%)}
+  .scanlines{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.4;background:repeating-linear-gradient(rgba(0,0,0,0) 0px,rgba(0,0,0,0) 2px,rgba(0,20,10,.25) 3px)}
+  .content{position:relative;z-index:5}
+
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--green-dim)}
+
+  /* ---- NAV ---- */
+  nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(2,6,10,.72);backdrop-filter:blur(10px);border-bottom:1px solid transparent;transition:border-color .3s,background .3s}
+  nav.scrolled{border-bottom:1px solid var(--line);background:rgba(2,6,10,.92)}
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:66px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:17px;letter-spacing:-.01em;color:var(--text)}
+  .brand .mk{width:28px;height:28px;flex:none}
+  .brand b{color:var(--green)}
+  .nav-links{display:flex;align-items:center;gap:8px}
+  .nav-links a{font-family:'IBM Plex Mono',monospace;font-size:12.5px;letter-spacing:.03em;color:var(--text-2);padding:8px 12px;transition:color .2s,text-shadow .2s}
+  .nav-links a:hover{color:var(--green);text-shadow:0 0 10px rgba(0,255,120,.5)}
+  .nav-cta{font-family:'IBM Plex Mono',monospace;font-size:12.5px;letter-spacing:.04em;background:transparent;color:var(--green);padding:10px 18px;border:1px solid var(--green);transition:background .2s,color .2s,box-shadow .2s}
+  .nav-cta:hover{background:var(--green);color:var(--black);box-shadow:0 0 20px rgba(0,255,120,.5)}
+  .menu-btn{display:none;background:none;border:none;color:var(--green);cursor:pointer}
+
+  /* ---- HERO ---- */
+  .hero{padding:148px 0 92px}
+  .hero-in{display:grid;grid-template-columns:1.05fr .95fr;gap:54px;align-items:center}
+  .pill{display:inline-flex;align-items:center;gap:9px;background:rgba(0,255,120,.05);border:1px solid var(--line);padding:7px 15px;font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.06em;color:var(--green-soft);margin-bottom:28px}
+  .pill .led{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:flick 1.6s infinite}
+  @keyframes flick{0%,100%{opacity:1}45%{opacity:.35}}
+  h1.hero-h{font-size:clamp(44px,6vw,80px);font-weight:700}
+  h1.hero-h .strike{color:var(--text-soft);background-image:linear-gradient(var(--green),var(--green));background-repeat:no-repeat;background-position:0 55%;background-size:0% 4px;-webkit-box-decoration-break:clone;box-decoration-break:clone;animation:strike .8s cubic-bezier(.6,0,.2,1) .2s forwards}
+  @keyframes strike{to{background-size:100% 4px}}
+  h1.hero-h .live{display:block;margin-top:8px;color:var(--text)}
+  h1.hero-h .live em{font-style:normal;color:var(--green);text-shadow:0 0 18px rgba(0,255,120,.5)}
+  .hero-sub{font-size:18px;color:var(--text-2);max-width:500px;margin:28px 0 36px;line-height:1.62}
+  .hero-actions{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:13.5px;letter-spacing:.04em;padding:14px 26px;cursor:pointer;transition:background .2s,box-shadow .2s,transform .15s,opacity .2s;border:1px solid var(--green)}
+  .btn-primary{background:var(--green);color:var(--black);box-shadow:0 0 26px rgba(0,255,120,.4)}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 0 40px rgba(0,255,120,.6)}
+  .btn-ghost{background:transparent;color:var(--green)}
+  .btn-ghost:hover{background:rgba(0,255,120,.1);box-shadow:0 0 22px rgba(0,255,120,.3)}
+  .btn[disabled]{opacity:.55;cursor:not-allowed;transform:none!important;box-shadow:none}
+  .hero-trust{display:flex;gap:32px;margin-top:48px;padding-top:30px;border-top:1px solid var(--line)}
+  .hero-trust .t .n{font-family:'IBM Plex Mono',monospace;font-size:30px;font-weight:500;color:var(--green);text-shadow:0 0 14px rgba(0,255,120,.4)}
+  .hero-trust .t .l{font-size:13px;color:var(--text-soft);margin-top:4px}
+
+  /* ---- TERMINAL ---- */
+  .term{background:rgba(2,10,7,.86);border:1px solid var(--line);box-shadow:0 0 50px rgba(0,255,120,.12),inset 0 0 60px rgba(0,255,120,.04);backdrop-filter:blur(2px)}
+  .term-bar{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .term-bar .dot{width:11px;height:11px;border-radius:50%;border:1px solid var(--green-faint)}
+  .term-bar .dot.on{background:var(--green);box-shadow:0 0 8px var(--green);border-color:var(--green)}
+  .term-bar .ttl{margin-left:10px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-soft);letter-spacing:.04em}
+  .term-body{padding:22px;font-family:'IBM Plex Mono',monospace;font-size:13.5px;line-height:1.85}
+  .term-body .ln{opacity:0;animation:type .4s forwards}
+  .term-body .ln:nth-child(1){animation-delay:.3s}
+  .term-body .ln:nth-child(2){animation-delay:.7s}
+  .term-body .ln:nth-child(3){animation-delay:1.5s}
+  .term-body .ln:nth-child(4){animation-delay:2.0s}
+  .term-body .ln:nth-child(5){animation-delay:2.9s}
+  @keyframes type{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .term-body .pr{color:var(--green);margin-right:8px}
+  .term-body .q{color:var(--text-2)}
+  .term-body .a{color:var(--green-soft);display:block;padding:4px 0 12px 0}
+  .term-body .a b{color:var(--green);font-weight:500}
+  .term-body .cursor{display:inline-block;width:9px;height:16px;background:var(--green);box-shadow:0 0 8px var(--green);vertical-align:middle;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---- SECTION ---- */
+  .sec{padding:94px 0;position:relative}
+  .sec.panel{background:linear-gradient(180deg,rgba(4,17,12,.55),rgba(2,6,10,.7));border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+  .sec-head{max-width:760px;margin-bottom:52px}
+  .sec-head.center{margin:0 auto 52px;text-align:center}
+  .sec-head .eyebrow{display:block;margin-bottom:16px}
+  .sec-head h2{font-size:clamp(32px,4vw,48px);color:var(--text)}
+  .sec-head h2 em{font-style:normal;color:var(--green);text-shadow:0 0 16px rgba(0,255,120,.4)}
+  .sec-head p{font-size:17.5px;color:var(--text-2);margin-top:18px;line-height:1.6}
+
+  /* ---- PROBLEM ---- */
+  .prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  .prob{background:rgba(4,17,12,.6);border:1px solid var(--line-soft);padding:30px;transition:border-color .25s,box-shadow .25s,transform .25s}
+  .prob:hover{transform:translateY(-4px);border-color:var(--line);box-shadow:0 0 30px rgba(0,255,120,.12)}
+  .prob .ic{width:48px;height:48px;border:1px solid var(--green-faint);display:flex;align-items:center;justify-content:center;margin-bottom:20px;color:var(--green)}
+  .prob h3{font-size:22px;margin-bottom:11px;color:var(--text)}
+  .prob p{font-size:15px;color:var(--text-soft);line-height:1.6}
+
+  /* ---- COMPARE ---- */
+  .cmp{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line)}
+  .cmp .c{padding:36px 28px;border-right:1px solid var(--line);position:relative}
+  .cmp .c:last-child{border-right:none}
+  .cmp .c.win{background:rgba(0,255,120,.07);box-shadow:inset 0 0 50px rgba(0,255,120,.08)}
+  .cmp .c.win::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);box-shadow:0 0 12px var(--green)}
+  .cmp .c .k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-soft);margin-bottom:20px}
+  .cmp .c.win .k{color:var(--green)}
+  .cmp .c .says{font-size:24px;font-weight:600;line-height:1.2;color:var(--text)}
+  .cmp .c.win .says{color:var(--green-soft)}
+  .cmp .c .d{font-size:14.5px;color:var(--text-soft);margin-top:16px;line-height:1.55}
+
+  /* ---- HOW ---- */
+  .how{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line)}
+  .stp{padding:32px 26px 36px;border-right:1px solid var(--line)}
+  .stp:last-child{border-right:none}
+  .stp .sn{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--green);padding-bottom:16px;border-bottom:1px solid var(--green-faint);display:block;margin-bottom:20px;width:fit-content;letter-spacing:.08em}
+  .stp h3{font-size:21px;margin-bottom:10px;color:var(--text)}
+  .stp p{font-size:14px;color:var(--text-soft);line-height:1.58}
+
+  /* ---- AUDIENCE ---- */
+  .aud{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .aud .col{border:1px solid var(--line-soft);padding:40px;background:rgba(4,17,12,.6)}
+  .aud .tag{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--green);border:1px solid var(--green-faint);padding:5px 12px;margin-bottom:20px}
+  .aud h3{font-size:27px;margin-bottom:14px;color:var(--text)}
+  .aud .lead{font-size:15.5px;color:var(--text-2);line-height:1.6;max-width:440px}
+  .aud ul{list-style:none;margin-top:24px}
+  .aud li{display:flex;gap:13px;font-size:15px;color:var(--text-2);padding:13px 0;border-top:1px solid var(--line-soft);align-items:flex-start}
+  .aud li .ck{flex:none;color:var(--green);font-family:'IBM Plex Mono',monospace;margin-top:1px}
+
+  /* ---- FOUNDER ---- */
+  .fdr{display:grid;grid-template-columns:.85fr 1.15fr;gap:50px;align-items:center}
+  .fdr-card{background:rgba(2,10,7,.86);border:1px solid var(--line);padding:34px;text-align:center;box-shadow:0 0 44px rgba(0,255,120,.1)}
+  .fdr-card .ph{width:100px;height:100px;border-radius:50%;margin:0 auto 18px;border:1px solid var(--green);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:34px;font-weight:500;color:var(--green);text-shadow:0 0 16px rgba(0,255,120,.5);box-shadow:0 0 30px rgba(0,255,120,.2),inset 0 0 30px rgba(0,255,120,.08)}
+  .fdr-card .nm{font-size:22px;font-weight:600;color:var(--text)}
+  .fdr-card .rl{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--text-soft);margin-top:6px}
+  .fdr-card .li{display:inline-flex;align-items:center;gap:8px;margin-top:20px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--green);border:1px solid var(--green-faint);padding:10px 16px;transition:background .2s,color .2s,box-shadow .2s}
+  .fdr-card .li:hover{background:var(--green);color:var(--black);box-shadow:0 0 20px rgba(0,255,120,.5)}
+  .fdr-body h2{font-size:32px;margin-bottom:18px;color:var(--text)}
+  .fdr-body h2 em{font-style:normal;color:var(--green)}
+  .fdr-body p{font-size:16px;color:var(--text-2);line-height:1.66;margin-bottom:16px}
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:24px}
+  .chip{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-2);border:1px solid var(--line);padding:8px 14px;background:rgba(0,255,120,.04)}
+
+  /* ---- FAQ ---- */
+  .faq{max-width:840px;margin:0 auto}
+  .qa{border:1px solid var(--line-soft);margin-bottom:12px;background:rgba(4,17,12,.5);transition:border-color .2s,box-shadow .2s}
+  .qa.open{border-color:var(--line);box-shadow:0 0 26px rgba(0,255,120,.12)}
+  .qa button{width:100%;background:none;border:none;color:var(--text);text-align:left;padding:22px 24px;font-size:17.5px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:18px}
+  .qa .pm{flex:none;font-family:'IBM Plex Mono',monospace;font-size:18px;color:var(--green);transition:transform .3s}
+  .qa.open .pm{transform:rotate(45deg)}
+  .qa .ans{max-height:0;overflow:hidden;transition:max-height .35s ease}
+  .qa .ans p{padding:0 24px 22px;font-size:15.5px;color:var(--text-2);line-height:1.65}
+  .qa .ans p em{font-style:normal;color:var(--green)}
+
+  /* ---- CONTACT ---- */
+  .ct{display:grid;grid-template-columns:.9fr 1.1fr;gap:54px;align-items:start}
+  .ct-left h2{font-size:clamp(32px,4vw,46px);color:var(--text)}
+  .ct-left h2 em{font-style:normal;color:var(--green);text-shadow:0 0 16px rgba(0,255,120,.4)}
+  .ct-left .lead{font-size:16.5px;color:var(--text-2);line-height:1.6;margin:18px 0 30px;max-width:420px}
+  .ct-detail{display:flex;align-items:center;gap:15px;padding:15px 0;border-top:1px solid var(--line-soft)}
+  .ct-detail .ic{width:42px;height:42px;flex:none;border:1px solid var(--green-faint);display:flex;align-items:center;justify-content:center;color:var(--green)}
+  .ct-detail .t{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.08em}
+  .ct-detail .v{font-size:15.5px;font-weight:500;color:var(--text);margin-top:2px;display:block}
+  .ct-detail a.v:hover{color:var(--green)}
+  form.panel-form{background:rgba(2,10,7,.78);border:1px solid var(--line);padding:34px;box-shadow:0 0 44px rgba(0,255,120,.08)}
+  .frow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{margin-bottom:18px}
+  .field label{display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-soft);margin-bottom:8px}
+  .field input,.field textarea,.field select{width:100%;background:rgba(0,255,120,.04);border:1px solid var(--line);padding:13px 15px;color:var(--text);font-size:15px;font-family:'IBM Plex Mono',monospace;transition:border-color .2s,box-shadow .2s}
+  .field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--green);box-shadow:0 0 16px rgba(0,255,120,.25)}
+  .field textarea{resize:vertical;min-height:108px}
+  .field input::placeholder,.field textarea::placeholder{color:var(--text-soft)}
+  .field select{cursor:pointer}
+  .field select option{background:#04110C;color:var(--text)}
+  /* honeypot — deliberately NOT named "company" (that's vishx.com's honeypot name) */
+  .hp{position:absolute!important;left:-9999px!important;width:1px!important;height:1px!important;overflow:hidden}
+  form.panel-form .btn-primary{width:100%;padding:15px}
+  .form-note{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-soft);margin-top:14px;text-align:center;line-height:1.6}
+  .form-msg{font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.55;margin-top:16px}
+  .form-msg:empty{margin-top:0}
+  .form-msg.success{display:block;color:var(--green);border:1px solid var(--green);background:rgba(0,255,120,.07);padding:12px 14px}
+  .form-msg.error{display:block;color:var(--red);border:1px solid rgba(255,107,107,.45);background:rgba(255,107,107,.07);padding:12px 14px}
+
+  /* ---- FOOTER ---- */
+  footer{background:rgba(2,6,10,.9);border-top:1px solid var(--line);padding:54px 0 30px;position:relative;z-index:5}
+  .ft-top{display:grid;grid-template-columns:1.6fr .8fr .8fr 1.4fr;gap:40px}
+  .ft-brand .brand{margin-bottom:15px}
+  .ft-brand p{font-size:14px;color:var(--text-soft);line-height:1.6;max-width:270px}
+  .ft-col h4{font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-soft);margin-bottom:16px}
+  .ft-col a{display:block;font-size:14.5px;color:var(--text-2);margin-bottom:11px;transition:color .2s}
+  .ft-col a:hover{color:var(--green)}
+  .ft-sub p{font-size:13.5px;color:var(--text-soft);margin-bottom:14px;line-height:1.55}
+  .sub-form{display:flex;border:1px solid var(--green-faint);background:rgba(0,255,120,.04)}
+  .sub-form input{flex:1;min-width:0;border:none;background:transparent;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--text);padding:12px 13px}
+  .sub-form input:focus{outline:none}
+  .sub-form input::placeholder{color:var(--text-soft)}
+  .sub-form button{flex:none;border:none;border-left:1px solid var(--green-faint);background:var(--green);color:var(--black);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:12px;letter-spacing:.04em;padding:12px 16px;cursor:pointer;transition:box-shadow .2s,opacity .2s}
+  .sub-form button:hover{box-shadow:0 0 20px rgba(0,255,120,.5)}
+  .sub-form button[disabled]{opacity:.55;cursor:not-allowed;box-shadow:none}
+  .ft-bottom{margin-top:46px;padding-top:24px;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-soft)}
+  .ft-legal{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-soft);margin-top:16px;line-height:1.7;opacity:.85}
+  .ft-legal a{color:var(--text-2);text-decoration:underline;text-underline-offset:2px}
+  .ft-legal a:hover{color:var(--green)}
+
+  .rv{opacity:0;transform:translateY(22px);transition:opacity .7s,transform .7s}
+  .rv.in{opacity:1;transform:none}
+
+  @media(max-width:1000px){ .ft-top{grid-template-columns:1fr 1fr;gap:36px} }
+  @media(max-width:960px){
+    .hero-in,.fdr,.ct{grid-template-columns:1fr;gap:44px}
+    .prob-grid{grid-template-columns:1fr 1fr}
+    .cmp,.how{grid-template-columns:1fr}
+    .cmp .c,.stp{border-right:none;border-bottom:1px solid var(--line)}
+    .cmp .c:last-child,.stp:last-child{border-bottom:none}
+    .aud{grid-template-columns:1fr}
+    .term{order:-1}
+  }
+  @media(max-width:680px){
+    .nav-links{display:none}
+    .menu-btn{display:block}
+    .prob-grid,.frow,.ft-top{grid-template-columns:1fr}
+    .hero{padding:120px 0 70px}
+    .sec{padding:68px 0}
+    .hero-trust{gap:20px;flex-wrap:wrap}
+    .sub-form{flex-direction:column}
+    .sub-form button{border-left:none;width:100%}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+    .rv{opacity:1;transform:none}
+    h1.hero-h .strike{background-size:100% 4px}
+    .term-body .ln{opacity:1}
+    #rain{display:none}
+  }
+</style>
+</head>
 <body>
 
 <!--
-  VA-173: the apex root — the two-door bifurcation (individuals ⟂ business). The public front
-  door: friendly capability language only, cookieless (stateless chain), and the host filter 404s
-  everything else. Each door opens a same-host use-case catalog (/individuals, /business).
+  VA-175: the apex marketing root — the full brand page, repositioned. Vishwakarma AI is the
+  one-stop shop for building custom language models, for individuals AND businesses; the career
+  advocate is one showcased use case, not the whole product. Rendered as the Thymeleaf view
+  `public/root` (returned by PublicSiteController.landing) — a standalone, self-contained page that
+  deliberately does NOT use the public/shell fragments: its own inline styling and script travel
+  with it. Derived from the former brand page static/vishwakarma-ai-landing.html, which stays on
+  disk (unreferenced). The hero CTA is the two-door bifurcation — /individuals first, /business
+  second; every in-page anchor resolves within this document; and the #contact section is preserved
+  verbatim in id (templates/public/landing.html links to /#contact and must land there).
 -->
-<div class="landing">
-    <main class="landing-main">
-        <section class="landing-hero landing-hero--wide">
-            <span class="brand-mark"></span>
-            <h1>Vishwakarma AI</h1>
-            <p class="lede">AI built from what you know — every fact verified, and the model
-                yours to own.</p>
 
-            <!-- Two doors: individuals first, business second. -->
-            <div class="stage-picker">
-                <a class="stage-card" th:href="@{/individuals}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                    <span class="stage-card-title">For individuals</span>
-                    <p class="muted">An advocate that speaks for you — grounded in evidence you
-                        choose and review.</p>
-                </a>
-                <a class="stage-card" th:href="@{/business}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 8h.01M15 8h.01M9 12h.01M15 12h.01M9 16h.01M15 16h.01"/></svg>
-                    <span class="stage-card-title">For businesses</span>
-                    <p class="muted">An AI sales rep built from your company's knowledge — and
-                        owned by you.</p>
-                </a>
-            </div>
-        </section>
-    </main>
-    <footer th:replace="~{public/shell :: publicfoot}"></footer>
-</div>
+<canvas id="rain" aria-hidden="true"></canvas>
+<div class="veil"></div>
+<div class="scanlines"></div>
 
+<div class="content">
+
+<nav id="nav">
+  <div class="wrap nav-in">
+    <a href="#top" class="brand">
+      <svg class="mk" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Vishwakarma.ai">
+        <rect x="1" y="1" width="30" height="30" stroke="#00FF85" stroke-width="1.4"/>
+        <path d="M8 9 L16 24 L24 9" stroke="#00FF85" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="14.2" y="8" width="3.6" height="3.6" fill="#00FF85"/>
+      </svg>
+      Vishwakarma<b>.ai</b>
+    </a>
+    <div class="nav-links">
+      <a href="#problem">// problem</a>
+      <a href="#solution">// solution</a>
+      <a href="#how">// method</a>
+      <a href="#audience">// use_cases</a>
+      <a href="#faq">// faq</a>
+    </div>
+    <a href="#contact" class="nav-cta">TALK_TO_US</a>
+    <button class="menu-btn" aria-label="Menu" onclick="document.querySelector('.nav-links').style.display='flex'">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-in">
+    <div class="hero-copy">
+      <span class="pill"><span class="led"></span> BUILDING THE NEXT LLM FACTORY // LAUNCH 2026</span>
+      <h1 class="hero-h">
+        <span class="strike">Rented, generic AI.</span>
+        <span class="live">Build the model that <em>knows your world</em> — and own it.</span>
+      </h1>
+      <p class="hero-sub">Vishwakarma.ai is the one-stop shop for custom language models. We build a dedicated model from what you actually know — every fact verified before it's trained in — and hand you the weights. Like an advocate that speaks for a person, or a rep trained on everything a business knows — whatever role your world needs.</p>
+      <div class="hero-actions">
+        <a th:href="@{/individuals}" class="btn btn-primary">FOR INDIVIDUALS →</a>
+        <a th:href="@{/business}" class="btn btn-ghost">FOR BUSINESSES →</a>
+        <a href="#how" class="btn btn-ghost">SEE THE METHOD ↓</a>
+      </div>
+      <div class="hero-trust">
+        <div class="t"><div class="n">2</div><div class="l">audiences — people &amp; businesses</div></div>
+        <div class="t"><div class="n">100%</div><div class="l">of facts verified first</div></div>
+        <div class="t"><div class="n">2026</div><div class="l">launching</div></div>
+      </div>
+    </div>
+
+    <div class="term" aria-label="A terminal session querying a career advocate — one Vishwakarma AI use case">
+      <div class="term-bar">
+        <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+        <span class="ttl">career-advocate.vishwakarma.ai — live // use case 01</span>
+      </div>
+      <div class="term-body">
+        <div class="ln"><span class="pr">&gt;</span><span class="q">query --subject "Priya" --ask "handles pressure?"</span></div>
+        <div class="ln"><span class="a">A release broke hours before a client demo. <b>She diagnosed before she reacted</b> — fixed it, kept the client in the loop the whole time. Her lead raised this unprompted.</span></div>
+        <div class="ln"><span class="pr">&gt;</span><span class="q">query --subject "Priya" --ask "weaknesses, honestly?"</span></div>
+        <div class="ln"><span class="a"><b>She moves fast, sometimes ahead of her docs.</b> Two teammates flagged it. She knows, and she's built habits around it. Better you hear it from me than find it later.</span></div>
+        <div class="ln"><span class="pr">&gt;</span><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="sec panel" id="problem">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="eyebrow">// 01 · the problem</span>
+      <h2>Off-the-shelf AI doesn't know <em>your world.</em></h2>
+      <p>Rented models are trained on everyone and no one. They don't know your work, your company, or your customers — the knowledge that actually makes you distinct is exactly what they miss, and you never own what you build on top of them.</p>
+    </div>
+    <div class="prob-grid">
+      <div class="prob rv">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+        <h3>Generic by default</h3>
+        <p>Foundation models know the average of the internet — not your projects, your people, or your product. The specifics that matter are exactly the ones they blur over.</p>
+      </div>
+      <div class="prob rv">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg></div>
+        <h3>Your knowledge is trapped</h3>
+        <p>The things that make you or your business distinct live in documents, recordings and people's heads — scattered, unverified, and impossible to hand to a model wholesale.</p>
+      </div>
+      <div class="prob rv">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
+        <h3>You rent, you don't own</h3>
+        <p>Wrap someone's API and you're renting intelligence on their terms — repriced, deprecated, or cut off at will. Nothing you can keep, run yourself, or truly call your own.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="solution">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="eyebrow">// 02 · the solution</span>
+      <h2>Not a wrapper. Not a prompt. <em>A model that's yours.</em></h2>
+      <p>Vishwakarma.ai builds a dedicated model from your own verified knowledge — for a person or a company — and hands you the weights. It's grounded in what's real, candid about what it doesn't know, and yours to keep and run.</p>
+    </div>
+    <div class="cmp">
+      <div class="c rv"><div class="k">The generic chatbot</div><div class="says">"I know a bit of everything."</div><div class="d">Trained on the whole internet, tuned to no one. Confident, generic, and forgetful of the details that matter to you.</div></div>
+      <div class="c rv"><div class="k">The RAG bolt-on</div><div class="says">"Let me search your docs."</div><div class="d">Better grounded — but still a rented model skimming your files at query time. You own the prompt, never the intelligence.</div></div>
+      <div class="c win rv"><div class="k">Vishwakarma.ai</div><div class="says">"I was built from what you know."</div><div class="d">A dedicated model trained on your verified knowledge, candid about its limits, and delivered as weights you keep and run.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec panel" id="how">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="eyebrow">// 03 · the method</span>
+      <h2>Four steps from what you know to <em>a model you own.</em></h2>
+      <p>From your raw knowledge to a live, conversational model you own — verified and auditable at every step.</p>
+    </div>
+    <div class="how">
+      <div class="stp rv"><span class="sn">01_GATHER</span><h3>Gather</h3><p>A structured conversation plus your real material — documents, history, recordings, and the endorsements or knowledge only you or your company holds.</p></div>
+      <div class="stp rv"><span class="sn">02_VERIFY</span><h3>Verify</h3><p>Every claim is checked, corroborated, and reviewed before it can be trained in. Nothing is imagined — you decide what stands.</p></div>
+      <div class="stp rv"><span class="sn">03_TRAIN</span><h3>Train</h3><p>Everything is curated into reviewed training data and tuned into a dedicated model on managed, enterprise-grade infrastructure.</p></div>
+      <div class="stp rv"><span class="sn">04_OWN</span><h3>Own</h3><p>The model goes live at a shareable link — and the weights are yours to keep and run, on our infrastructure or your own hardware.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="audience">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="eyebrow">// 04 · what we build</span>
+      <h2>Custom-built to <em>your needs.</em></h2>
+      <p>We're building the next LLM Factory — a model made to measure, whether you're one person or a whole company. Two examples of what comes out of it, below. Pick your door.</p>
+    </div>
+    <div class="aud">
+      <div class="col rv">
+        <span class="tag">for_individuals</span>
+        <h3>Career Advocate — the résumé is dead.</h3>
+        <p class="lead">An advocate that genuinely knows you, built from your real work and the testimony of people who've worked beside you. It carries your story — honest about strengths and gaps — and grows with you across every move.</p>
+        <ul>
+          <li><span class="ck">→</span>One link replaces the résumé and the cover letter</li>
+          <li><span class="ck">→</span>Your real strengths, voiced by those who've seen them</li>
+          <li><span class="ck">→</span>A persistent identity that updates as your career grows</li>
+        </ul>
+        <div class="term" style="margin-top:26px" aria-label="A career advocate answering a question">
+          <div class="term-bar">
+            <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+            <span class="ttl">career-advocate.vishwakarma.ai</span>
+          </div>
+          <div class="term-body">
+            <div class="ln"><span class="pr">&gt;</span><span class="q">ask "can Arjun lead a team?"</span></div>
+            <div class="ln"><span class="a">He's led two cross-functional launches. A designer he managed said he <b>"made room for the quiet people to be heard."</b> Three endorsers back it — and I can point you to each.</span></div>
+            <div class="ln"><span class="pr">&gt;</span><span class="cursor"></span></div>
+          </div>
+        </div>
+        <a th:href="@{/individuals}" class="btn btn-ghost" style="margin-top:26px">For individuals →</a>
+      </div>
+      <div class="col rv">
+        <span class="tag">for_business</span>
+        <h3>Sales Rep — trained on your own knowledge.</h3>
+        <p class="lead">An AI sales rep built from your company's verified knowledge — every answer grounded before it's spoken, and the model owned by you. It even knows when to hand off to a human.</p>
+        <ul>
+          <li><span class="ck">→</span>Answers only from the material your team approves</li>
+          <li><span class="ck">→</span>You own the weights — host it yourself, or we host it</li>
+          <li><span class="ck">→</span>Refusal and handoff, trained and proven in a report</li>
+        </ul>
+        <div class="term" style="margin-top:26px" aria-label="A sales rep answering a customer — an illustrative example">
+          <div class="term-bar">
+            <span class="dot on"></span><span class="dot"></span><span class="dot"></span>
+            <span class="ttl">sales-rep.yourcompany.com — example</span>
+          </div>
+          <div class="term-body">
+            <div class="ln"><span class="pr">&gt;</span><span class="q">customer: what's in the Starter plan, and is our data safe?</span></div>
+            <div class="ln"><span class="a">Starter covers a hosted rep during business hours, trained only on the docs you approve — <b>your data is never used to train anyone else's model.</b> For exact pricing on your volume I can bring in a human from the team right now — want me to?</span></div>
+            <div class="ln"><span class="pr">&gt;</span><span class="cursor"></span></div>
+          </div>
+        </div>
+        <a th:href="@{/business}" class="btn btn-ghost" style="margin-top:26px">For businesses →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec panel" id="about">
+  <div class="wrap">
+    <div class="fdr">
+      <div class="fdr-card rv">
+        <div class="ph">PV</div>
+        <div class="nm">Piyush Vishwakarma</div>
+        <div class="rl">Founder &amp; Director, Vishx Innovations</div>
+        <a href="https://www.linkedin.com/in/piyush-v" target="_blank" rel="noopener" class="li">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.78M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/></svg>
+          CONNECT_LINKEDIN
+        </a>
+      </div>
+      <div class="fdr-body rv">
+        <span class="eyebrow" style="display:block;margin-bottom:14px">// 05 · the builder</span>
+        <h2>Built by an engineer who's <em>shipped at scale.</em></h2>
+        <p>Piyush is a computer engineer from K. J. Somaiya College of Engineering and a current MS in Applied AI student at the University of San Diego. Over the past decade he has built and led engineering at global technology and product companies before founding Vishx Innovations.</p>
+        <p>Vishwakarma.ai grew from one stubborn frustration: the tools meant to capture who a person is have always captured the least honest version. Worker Chowk — Vishx's workforce platform — proved the appetite for representing people the world tends to overlook. Vishwakarma.ai takes that conviction to everyone.</p>
+        <div class="chips">
+          <span class="chip">Vishx Innovations</span>
+          <span class="chip">Worker Chowk</span>
+          <span class="chip">MS Applied AI · USD</span>
+          <span class="chip">B.E. Computer · KJSCE</span>
+          <span class="chip">10+ yrs engineering</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="faq">
+  <div class="wrap">
+    <div class="sec-head center rv">
+      <span class="eyebrow">// 06 · faq</span>
+      <h2>The questions we hear <em>first.</em></h2>
+    </div>
+    <div class="faq">
+      <div class="qa rv"><button>What do I actually get? <span class="pm">+</span></button><div class="ans"><p>A dedicated model, built from your verified material and delivered as something you own: the weights themselves, a live conversational link, and a report of what it was trained on and how it behaves. Run it on our infrastructure or your own hardware — either way, it's yours.</p></div></div>
+      <div class="qa rv"><button>Isn't this just another chatbot wrapper? <span class="pm">+</span></button><div class="ans"><p>No. A wrapper rents a generic model and puts instructions in front of it — the knowledge stays generic, and the provider owns everything. The factory works differently: your material is verified fact by fact, a dedicated model is tuned on it, its behavior is tested before it ships, and the weights end up in your hands. There's no third party who can reprice or switch your model off.</p></div></div>
+      <div class="qa rv"><button>Is the AI pretending to be someone it isn't? <span class="pm">+</span></button><div class="ans"><p>No — and this is the heart of the design. The model never impersonates anyone. Whether it's a career advocate speaking <em>about</em> a person or a sales rep speaking <em>for</em> a company, it represents — candidly — rather than pretends to be. It's honest about limits, because credibility depends on honesty, not flattery.</p></div></div>
+      <div class="qa rv"><button>What makes this defensible? <span class="pm">+</span></button><div class="ans"><p>The verified-knowledge layer. The interface and the base models can be copied; a corpus of real, consent-verified knowledge — a person's endorsers, or a company's proprietary material — reviewed and turned into training data cannot be acquired quickly. It requires genuine access and a trusted process, which compounds over time into a structural moat.</p></div></div>
+      <div class="qa rv"><button>Who pays, and for what? <span class="pm">+</span></button><div class="ans"><p>You pay to build and own your model. Individuals pay to build, host, and update their advocate across their career; businesses pay to build a rep and own its weights, hosted by us or run on their own hardware. Access and serving — per conversation, by subscription, or via enterprise API — layer on top.</p></div></div>
+      <div class="qa rv"><button>How do you handle consent and privacy? <span class="pm">+</span></button><div class="ans"><p>Consent is designed in from the first step. Every contributor participates knowingly, every data source is authorised by its owner, and every conversation is logged and auditable. The person or business owns and controls what their model is built from — and, in the end, the weights themselves.</p></div></div>
+      <div class="qa rv"><button>What stage are you at? <span class="pm">+</span></button><div class="ans"><p>We're building the next LLM Factory — the machinery that turns verified knowledge into a model you own is built and running, and the first models are in development now, with launch targeted for 2026. We're in early conversations with investors, incubators, and accelerators.</p></div></div>
+      <div class="qa rv"><button>Why now? <span class="pm">+</span></button><div class="ans"><p>Capable, efficiently-tuneable models and managed training infrastructure only became practical very recently. Building a dedicated, high-quality model for one person or one business was prohibitively expensive two years ago. The cost curve and the tooling have finally caught up to the idea.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec panel" id="contact">
+  <div class="wrap ct">
+    <div class="ct-left rv">
+      <h2>Let's talk <em>before launch.</em></h2>
+      <p class="lead">We're in conversation with investors, incubators, and accelerators — and with businesses who want a rep of their own. Tell us a little about you — we usually reply within one business day.</p>
+      <div class="ct-detail">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+        <div><div class="t">Email</div><a class="v" href="mailto:info@vishx.com">info@vishx.com</a></div>
+      </div>
+      <div class="ct-detail">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+        <div><div class="t">Phone / WhatsApp</div><a class="v" href="tel:+917715994007">+91-77159-94007</a></div>
+      </div>
+      <div class="ct-detail">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+        <div><div class="t">Office</div><span class="v">2/46, Bernald Market, Mohili Village,<br>Sakinaka, Mumbai 400072, India</span></div>
+      </div>
+      <div class="ct-detail">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
+        <div><div class="t">Company</div><span class="v">Vishx Innovations (OPC) Pvt. Ltd.</span></div>
+      </div>
+    </div>
+
+    <form class="panel-form rv" id="contactForm" novalidate>
+      <div class="frow">
+        <div class="field">
+          <label for="cfName">Full name</label>
+          <input id="cfName" name="fullName" type="text" placeholder="your name" maxlength="100" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="cfOrg">Company / Fund</label>
+          <input id="cfOrg" name="organisation" type="text" placeholder="organisation" maxlength="120" autocomplete="organization">
+        </div>
+      </div>
+      <div class="frow">
+        <div class="field">
+          <label for="cfEmail">Email address</label>
+          <input id="cfEmail" name="email" type="email" placeholder="you@firm.com" autocomplete="email" required>
+        </div>
+        <div class="field">
+          <label for="cfRole">I am a…</label>
+          <select id="cfRole" name="role">
+            <option>Investor</option>
+            <option>Incubator</option>
+            <option>Accelerator</option>
+            <option>Prospective customer</option>
+            <option>Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="cfMessage">Your message</label>
+        <textarea id="cfMessage" name="message" placeholder="what would you like to know?" maxlength="2000" required></textarea>
+      </div>
+
+      <!-- honeypot. NOTE: deliberately named "website", NOT "company" — on vishx.com
+           `company` IS the honeypot field, so sending a real company value to
+           /landing/enquiry could trip a server-side spam check. -->
+      <input id="cfWebsite" name="website" type="text" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+
+      <button type="submit" class="btn btn-primary" id="cfSubmit">SEND_MESSAGE →</button>
+      <div class="form-msg" id="cfMsg" role="status" aria-live="polite"></div>
+      <div class="form-note">routed to info@vishx.com · protected by reCAPTCHA</div>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="ft-top">
+      <div class="ft-brand">
+        <a href="#top" class="brand">
+          <svg class="mk" viewBox="0 0 32 32" fill="none"><rect x="1" y="1" width="30" height="30" stroke="#00FF85" stroke-width="1.4"/><path d="M8 9 L16 24 L24 9" stroke="#00FF85" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="14.2" y="8" width="3.6" height="3.6" fill="#00FF85"/></svg>
+          Vishwakarma<b>.ai</b>
+        </a>
+        <p>Custom AI models, built from what you know — and yours to own. A Vishx Innovations product, built in Mumbai.</p>
+      </div>
+
+      <div class="ft-col">
+        <h4>Product</h4>
+        <a href="#problem">The problem</a>
+        <a href="#solution">The solution</a>
+        <a href="#how">The method</a>
+        <a href="#audience">What we build</a>
+        <a th:href="@{/individuals}">For individuals</a>
+        <a th:href="@{/business}">For businesses</a>
+        <a href="/user-guide/">Data collection guide</a>
+      </div>
+
+      <div class="ft-col">
+        <h4>Company</h4>
+        <a href="#about">About</a>
+        <a href="#faq">FAQ</a>
+        <a href="#contact">Contact</a>
+        <a href="https://vishx.com" target="_blank" rel="noopener">Vishx Innovations ↗</a>
+      </div>
+
+      <div class="ft-col ft-sub">
+        <h4>Stay in the loop</h4>
+        <p>Launch announcements and product updates. No spam.</p>
+        <form class="sub-form" id="subscribeForm" novalidate>
+          <input name="email" type="email" placeholder="you@company.com" aria-label="Email address" autocomplete="email" required>
+          <button type="submit" id="subBtn">SUBSCRIBE</button>
+        </form>
+        <div class="form-msg" id="subMsg" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div class="ft-bottom">
+      <span>© 2026 VISHX INNOVATIONS (OPC) PVT. LTD. ALL RIGHTS RESERVED.</span>
+      <span><a href="/policies/terms">TERMS</a> · <a href="/policies/privacy">PRIVACY</a> · <a href="/policies/cookies">COOKIES</a></span>
+      <span>MUMBAI, INDIA · <a href="mailto:info@vishx.com">INFO@VISHX.COM</a></span>
+    </div>
+
+    <div class="ft-legal">
+      This site is protected by reCAPTCHA and the Google
+      <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Privacy Policy</a> and
+      <a href="https://policies.google.com/terms" target="_blank" rel="noopener">Terms of Service</a> apply.
+    </div>
+  </div>
+</footer>
+
+</div><!-- /content -->
+
+<script>
+/* ==========================================================================
+   CONFIG
+   --------------------------------------------------------------------------
+   This page is deployed on vishwakarma.ai, so it MUST use the vishwakarma.ai
+   reCAPTCHA key (6Le1e0ot…). reCAPTCHA keys are domain-locked client-side:
+   loading the vishx.com key (6Lf6rx4r…) here would make grecaptcha.execute()
+   refuse to mint a token at all, and both forms would break.
+
+   ── When you wire the server-side checker, pick ONE of these ──────────────
+   A) RECOMMENDED — consolidate on one key.
+      In the reCAPTCHA admin console, add `vishwakarma.ai` to the allowed
+      domains of the vishx key (6Lf6rx4r…), then swap RECAPTCHA_SITE_KEY below
+      to that key. One key, one secret, both sites, /landing/* verifies all.
+
+   B) Keep two keys. /landing/* must then choose which secret to verify with
+      (e.g. off the `Source:` line in the message, or an added `source` field).
+
+   Until the checker is live, the token is inert — so token fetching below is
+   FAIL-OPEN: if reCAPTCHA can't produce one, we still submit. An unwired
+   captcha must never cost you a real lead. The honeypot is doing the actual
+   work right now, and the server is the correct place to enforce the rest.
+   ========================================================================== */
+const API_BASE           = 'https://api.workerchowk.com/core';
+const RECAPTCHA_SITE_KEY = '6Le1e0otAAAAAKOCsNqAei1zGf6vlfOcD5wnaGx7'; // vishwakarma.ai — keep in sync with the ?render= tag in <head>
+const CONTACT_ENDPOINT   = `${API_BASE}/landing/enquiry`;
+const SUBSCRIBE_ENDPOINT = `${API_BASE}/landing/subscribe`;
+
+/* Best-effort token. Resolves to '' instead of rejecting, so a missing or
+   misconfigured reCAPTCHA never blocks a submission. Once the backend verifies
+   tokens, an empty one will simply be rejected there — which is where it belongs. */
+function getRecaptchaToken(action) {
+  return new Promise(resolve => {
+    if (!window.grecaptcha || !grecaptcha.execute) {
+      console.warn('[vishwakarma.ai] reCAPTCHA unavailable — submitting without a token.');
+      return resolve('');
+    }
+    try {
+      grecaptcha.ready(() => {
+        grecaptcha.execute(RECAPTCHA_SITE_KEY, { action })
+          .then(resolve)
+          .catch(err => { console.warn('[vishwakarma.ai] reCAPTCHA execute failed:', err); resolve(''); });
+      });
+    } catch (err) {
+      console.warn('[vishwakarma.ai] reCAPTCHA threw:', err);
+      resolve('');
+    }
+  });
+}
+
+/* ---------- Shared form helpers (same contract as vishx.com) ---------- */
+function showMsg(el, text, ok) {
+  el.textContent = text;
+  el.className = 'form-msg ' + (ok ? 'success' : 'error');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent = ''; el.className = 'form-msg'; }, 6000);
+}
+function friendlyError(status) {
+  if (status === 429) return '✗ Too many requests from your network — please try again in a few minutes.';
+  return '✗ Something went wrong. Please try again, or email info@vishx.com.';
+}
+
+/* ==========================================================================
+   CONTACT  →  POST {API_BASE}/landing/enquiry
+   Payload is EXACTLY what the existing backend reads:
+       { full_name, email, message, recaptcha_token }
+   Company + Role are folded into `message` rather than sent as fields —
+   the backend doesn't read them, and `company` is its honeypot name.
+   ========================================================================== */
+const contactForm = document.getElementById('contactForm');
+const cfSubmit    = document.getElementById('cfSubmit');
+const cfMsg       = document.getElementById('cfMsg');
+
+contactForm.addEventListener('submit', async e => {
+  e.preventDefault();
+
+  // honeypot tripped → fake success, send nothing
+  if (contactForm.website.value) { showMsg(cfMsg, '✓ Message sent!', true); contactForm.reset(); return; }
+  if (!contactForm.reportValidity()) return;
+
+  cfSubmit.disabled = true;
+  const original = cfSubmit.innerHTML;
+  cfSubmit.textContent = 'SENDING…';
+
+  try {
+    const recaptchaToken = await getRecaptchaToken('contact');
+
+    const role = contactForm.role.value;
+    const org  = contactForm.organisation.value.trim();
+    const body = contactForm.message.value.trim();
+
+    // fold the extra context into the message the backend already forwards
+    const message =
+      `Role: ${role}\n` +
+      (org ? `Company: ${org}\n` : '') +
+      `Source: vishwakarma.ai\n\n` +
+      body;
+
+    const res = await fetch(CONTACT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_name: contactForm.fullName.value.trim(),
+        email: contactForm.email.value.trim(),
+        message: message,
+        recaptcha_token: recaptchaToken,
+      }),
+    });
+    if (!res.ok) throw res.status;
+
+    showMsg(cfMsg, "✓ Message sent! We'll get back to you shortly.", true);
+    contactForm.reset();
+  } catch (err) {
+    showMsg(cfMsg, friendlyError(err), false);
+  } finally {
+    cfSubmit.disabled = false;
+    cfSubmit.innerHTML = original;
+  }
+});
+
+/* ==========================================================================
+   SUBSCRIBE  →  POST {API_BASE}/landing/subscribe
+   vishx.com currently sends { email } with no token. We also send
+   recaptcha_token — harmless if the backend ignores it, and it closes the
+   bot hole on this endpoint the moment you start verifying it server-side.
+   ========================================================================== */
+const subForm = document.getElementById('subscribeForm');
+const subBtn  = document.getElementById('subBtn');
+const subMsg  = document.getElementById('subMsg');
+
+subForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!subForm.reportValidity()) return;
+
+  subBtn.disabled = true;
+  const original = subBtn.textContent;
+  subBtn.textContent = '…';
+
+  try {
+    const recaptchaToken = await getRecaptchaToken('subscribe');
+    const res = await fetch(SUBSCRIBE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: subForm.email.value.trim(),
+        recaptcha_token: recaptchaToken,
+      }),
+    });
+    if (!res.ok) throw res.status;
+
+    showMsg(subMsg, "✓ You're on the list!", true);
+    subForm.reset();
+  } catch (err) {
+    showMsg(subMsg, friendlyError(err), false);
+  } finally {
+    subBtn.disabled = false;
+    subBtn.textContent = original;
+  }
+});
+
+/* ---------- MATRIX CODE RAIN ---------- */
+(function(){
+  const c = document.getElementById('rain'), x = c.getContext('2d');
+  let w, h, cols, drops, fs = 16;
+  const glyphs = "アイウエオカキクケコサシスセソタチツテトナニヌネノﾊﾋﾌﾍﾎマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>/{}[]=+*".split("");
+  function size(){
+    w = c.width = innerWidth; h = c.height = innerHeight;
+    cols = Math.floor(w / fs);
+    drops = Array(cols).fill(0).map(() => Math.random() * -h / fs);
+  }
+  size();
+  addEventListener('resize', size);
+  function draw(){
+    x.fillStyle = "rgba(2,6,10,0.09)";
+    x.fillRect(0, 0, w, h);
+    x.font = fs + "px 'IBM Plex Mono', monospace";
+    for (let i = 0; i < cols; i++){
+      const ch = glyphs[Math.floor(Math.random() * glyphs.length)];
+      const px = i * fs, py = drops[i] * fs;
+      x.fillStyle = "rgba(180,255,210,0.9)"; x.fillText(ch, px, py);
+      x.fillStyle = "rgba(0,255,120,0.55)";  x.fillText(ch, px, py);
+      if (py > h && Math.random() > 0.975) drops[i] = Math.random() * -20;
+      drops[i] += 0.5;
+    }
+    requestAnimationFrame(draw);
+  }
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) draw();
+})();
+
+/* ---------- NAV / REVEAL / FAQ ---------- */
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 20));
+
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+document.querySelectorAll('.qa button').forEach(b => {
+  b.addEventListener('click', () => {
+    const qa = b.parentElement, ans = qa.querySelector('.ans'), open = qa.classList.contains('open');
+    document.querySelectorAll('.qa').forEach(o => {
+      o.classList.remove('open');
+      o.querySelector('.ans').style.maxHeight = null;
+    });
+    if (!open) { qa.classList.add('open'); ans.style.maxHeight = ans.scrollHeight + 'px'; }
+  });
+});
+</script>
 </body>
 </html>
