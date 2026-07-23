@@ -220,6 +220,11 @@ app:
   stage4:
     dry-run: true   # offline generator/judge doubles — never calls Gemini in dev
     profile-enabled: true   # SubjectProfile A/B surface + injection is on locally
+    # VA-164 spec-driven generation (LLD §9.5 v2) — ON locally for the A/B gate runs: template
+    # units freeze question specs, the drafter writes the guest question from the posture-labelled
+    # KB; stale phrased plans are skipped. Prod stays on the class default (false) until the
+    # ⚠CAL gate passes.
+    kb-generation: true
   product:
     # Subject world on <handle>.localhost:8080 (Chrome/Firefox resolve *.localhost natively);
     # plain localhost:8080 stays the operator app.

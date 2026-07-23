@@ -575,12 +575,36 @@ class Stage4Service(
                     it.stamp?.generatorPromptHash == promptHashFor(p.plan)
                 }
 
-            val pending = subjectPlans.filterNot(::satisfied)
+            val frozen = frozenParams(run)
+            val unsatisfied = subjectPlans.filterNot(::satisfied)
+            // Spec-mode runs draft only spec-carrying trio plans (VA-164): stale pre-library
+            // plans still match the subject's scoreRunId/personaHash but carry a phrased
+            // question and no spec — drafting them would reintroduce the exact
+            // templated-question shape kb-generation exists to kill. Probe banks
+            // (NEGATIVE/META) never carry specs and always draft. Skipped plans leave the
+            // pending set entirely so the run still advances to JUDGING when the spec work
+            // is done.
+            val pending =
+                if (frozen.kbGeneration) {
+                    val (draftable, stalePhrased) =
+                        unsatisfied.partition { Stage4Planning.draftsUnderSpecMode(it.plan) }
+                    if (stalePhrased.isNotEmpty()) {
+                        log.info(
+                            "Run {}: GENERATE spec mode — skipping {} stale phrased plan(s) " +
+                                "without a spec (e.g. {})",
+                            run.id,
+                            stalePhrased.size,
+                            stalePhrased.first().plan.planId,
+                        )
+                    }
+                    draftable
+                } else {
+                    unsatisfied
+                }
             if (pending.isEmpty()) {
                 return@inPhase advance(run, Stage4RunStatus.JUDGING, generateCounters(run))
             }
 
-            val frozen = frozenParams(run)
             // kb-generation (VA-164): the KB tier is a per-publish derivation over the eligible set
             // — built once per tick and shared by every spec plan drafted this poll. Empty when the
             // flag is off, so the request stays byte-for-byte legacy on that path.

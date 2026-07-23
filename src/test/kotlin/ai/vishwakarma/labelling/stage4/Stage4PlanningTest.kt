@@ -6,16 +6,19 @@ import ai.vishwakarma.labelling.domain.ClaimOrigin
 import ai.vishwakarma.labelling.domain.ClaimType
 import ai.vishwakarma.labelling.domain.DeclaredType
 import ai.vishwakarma.labelling.domain.FormatSpec
+import ai.vishwakarma.labelling.domain.HedgeLevel
 import ai.vishwakarma.labelling.domain.NotebookTemplate
 import ai.vishwakarma.labelling.domain.PersonaDefaults
 import ai.vishwakarma.labelling.domain.PublishedAttestor
 import ai.vishwakarma.labelling.domain.PublishedFactStamp
 import ai.vishwakarma.labelling.domain.Stage4Category
+import ai.vishwakarma.labelling.domain.VoicingPlan
 import ai.vishwakarma.labelling.persistence.PublishedFactEdge
 import ai.vishwakarma.labelling.persistence.SubjectFactRecord
 import ai.vishwakarma.labelling.persistence.TimelineLink
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -1002,5 +1005,34 @@ class Stage4PlanningTest {
         val quoted = Regex("\"([^\"]*)\"").find(group.question)!!.groupValues[1]
         assertEquals("Beta", quoted)
         assertNotEquals("Alpha", quoted)
+    }
+
+    // ---- spec-mode draft gate (VA-164) -----------------------------------------------
+
+    @Test
+    fun `spec mode drafts trio plans only when they carry a spec, probe banks always`() {
+        fun plan(category: Stage4Category, specTitle: String? = null) =
+            VoicingPlan(
+                planId = "p-${category.name}-${specTitle ?: "none"}",
+                rowId = 1,
+                voice = "Assertive",
+                hedgeLevel = HedgeLevel.MEASURED,
+                category = category,
+                specTitle = specTitle,
+            )
+
+        // A stale pre-library trio plan (phrased question, no spec) must NOT draft — drafting
+        // it would reintroduce the templated-question shape kb-generation exists to kill.
+        assertFalse(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.SITUATIONAL)))
+        assertFalse(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.QA)))
+        // A spec-carrying trio plan drafts.
+        assertTrue(
+            Stage4Planning.draftsUnderSpecMode(
+                plan(Stage4Category.MULTI_CLAIM, specTitle = "Project Deep Dive")
+            )
+        )
+        // The probe banks never carry specs and always draft.
+        assertTrue(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.NEGATIVE)))
+        assertTrue(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.META)))
     }
 }

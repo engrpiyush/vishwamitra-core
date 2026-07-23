@@ -779,6 +779,15 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         private val FACT_DRIVEN_CATEGORIES =
             setOf(Stage4Category.QA, Stage4Category.SITUATIONAL, Stage4Category.MULTI_CLAIM)
 
+        /**
+         * Whether [plan] may draft in a spec-mode (kb-generation) run: a trio plan must carry a
+         * spec — a stale pre-library plan phrases its guest question, and drafting it would
+         * reintroduce the exact templated-question shape kb-generation exists to kill (VA-164). The
+         * probe banks (NEGATIVE/META) never carry specs and always draft.
+         */
+        fun draftsUnderSpecMode(plan: VoicingPlan): Boolean =
+            plan.hasSpec || plan.category !in FACT_DRIVEN_CATEGORIES
+
         // Published-ledger edge vocabulary (the §10.3 literals live on SituationalEvidence).
         private const val RELATION_CORROBORATES = "CORROBORATES"
 
