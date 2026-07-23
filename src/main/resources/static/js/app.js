@@ -205,7 +205,43 @@
         confirmModal.removeAttribute("hidden");
     }, true);
 
+    /* ---- Bulk override-approve (SFT list): select-all + live count -------
+       The checkboxes ride the override-approve form via their form= attribute;
+       this only mirrors the ticked count into the button and drives select-all.
+       Purely presentational — a no-JS submit still posts the ticked ids. */
+    function overrideBoxes() {
+        return Array.prototype.slice.call(
+            document.querySelectorAll("input[data-override-checkbox]")
+        );
+    }
+    function refreshOverride() {
+        var all = overrideBoxes();
+        if (!all.length) return;
+        var checked = all.filter(function (b) { return b.checked; });
+        var countEl = document.querySelector("[data-override-count]");
+        if (countEl) countEl.textContent = String(checked.length);
+        var submit = document.querySelector("[data-override-submit]");
+        if (submit) submit.disabled = checked.length === 0;
+        var master = document.querySelector("[data-select-all]");
+        if (master) {
+            master.checked = checked.length === all.length;
+            master.indeterminate = checked.length > 0 && checked.length < all.length;
+        }
+    }
+    document.addEventListener("change", function (e) {
+        if (e.target.matches("[data-select-all]")) {
+            var on = e.target.checked;
+            overrideBoxes().forEach(function (b) { b.checked = on; });
+            refreshOverride();
+        } else if (e.target.matches("[data-override-checkbox]")) {
+            refreshOverride();
+        }
+    });
+
     /* ---- Init ------------------------------------------------------------ */
-    document.addEventListener("DOMContentLoaded", formatTimestamps);
-    if (document.readyState !== "loading") formatTimestamps();
+    document.addEventListener("DOMContentLoaded", function () {
+        formatTimestamps();
+        refreshOverride();
+    });
+    if (document.readyState !== "loading") { formatTimestamps(); refreshOverride(); }
 })();

@@ -1590,6 +1590,119 @@ class Stage4ServiceTest {
         assertIs<DomainError.NotFound>(svc.bulkApprove("nope", "op").err())
     }
 
+    // ---- VA-176: ADMIN override-approve (the judge bypass by explicit id) --------------------
+
+    @Test
+    fun `override-approve flips the selected FAIL and BORDERLINE rows and reports the rest by reason`() {
+        seedPublished()
+        val svc = service()
+        val run0 = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run0.id, Stage4RunStatus.REVIEW_WAIT)
+        val run = runs.store[run0.id]!!
+
+        // Start clean so only the crafted rows carry a verdict field (the review-list contract:
+        // eligibility reads SftExample.judgeVerdict, not the judgments collection).
+        sfts.store.clear()
+
+        val fail = syntheticExample("e-fail", run).copy(judgeVerdict = JudgeVerdict.FAIL)
+        val borderline =
+            syntheticExample("e-border", run).copy(judgeVerdict = JudgeVerdict.BORDERLINE)
+        // A sent-back FAIL is still eligible — the override moves NEEDS_CHANGES forward too.
+        val failSentBack =
+            syntheticExample("e-fail-sb", run)
+                .copy(judgeVerdict = JudgeVerdict.FAIL, status = ExampleStatus.NEEDS_CHANGES)
+        val pass = syntheticExample("e-pass", run).copy(judgeVerdict = JudgeVerdict.PASS)
+        val unjudged = syntheticExample("e-unjudged", run) // judgeVerdict == null
+        val archived =
+            syntheticExample("e-arch", run)
+                .copy(judgeVerdict = JudgeVerdict.FAIL, status = ExampleStatus.ARCHIVED)
+        val already =
+            syntheticExample("e-appr", run)
+                .copy(judgeVerdict = JudgeVerdict.FAIL, status = ExampleStatus.APPROVED)
+        val staleBase = syntheticExample("e-stale", run)
+        val stale =
+            staleBase.copy(
+                judgeVerdict = JudgeVerdict.FAIL,
+                stamp = staleBase.stamp!!.copy(scoreRunId = "pub-0"),
+            )
+        // An eligible FAIL that is NOT in the id list — proves the op touches only explicit ids.
+        val notSelected = syntheticExample("e-unpicked", run).copy(judgeVerdict = JudgeVerdict.FAIL)
+        listOf(
+                fail,
+                borderline,
+                failSentBack,
+                pass,
+                unjudged,
+                archived,
+                already,
+                stale,
+                notSelected
+            )
+            .forEach { sfts.store[it.id] = it }
+
+        val outcome =
+            svc.overrideApprove(
+                listOf(
+                    "e-fail",
+                    "e-border",
+                    "e-fail-sb",
+                    "e-pass",
+                    "e-unjudged",
+                    "e-arch",
+                    "e-appr",
+                    "e-stale",
+                    "e-missing",
+                ),
+                "admin@x.com",
+            )
+
+        assertEquals(3, outcome.approved, "the two FAILs and the BORDERLINE flip")
+        assertEquals(1, outcome.notFound, "e-missing resolved to nothing")
+        assertEquals(2, outcome.notFailBorderline, "PASS and unjudged are not override targets")
+        assertEquals(2, outcome.ineligibleStatus, "ARCHIVED and already-APPROVED are skipped")
+        assertEquals(1, outcome.stale, "the drifted-stamp row is skipped")
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-fail"]!!.status)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-border"]!!.status)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-fail-sb"]!!.status)
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-pass"]!!.status)
+        assertEquals(ExampleStatus.ARCHIVED, sfts.store["e-arch"]!!.status)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-appr"]!!.status)
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-stale"]!!.status)
+        // Explicit-id scoping: the eligible FAIL left off the list is untouched.
+        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-unpicked"]!!.status)
+    }
+
+    @Test
+    fun `override-approve records an attributable ADMIN comment naming the bypassed verdict`() {
+        seedPublished()
+        val svc = service()
+        val run0 = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run0.id, Stage4RunStatus.REVIEW_WAIT)
+        val run = runs.store[run0.id]!!
+        sfts.store.clear()
+
+        sfts.store["e-fail"] =
+            syntheticExample("e-fail", run).copy(judgeVerdict = JudgeVerdict.FAIL)
+        sfts.store["e-border"] =
+            syntheticExample("e-border", run).copy(judgeVerdict = JudgeVerdict.BORDERLINE)
+
+        svc.overrideApprove(listOf("e-fail", "e-border"), "admin@x.com")
+
+        val failComment = sfts.store["e-fail"]!!.reviewComments.last()
+        assertEquals(
+            "admin@x.com",
+            failComment.by,
+            "the override must be attributable to the actor"
+        )
+        assertTrue(
+            failComment.text.contains("ADMIN"),
+            "the comment must name itself an ADMIN override",
+        )
+        assertTrue(failComment.text.contains("FAIL"), "the comment must name the bypassed verdict")
+        val borderComment = sfts.store["e-border"]!!.reviewComments.last()
+        assertTrue(borderComment.text.contains("BORDERLINE"), "the verdict name must be recorded")
+    }
+
     // ---- DPO pair construction (LLD §12, VA-61) ----------------------------------------
 
     private fun dpoService(props: AppProperties = AppProperties()): Stage4DpoService {

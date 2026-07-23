@@ -16,6 +16,7 @@ import ai.vishwakarma.labelling.service.DomainError
 import ai.vishwakarma.labelling.service.DraftingService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.SftService
+import ai.vishwakarma.labelling.service.Stage4Service
 import ai.vishwakarma.labelling.service.SubjectService
 import ai.vishwakarma.labelling.service.TaxonomyService
 import org.springframework.security.access.prepost.PreAuthorize
@@ -39,6 +40,7 @@ class SftController(
     private val scenarios: ScenarioService,
     private val subjects: SubjectService,
     private val stage4Panels: Stage4ReviewPanels,
+    private val stage4: Stage4Service,
 ) {
 
     private fun actor() = CurrentUser.email()
@@ -322,6 +324,36 @@ class SftController(
     fun archive(@PathVariable id: String, ra: RedirectAttributes): String {
         sft.archive(id).notify(ra)
         return "redirect:/sft/$id"
+    }
+
+    /**
+     * ADMIN override (VA-176): approve the selected judge-FAIL/BORDERLINE examples over the verdict
+     * so they can flow to export/training. **ADMIN-only, enforced here** — a method-level gate over
+     * the class AUTHOR rule, the same way [approve]/[sendBack]/[archive] raise to REVIEWER; a
+     * non-admin is refused with 403 before the body runs. The loud "this bypasses the judge"
+     * confirm lives in the template; the counts outcome lands as a flash, mirroring the run-page
+     * bulk-approve. Filters are re-appended so the ADMIN lands back on the view they acted from.
+     */
+    @PostMapping("/override-approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun overrideApprove(
+        @RequestParam(name = "ids", required = false) ids: List<String>?,
+        @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) subject: String?,
+        @RequestParam(required = false, defaultValue = "false") stale: Boolean,
+        ra: RedirectAttributes,
+    ): String {
+        val outcome = stage4.overrideApprove(ids ?: emptyList(), actor())
+        ra.addFlashAttribute(
+            "ok",
+            "Override-approved ${outcome.approved} example(s) over the judge verdict — skipped: " +
+                "${outcome.notFailBorderline} not fail/borderline, ${outcome.ineligibleStatus} " +
+                "ineligible status, ${outcome.stale} stale, ${outcome.notFound} not found",
+        )
+        status?.takeIf { it.isNotBlank() }?.let { ra.addAttribute("status", it) }
+        subject?.takeIf { it.isNotBlank() }?.let { ra.addAttribute("subject", it) }
+        if (stale) ra.addAttribute("stale", "true")
+        return "redirect:/sft"
     }
 
     // HTMX panels

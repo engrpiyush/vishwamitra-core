@@ -165,6 +165,33 @@ class SftService(
         return persist(ex.copy(status = ExampleStatus.APPROVED)).right()
     }
 
+    /**
+     * ADMIN override-approve (VA-176): force a judged-FAIL/BORDERLINE example from SUBMITTED or
+     * NEEDS_CHANGES (a sent-back row) straight to APPROVED, recording [comment] as the attributable
+     * audit note. Unlike [approve] this also accepts NEEDS_CHANGES, and unlike [sendBack] it moves
+     * forward — export takes APPROVED only, so the comment is the record of who bypassed the judge
+     * verdict and why. Eligibility over the verdict itself is the caller's ([Stage4Service
+     * .overrideApprove]); here we only guard the status transition.
+     */
+    fun overrideApprove(
+        id: String,
+        actor: String?,
+        comment: String,
+    ): Either<DomainError, SftExample> {
+        val ex = repo.findById(id) ?: return DomainError.NotFound("Example $id not found").left()
+        if (ex.status != ExampleStatus.SUBMITTED && ex.status != ExampleStatus.NEEDS_CHANGES)
+            return DomainError.Invalid(
+                    "Only submitted or sent-back examples can be override-approved"
+                )
+                .left()
+        val updated =
+            ex.copy(
+                status = ExampleStatus.APPROVED,
+                reviewComments = ex.reviewComments + ReviewComment(actor, comment.trim()),
+            )
+        return persist(updated).right()
+    }
+
     fun sendBack(id: String, actor: String?, comment: String): Either<DomainError, SftExample> {
         val ex = repo.findById(id) ?: return DomainError.NotFound("Example $id not found").left()
         if (ex.status != ExampleStatus.SUBMITTED)

@@ -97,6 +97,23 @@ data class Stage4BulkApproveOutcome(
 )
 
 /**
+ * What [Stage4Service.overrideApprove] did (VA-176): [approved] judge-FAIL/BORDERLINE rows flipped
+ * over the verdict, plus everything the ADMIN selected that was left untouched, by reason — the
+ * flash spells it out so the operator sees exactly what the override took and what it refused.
+ */
+data class Stage4OverrideApproveOutcome(
+    val approved: Int,
+    /** Selected ids that matched no example. */
+    val notFound: Int,
+    /** Latest verdict is PASS or unjudged — not a FAIL/BORDERLINE row the override targets. */
+    val notFailBorderline: Int,
+    /** Status not in {SUBMITTED, NEEDS_CHANGES} — ARCHIVED, already-APPROVED, or still DRAFT. */
+    val ineligibleStatus: Int,
+    /** Stamp no longer current (the next SELECT tick would archive it) — bulkApprove's guard. */
+    val stale: Int,
+)
+
+/**
  * Stage 4 (published ledger → conversation notebooks) — the run lifecycle chassis (LLD §9): the
  * Stage 2/3 submit-then-poll idiom exactly. No scheduler — the run advances only inside poll
  * requests, one bounded step each; failures are terminal FAILED states carrying the verbatim error
@@ -1165,6 +1182,97 @@ class Stage4Service(
             actor,
         )
         return outcome.right()
+    }
+
+    // ---- override approve — the ADMIN judge bypass on the review list (VA-176) ---------------
+
+    /**
+     * ADMIN override (VA-176): approve the **explicitly selected** judge-FAIL/BORDERLINE examples
+     * over the verdict so they can flow to export/training. This is the deliberate counterpart to
+     * [bulkApprove], which refuses BORDERLINE/FAIL by design — here an ADMIN takes that call by id,
+     * off the SFT review list, and every approval is attributed.
+     *
+     * Eligible = latest verdict ([SftExample.judgeVerdict]) is FAIL or BORDERLINE, status is
+     * SUBMITTED or NEEDS_CHANGES (a sent-back row can still be overridden), and the stamp is
+     * current — the same currency guard [bulkApprove] enforces through [liveStampedExamples], since
+     * a stale row is drift-swept on the next SELECT tick and approving it would be moot. Each
+     * approval flips to APPROVED and records a [ReviewComment] naming this as an ADMIN override of
+     * the FAIL/ BORDERLINE verdict: export takes APPROVED only, so the comment is the audit trail
+     * for the gate bypass and must be attributable to [actor]. Ids that match no example,
+     * PASS/unjudged rows, and rows in any other status are skipped and counted by reason (like
+     * [Stage4BulkApproveOutcome]).
+     */
+    fun overrideApprove(
+        exampleIds: List<String>,
+        actor: String?,
+    ): Stage4OverrideApproveOutcome {
+        var approved = 0
+        var notFound = 0
+        var notFailBorderline = 0
+        var ineligibleStatus = 0
+        var stale = 0
+        // currentFor reads Firestore (persona resolve) — compute once per distinct subject.
+        val currentBySubject = HashMap<String, Pair<String?, String>>()
+        exampleIds.distinct().forEach { id ->
+            val example = sft.get(id)
+            val verdict = example?.judgeVerdict
+            when {
+                example == null -> notFound++
+                verdict != JudgeVerdict.FAIL && verdict != JudgeVerdict.BORDERLINE ->
+                    notFailBorderline++
+                example.status != ExampleStatus.SUBMITTED &&
+                    example.status != ExampleStatus.NEEDS_CHANGES -> ineligibleStatus++
+                !isCurrentStamp(example.stamp, currentBySubject) -> stale++
+                else ->
+                    sft.overrideApprove(
+                            id,
+                            actor,
+                            "ADMIN override-approve over the $verdict judge verdict.",
+                        )
+                        // A Left means the row changed under us mid-loop (a race) — count it as an
+                        // ineligible-status skip rather than aborting a partial override.
+                        .fold({ ineligibleStatus++ }, { approved++ })
+            }
+        }
+        val outcome =
+            Stage4OverrideApproveOutcome(
+                approved = approved,
+                notFound = notFound,
+                notFailBorderline = notFailBorderline,
+                ineligibleStatus = ineligibleStatus,
+                stale = stale,
+            )
+        log.info(
+            "Override-approved {} FAIL/BORDERLINE example(s) over the judge verdict by {} ({} not " +
+                "found, {} not fail/borderline, {} ineligible status, {} stale)",
+            outcome.approved,
+            actor,
+            outcome.notFound,
+            outcome.notFailBorderline,
+            outcome.ineligibleStatus,
+            outcome.stale,
+        )
+        return outcome
+    }
+
+    /**
+     * The subject's live (scoreRunId, personaHash) pair vs. the example's stamp — [bulkApprove]'s
+     * currency, resolved per subject (cached) rather than per row. A stamp-less (legacy) example is
+     * never current here.
+     */
+    private fun isCurrentStamp(
+        stamp: Stage4Stamp?,
+        cache: MutableMap<String, Pair<String?, String>>,
+    ): Boolean {
+        val subjectId = stamp?.subjectId ?: return false
+        val (scoreRunId, personaHash) =
+            cache.getOrPut(subjectId) {
+                subjectScores.find(subjectId)?.scoreRunId to
+                    personaService.resolved(subjectId).hash()
+            }
+        return scoreRunId != null &&
+            stamp.scoreRunId == scoreRunId &&
+            stamp.personaHash == personaHash
     }
 
     // ---- export (LLD §9.4/§13, VA-58) — the operator action that completes a parked run ----
