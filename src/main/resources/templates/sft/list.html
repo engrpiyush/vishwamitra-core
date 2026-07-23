@@ -43,33 +43,36 @@
         &middot; <a th:href="@{/sft(status=${activeStatus})}">clear filter</a>
     </p>
 
-    <!-- VA-176: ADMIN override — approve the selected FAIL/BORDERLINE rows over the judge verdict.
-         Deliberately loud (data-confirm): it BYPASSES the Stage 4 judge the QA-4 gate trusts. The
-         checkboxes live in the table below and associate to this form via their form= attribute, so
-         a no-JS submit still posts the ticked ids (only select-all + the live count need JS). -->
+    <!-- VA-176 (widened): ADMIN bulk approve of every selected awaiting/sent-back row — PASS and
+         unjudged approve as plain selection approval; FAIL/BORDERLINE approve OVER the judge
+         verdict (still loud: data-confirm, because the selection MAY bypass the judge the QA-4
+         gate trusts). The checkboxes live in the table below and associate to this form via their
+         form= attribute, so a no-JS submit still posts the ticked ids (only select-all + the live
+         count need JS). -->
     <form sec:authorize="hasRole('ADMIN')" id="override-approve-form" method="post"
           th:action="@{/sft/override-approve}" class="row-actions" style="margin:0 0 1rem;"
-          data-confirm="Override-approve the selected FAIL/BORDERLINE example(s) over the Stage 4 judge's verdict? WARNING: this BYPASSES the judge — these conversations were judged FAIL or flagged BORDERLINE, and approving them here sends them straight to export and training on your authority. Every override is recorded per example as an ADMIN action. Only currently-stamped, awaiting or sent-back rows are affected; anything else is skipped."
-          data-confirm-title="Override the judge verdict?" data-confirm-ok="Override-approve" data-confirm-danger>
+          data-confirm="Approve ALL selected example(s)? PASS and unjudged rows approve as normal; any FAIL/BORDERLINE rows in the selection are approved OVER the Stage 4 judge's verdict and go straight to export and training on your authority. Every approval is recorded per example as an ADMIN action, naming the verdict it went past. Only currently-stamped, awaiting or sent-back rows are affected; anything else is skipped."
+          data-confirm-title="Approve the selection?" data-confirm-ok="Approve selected" data-confirm-danger>
         <input type="hidden" name="status" th:value="${activeStatus}">
         <input type="hidden" name="subject" th:value="${subjectFilter}">
         <input type="hidden" name="stale" th:value="${staleView}">
         <button type="submit" class="btn--danger btn--sm" data-override-submit>
-            Override-approve <span data-override-count>0</span> selected (ADMIN)
+            Approve <span data-override-count>0</span> selected (ADMIN)
         </button>
-        <span class="muted">Bypasses the judge on FAIL / BORDERLINE rows — recorded per example.</span>
+        <span class="muted">All verdicts selectable — FAIL / BORDERLINE approve over the judge, recorded per example.</span>
     </form>
 
     <table class="grid">
-        <thead><tr><th sec:authorize="hasRole('ADMIN')"><input type="checkbox" data-select-all title="Select all FAIL/BORDERLINE rows in this view"></th><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Tool?</th><th>Turns</th><th>Judge</th><th>Status</th><th>Updated</th></tr></thead>
+        <thead><tr><th sec:authorize="hasRole('ADMIN')"><input type="checkbox" data-select-all title="Select all approvable rows in this view"></th><th>Claim</th><th>Authenticity</th><th>Labels</th><th>Tool?</th><th>Turns</th><th>Judge</th><th>Status</th><th>Updated</th></tr></thead>
         <tbody>
         <tr th:each="e : ${examples}" class="clickable"
             th:attr="data-href=@{/sft/{id}(id=${e.id})}">
-            <!-- VA-176: a checkbox ONLY on rows whose latest verdict is FAIL or BORDERLINE; the
-                 label keeps the click on the box (app.js skips row-nav for input/label). -->
+            <!-- VA-176 (widened): a checkbox on every APPROVABLE row — status SUBMITTED or
+                 NEEDS_CHANGES, any verdict (PASS, FAIL, BORDERLINE or unjudged); the label keeps
+                 the click on the box (app.js skips row-nav for input/label). -->
             <td sec:authorize="hasRole('ADMIN')">
-                <label th:if="${e.judgeVerdict != null and (e.judgeVerdict.name() == 'FAIL' or e.judgeVerdict.name() == 'BORDERLINE')}"
-                       th:title="'Override-approve this ' + ${e.judgeVerdict} + ' example over the judge'">
+                <label th:if="${e.status.name() == 'SUBMITTED' or e.status.name() == 'NEEDS_CHANGES'}"
+                       th:title="${e.judgeVerdict != null and (e.judgeVerdict.name() == 'FAIL' or e.judgeVerdict.name() == 'BORDERLINE')} ? ('Approve this ' + ${e.judgeVerdict} + ' example OVER the judge verdict') : 'Approve this example'">
                     <input type="checkbox" name="ids" th:value="${e.id}"
                            form="override-approve-form" data-override-checkbox>
                 </label>

@@ -220,6 +220,14 @@ The restore refuses a non-empty database — the "app already started and seeded
 `FIRESTORE_EMULATOR_HOST` / `GCP_PROJECT_ID` / `FIRESTORE_DATABASE`, defaulting to the §2
 posture.
 
+> **Firestore access convention (do not skip).** The app reads the **named** database
+> **`vishwakarma-labelling`** (`FirestoreConfig.setDatabaseId`), *not* `(default)`. A bare
+> `firestore.Client(project=...)` silently targets `(default)` — a different, usually-empty
+> database — so freshly-written data never reaches the running app. Every Python script and ad-hoc
+> snippet must get its client from **`scripts/_firestore.py`** (`from _firestore import fs_client;
+> db = fs_client()`), which defaults to the named DB and *refuses* `(default)` unless you opt in.
+> For `gcloud`, always pass `--database=vishwakarma-labelling`.
+
 ## 8. Troubleshooting
 
 - **`INTERNAL: http2 exception` on startup** — `FIRESTORE_EMULATOR_HOST` not exported in the

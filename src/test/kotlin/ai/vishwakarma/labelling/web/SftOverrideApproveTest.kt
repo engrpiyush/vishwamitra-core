@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.web
 
+import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.JudgeVerdict
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.SftExample
@@ -48,7 +49,8 @@ import org.thymeleaf.templateresolver.StringTemplateResolver
  *
  * The **markup** half renders the per-row checkbox expression through the real Thymeleaf engine
  * (the [Stage4ReviewPanelsTest] idiom — SpringTemplateEngine over the verbatim expression, never a
- * bare OGNL string), pinning the contract that a checkbox appears only on a FAIL/BORDERLINE row.
+ * bare OGNL string), pinning the contract that a checkbox appears on every approvable row
+ * (SUBMITTED / NEEDS_CHANGES, any verdict) and nowhere else.
  */
 class SftOverrideApproveTest {
 
@@ -91,7 +93,7 @@ class SftOverrideApproveTest {
     @Test
     fun `an admin passes the gate into the override op`() {
         `when`(stage4.overrideApprove(listOf("e1"), "admin@x.com"))
-            .thenReturn(Stage4OverrideApproveOutcome(1, 0, 0, 0, 0))
+            .thenReturn(Stage4OverrideApproveOutcome(1, 0, 0, 0))
         authenticateAs("admin@x.com", Role.ADMIN)
 
         controller.overrideApprove(listOf("e1"), null, null, false, RedirectAttributesModelMap())
@@ -100,7 +102,7 @@ class SftOverrideApproveTest {
         verify(stage4).overrideApprove(listOf("e1"), "admin@x.com")
     }
 
-    // ---- the review-list checkbox markup (only FAIL/BORDERLINE rows get a box) ----------
+    // ---- the review-list checkbox markup (every approvable row gets a box) --------------
 
     /** Mirrors the `th:if` guard on the checkbox `<td>` in `templates/sft/list.html` verbatim. */
     private val rowSnippet =
@@ -108,7 +110,7 @@ class SftOverrideApproveTest {
         <table><tbody>
         <tr th:each="e : ${'$'}{examples}">
           <td>
-            <label th:if="${'$'}{e.judgeVerdict != null and (e.judgeVerdict.name() == 'FAIL' or e.judgeVerdict.name() == 'BORDERLINE')}">
+            <label th:if="${'$'}{e.status.name() == 'SUBMITTED' or e.status.name() == 'NEEDS_CHANGES'}">
               <input type="checkbox" name="ids" th:value="${'$'}{e.id}" data-override-checkbox>
             </label>
           </td>
@@ -129,29 +131,47 @@ class SftOverrideApproveTest {
     }
 
     @Test
-    fun `a checkbox renders only on FAIL and BORDERLINE rows`() {
+    fun `a checkbox renders on every awaiting or sent-back row and nowhere else`() {
         val html =
             render(
                 listOf(
-                    SftExample(id = "e-fail", judgeVerdict = JudgeVerdict.FAIL),
-                    SftExample(id = "e-border", judgeVerdict = JudgeVerdict.BORDERLINE),
-                    SftExample(id = "e-pass", judgeVerdict = JudgeVerdict.PASS),
-                    SftExample(id = "e-unjudged", judgeVerdict = null),
+                    SftExample(
+                        id = "e-fail",
+                        status = ExampleStatus.SUBMITTED,
+                        judgeVerdict = JudgeVerdict.FAIL,
+                    ),
+                    SftExample(
+                        id = "e-pass",
+                        status = ExampleStatus.SUBMITTED,
+                        judgeVerdict = JudgeVerdict.PASS,
+                    ),
+                    SftExample(
+                        id = "e-unjudged",
+                        status = ExampleStatus.NEEDS_CHANGES,
+                        judgeVerdict = null,
+                    ),
+                    SftExample(
+                        id = "e-appr",
+                        status = ExampleStatus.APPROVED,
+                        judgeVerdict = JudgeVerdict.PASS,
+                    ),
+                    SftExample(id = "e-draft", status = ExampleStatus.DRAFT, judgeVerdict = null),
                 )
             )
 
         // `value="…"` only appears on the checkbox input (the id column uses th:text), so it is an
         // exact witness that the box rendered for that row.
-        assertTrue(html.contains("""value="e-fail""""), "FAIL row lost its override checkbox")
-        assertTrue(html.contains("""value="e-border""""), "BORDERLINE row lost its checkbox")
-        assertFalse(
-            html.contains("""value="e-pass""""),
-            "a PASS row must not be override-selectable"
-        )
-        assertFalse(
+        assertTrue(html.contains("""value="e-fail""""), "a SUBMITTED FAIL row keeps its checkbox")
+        assertTrue(html.contains("""value="e-pass""""), "a SUBMITTED PASS row is now selectable")
+        assertTrue(
             html.contains("""value="e-unjudged""""),
-            "an unjudged row must not be selectable"
+            "a sent-back unjudged row is selectable",
         )
+        assertFalse(
+            html.contains("""value="e-appr""""),
+            "an already-APPROVED row must not be selectable"
+        )
+        assertFalse(html.contains("""value="e-draft""""), "a DRAFT row must not be selectable")
     }
 }
 

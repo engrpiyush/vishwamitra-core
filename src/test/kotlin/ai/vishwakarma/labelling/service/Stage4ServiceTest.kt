@@ -1590,18 +1590,18 @@ class Stage4ServiceTest {
         assertIs<DomainError.NotFound>(svc.bulkApprove("nope", "op").err())
     }
 
-    // ---- VA-176: ADMIN override-approve (the judge bypass by explicit id) --------------------
+    // ---- VA-176 (widened): ADMIN bulk approve by explicit id, any verdict --------------------
 
     @Test
-    fun `override-approve flips the selected FAIL and BORDERLINE rows and reports the rest by reason`() {
+    fun `override-approve flips every selected awaiting row regardless of verdict and reports the rest by reason`() {
         seedPublished()
         val svc = service()
         val run0 = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
         pollUntil(svc, run0.id, Stage4RunStatus.REVIEW_WAIT)
         val run = runs.store[run0.id]!!
 
-        // Start clean so only the crafted rows carry a verdict field (the review-list contract:
-        // eligibility reads SftExample.judgeVerdict, not the judgments collection).
+        // Start clean so only the crafted rows exist (eligibility reads status + stamp currency;
+        // the verdict only flavors the audit note).
         sfts.store.clear()
 
         val fail = syntheticExample("e-fail", run).copy(judgeVerdict = JudgeVerdict.FAIL)
@@ -1656,15 +1656,15 @@ class Stage4ServiceTest {
                 "admin@x.com",
             )
 
-        assertEquals(3, outcome.approved, "the two FAILs and the BORDERLINE flip")
+        assertEquals(5, outcome.approved, "FAILs, BORDERLINE, PASS and unjudged all flip")
         assertEquals(1, outcome.notFound, "e-missing resolved to nothing")
-        assertEquals(2, outcome.notFailBorderline, "PASS and unjudged are not override targets")
         assertEquals(2, outcome.ineligibleStatus, "ARCHIVED and already-APPROVED are skipped")
         assertEquals(1, outcome.stale, "the drifted-stamp row is skipped")
         assertEquals(ExampleStatus.APPROVED, sfts.store["e-fail"]!!.status)
         assertEquals(ExampleStatus.APPROVED, sfts.store["e-border"]!!.status)
         assertEquals(ExampleStatus.APPROVED, sfts.store["e-fail-sb"]!!.status)
-        assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-pass"]!!.status)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-pass"]!!.status)
+        assertEquals(ExampleStatus.APPROVED, sfts.store["e-unjudged"]!!.status)
         assertEquals(ExampleStatus.ARCHIVED, sfts.store["e-arch"]!!.status)
         assertEquals(ExampleStatus.APPROVED, sfts.store["e-appr"]!!.status)
         assertEquals(ExampleStatus.SUBMITTED, sfts.store["e-stale"]!!.status)

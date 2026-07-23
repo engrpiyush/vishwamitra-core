@@ -346,9 +346,9 @@ class SftController(
         val outcome = stage4.overrideApprove(ids ?: emptyList(), actor())
         ra.addFlashAttribute(
             "ok",
-            "Override-approved ${outcome.approved} example(s) over the judge verdict — skipped: " +
-                "${outcome.notFailBorderline} not fail/borderline, ${outcome.ineligibleStatus} " +
-                "ineligible status, ${outcome.stale} stale, ${outcome.notFound} not found",
+            "Approved ${outcome.approved} selected example(s) (FAIL/BORDERLINE approved over the " +
+                "judge verdict) — skipped: ${outcome.ineligibleStatus} ineligible status, " +
+                "${outcome.stale} stale, ${outcome.notFound} not found",
         )
         status?.takeIf { it.isNotBlank() }?.let { ra.addAttribute("status", it) }
         subject?.takeIf { it.isNotBlank() }?.let { ra.addAttribute("subject", it) }

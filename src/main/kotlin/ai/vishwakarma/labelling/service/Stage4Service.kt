@@ -97,16 +97,15 @@ data class Stage4BulkApproveOutcome(
 )
 
 /**
- * What [Stage4Service.overrideApprove] did (VA-176): [approved] judge-FAIL/BORDERLINE rows flipped
- * over the verdict, plus everything the ADMIN selected that was left untouched, by reason — the
- * flash spells it out so the operator sees exactly what the override took and what it refused.
+ * What [Stage4Service.overrideApprove] did (VA-176, widened 2026-07-23): every selected
+ * awaiting/sent-back row flips to APPROVED regardless of verdict — PASS/unjudged rows as plain bulk
+ * approval, FAIL/BORDERLINE rows *over* the judge's verdict (the audit comment names which) — plus
+ * everything left untouched, by reason; the flash spells it out.
  */
 data class Stage4OverrideApproveOutcome(
     val approved: Int,
     /** Selected ids that matched no example. */
     val notFound: Int,
-    /** Latest verdict is PASS or unjudged — not a FAIL/BORDERLINE row the override targets. */
-    val notFailBorderline: Int,
     /** Status not in {SUBMITTED, NEEDS_CHANGES} — ARCHIVED, already-APPROVED, or still DRAFT. */
     val ineligibleStatus: Int,
     /** Stamp no longer current (the next SELECT tick would archive it) — bulkApprove's guard. */
@@ -1208,47 +1207,49 @@ class Stage4Service(
     ): Stage4OverrideApproveOutcome {
         var approved = 0
         var notFound = 0
-        var notFailBorderline = 0
         var ineligibleStatus = 0
         var stale = 0
         // currentFor reads Firestore (persona resolve) — compute once per distinct subject.
         val currentBySubject = HashMap<String, Pair<String?, String>>()
         exampleIds.distinct().forEach { id ->
             val example = sft.get(id)
-            val verdict = example?.judgeVerdict
             when {
                 example == null -> notFound++
-                verdict != JudgeVerdict.FAIL && verdict != JudgeVerdict.BORDERLINE ->
-                    notFailBorderline++
                 example.status != ExampleStatus.SUBMITTED &&
                     example.status != ExampleStatus.NEEDS_CHANGES -> ineligibleStatus++
                 !isCurrentStamp(example.stamp, currentBySubject) -> stale++
-                else ->
-                    sft.overrideApprove(
-                            id,
-                            actor,
-                            "ADMIN override-approve over the $verdict judge verdict.",
-                        )
+                else -> {
+                    // The audit comment names what the approval went past: a FAIL/BORDERLINE is
+                    // an override of the judge; PASS/unjudged is plain selection approval.
+                    val note =
+                        when (example.judgeVerdict) {
+                            JudgeVerdict.FAIL,
+                            JudgeVerdict.BORDERLINE ->
+                                "ADMIN override-approve over the ${example.judgeVerdict} judge " +
+                                    "verdict."
+                            JudgeVerdict.PASS -> "ADMIN bulk-approve via selection (judge PASS)."
+                            null -> "ADMIN bulk-approve via selection (unjudged)."
+                        }
+                    sft.overrideApprove(id, actor, note)
                         // A Left means the row changed under us mid-loop (a race) — count it as an
                         // ineligible-status skip rather than aborting a partial override.
                         .fold({ ineligibleStatus++ }, { approved++ })
+                }
             }
         }
         val outcome =
             Stage4OverrideApproveOutcome(
                 approved = approved,
                 notFound = notFound,
-                notFailBorderline = notFailBorderline,
                 ineligibleStatus = ineligibleStatus,
                 stale = stale,
             )
         log.info(
-            "Override-approved {} FAIL/BORDERLINE example(s) over the judge verdict by {} ({} not " +
-                "found, {} not fail/borderline, {} ineligible status, {} stale)",
+            "Bulk-approved {} selected example(s) (FAIL/BORDERLINE approved over the judge) by " +
+                "{} ({} not found, {} ineligible status, {} stale)",
             outcome.approved,
             actor,
             outcome.notFound,
-            outcome.notFailBorderline,
             outcome.ineligibleStatus,
             outcome.stale,
         )
