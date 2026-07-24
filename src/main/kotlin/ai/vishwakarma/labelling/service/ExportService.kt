@@ -138,6 +138,8 @@ class ExportService(
         run: Stage4Run,
         actor: String?,
         holdoutFraction: Double,
+        /** Who's-who: subject handle/id-stem stamped into the filename + record (→ tune naming). */
+        subjectTag: String? = null,
     ): Either<DomainError, Stage4ExportResult> {
         val approved =
             sftExamples
@@ -187,8 +189,9 @@ class ExportService(
                 )
                 .left()
 
+        val tagSegment = subjectTag?.takeIf { it.isNotBlank() }?.let { "$it-" } ?: ""
         val objectPath =
-            "data/${ExportKind.SFT.dir}/${tsFormat.format(Instant.now())}-stage4-${run.id}.jsonl"
+            "data/${ExportKind.SFT.dir}/${tsFormat.format(Instant.now())}-stage4-$tagSegment${run.id}.jsonl"
         val uri = exporter.write(objectPath, lines.joinToString("\n"))
         val record =
             ExportRecord(
@@ -197,6 +200,7 @@ class ExportService(
                 gcsUri = uri,
                 exampleIds = included.map { it.id },
                 count = included.size,
+                subjectTag = subjectTag?.takeIf { it.isNotBlank() },
                 createdBy = actor,
                 createdAt = Instant.now(),
             )

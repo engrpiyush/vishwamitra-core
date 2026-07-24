@@ -14,6 +14,11 @@ data class ExportRecord(
     val gcsUri: String,
     val exampleIds: List<String> = emptyList(),
     val count: Int = 0,
+    /**
+     * Who's-who: the subject's handle (or id stem) on stage-4 exports — carried into the tuned
+     * model's display name + weights path. Null on tag-filtered labelling exports.
+     */
+    val subjectTag: String? = null,
     val createdBy: String? = null,
     val createdAt: Instant? = null,
 )

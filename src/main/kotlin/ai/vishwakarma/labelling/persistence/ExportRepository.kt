@@ -38,6 +38,7 @@ class ExportRepository(private val db: Firestore) {
             "gcsUri" to gcsUri,
             "exampleIds" to exampleIds,
             "count" to count,
+            "subjectTag" to subjectTag,
             "createdBy" to createdBy,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
@@ -52,6 +53,7 @@ class ExportRepository(private val db: Firestore) {
             gcsUri = getString("gcsUri") ?: "",
             exampleIds = (get("exampleIds") as? List<String>) ?: emptyList(),
             count = (getLong("count") ?: 0L).toInt(),
+            subjectTag = getString("subjectTag"),
             createdBy = getString("createdBy"),
             createdAt = instant("createdAt"),
         )

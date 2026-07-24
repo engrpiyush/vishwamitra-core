@@ -102,11 +102,19 @@ class TrainingService(
         val nullableParentVersionId = parentVersionId?.ifBlank { null }
 
         // Resolve the training-dataset GCS URI from either a tool export or a validated import.
+        // A stage-4 export carries the subject's who's-who tag — captured so the tuned model's
+        // display name and weights path say whose advocate this is.
+        var subjectTag: String? = null
         val datasetUri =
             when (datasetSource) {
-                DatasetSource.EXPORT ->
-                    exports.findById(dataId)?.gcsUri
-                        ?: return DomainError.NotFound("Dataset export $dataId not found").left()
+                DatasetSource.EXPORT -> {
+                    val export =
+                        exports.findById(dataId)
+                            ?: return DomainError.NotFound("Dataset export $dataId not found")
+                                .left()
+                    subjectTag = export.subjectTag?.takeIf { it.isNotBlank() }
+                    export.gcsUri
+                }
                 DatasetSource.IMPORT -> {
                     val imp =
                         imports.findById(dataId)
@@ -154,8 +162,9 @@ class TrainingService(
                 baseKind,
                 nullableParentVersionId?.let { versions.findById(it)?.version }
             )
-        val displayName = "vishwakarma-ai-${resolved.family}-$newVersion"
-        val outputUri = "gs://${props.gcp.servingBucket}/tuned/${resolved.family}-$newVersion/"
+        val nameStem = listOfNotNull(subjectTag, resolved.family).joinToString("-")
+        val displayName = "vishwakarma-ai-$nameStem-$newVersion"
+        val outputUri = "gs://${props.gcp.servingBucket}/tuned/$nameStem-$newVersion/"
 
         // Create version + job in pre-submit state.
         val versionId = versions.newId()

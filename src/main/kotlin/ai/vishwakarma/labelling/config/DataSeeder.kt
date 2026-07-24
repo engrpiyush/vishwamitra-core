@@ -86,6 +86,7 @@ class DataSeeder {
             active: Boolean,
             tunable: Boolean = true,
             hostable: Boolean = false,
+            serveVerified: Boolean = hostable,
         ) {
             if (family.lowercase() in existing) return
             baseModels.create(
@@ -97,7 +98,7 @@ class DataSeeder {
                 tunable,
                 hostable = hostable,
                 acceleratorSpec = if (hostable) v100Spec else "",
-                serveVerified = hostable,
+                serveVerified = serveVerified,
             )
             seeded++
         }
@@ -105,6 +106,8 @@ class DataSeeder {
         // verified end-to-end are `tunable = true`; the rest are catalog rows kept visible-but-
         // disabled until proven. qwen3-4b: tune+serve verified (VA-59 + this session). Llama 3.2
         // 3B: serve-verified (VA-74, 88 tok/s); tune enabled on the owner's call (2026-07-13).
+        // 2026-07-24: the five Gemma 4 sizes (below) join tunable on the family's managed-tuning
+        // GA — first submit per size is the acceptance probe (supportedActions never lists tuning).
         ensure("qwen/qwen3@qwen3-32b", "Qwen 3 32B", "qwen3-32b", active = true, tunable = false)
         ensure(
             "google/gemma3@gemma-3-27b-it",
@@ -158,9 +161,64 @@ class DataSeeder {
             tunable = true,
             hostable = true,
         )
+        // Gemma 4 (2026-07-24): catalog GA at google/gemma4@gemma-4-{e2b,e4b,12b,26b-a4b,31b}-it,
+        // resolving in BOTH us-central1 and asia-southeast1 (no plain 2b/4b ids — the small tiers
+        // are the E-series). E2B/E4B ("2B/4B") are V100-wired on the owner's call but NOT
+        // serve-verified — VA-177 live-probes them (SM70-image arch coverage, fp16 acceptance,
+        // E4B weights vs 16 GiB); the Verified badge stays off until it passes.
+        ensure(
+            "google/gemma4@gemma-4-e2b-it",
+            "Gemma 4 E2B IT",
+            "gemma4-e2b",
+            active = true,
+            tunable = true,
+            hostable = true,
+            serveVerified = false,
+        )
+        ensure(
+            "google/gemma4@gemma-4-e4b-it",
+            "Gemma 4 E4B IT",
+            "gemma4-e4b",
+            active = true,
+            tunable = true,
+            hostable = true,
+            serveVerified = false,
+        )
+        ensure(
+            "google/gemma4@gemma-4-12b-it",
+            "Gemma 4 12B IT",
+            "gemma4-12b",
+            active = true,
+            tunable = true,
+        )
+        ensure(
+            "google/gemma4@gemma-4-26b-a4b-it",
+            "Gemma 4 26B A4B IT",
+            "gemma4-26b-a4b",
+            active = true,
+            tunable = true,
+        )
+        ensure(
+            "google/gemma4@gemma-4-31b-it",
+            "Gemma 4 31B IT",
+            "gemma4-31b",
+            active = true,
+            tunable = true,
+        )
         if (seeded > 0) log.info("Seeded {} base model(s)", seeded)
         // Apply the curated allowlist to rows that predate the `tunable` flag (idempotent).
-        val reconciled = baseModels.reconcileTunable(setOf("qwen3-4b", "llama-3-2-3b"))
+        val reconciled =
+            baseModels.reconcileTunable(
+                setOf(
+                    "qwen3-4b",
+                    "llama-3-2-3b",
+                    "gemma4-e2b",
+                    "gemma4-e4b",
+                    "gemma4-12b",
+                    "gemma4-26b-a4b",
+                    "gemma4-31b",
+                )
+            )
         if (reconciled > 0) log.info("Reconciled tunable flag on {} base model(s)", reconciled)
         // Backfill the hostable dimension on pre-VA-86 rows (additive — admin edits win after).
         val hostReconciled =

@@ -528,6 +528,7 @@ class Stage4Service(
             val persona = personaService.resolved(run.subjectId)
             val presetStyle = prompts.resolveStage4Preset(persona.presetId).instructions
             val subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject"
+            val subjectTag = subjectTag(run.subjectId)
             val promptByCategory =
                 Stage4Category.entries
                     .filter { it != Stage4Category.META }
@@ -642,6 +643,7 @@ class Stage4Service(
                     run,
                     p,
                     subjectName,
+                    subjectTag,
                     persona,
                     presetStyle,
                     ::rowFor,
@@ -662,6 +664,8 @@ class Stage4Service(
         run: Stage4Run,
         p: Stage4Plan,
         subjectName: String,
+        /** Who's-who prefix for the example id: the subject's handle, else an id stem. */
+        subjectTag: String,
         persona: ResolvedPersona,
         presetStyle: String,
         /** The plan's instruction row: template block (VA-88) or category row; null = META. */
@@ -785,7 +789,7 @@ class Stage4Service(
             }
         sftExamples.save(
             SftExample(
-                id = sftExamples.newId(),
+                id = "$subjectTag-${sftExamples.newId()}",
                 tags = tags,
                 turns = turns,
                 status = ExampleStatus.DRAFT,
@@ -1279,6 +1283,15 @@ class Stage4Service(
     // ---- export (LLD §9.4/§13, VA-58) — the operator action that completes a parked run ----
 
     /**
+     * Who's-who tag for stage-4 artifacts (owner ask 2026-07-24): the subject's handle (username)
+     * when set, else a short subjectId stem. Leads every generated SFT example id and the export
+     * filename, and rides [ExportRecord.subjectTag] into the tuned model's display name + weights
+     * path — so datasets and models are attributable at a glance.
+     */
+    private fun subjectTag(subjectId: String): String =
+        subjects.findById(subjectId)?.handle?.takeIf { it.isNotBlank() } ?: subjectId.take(8)
+
+    /**
      * Complete a REVIEW_WAIT run: [ExportService.exportStage4Run] filters APPROVED + current-stamp
      * examples, carves the §14 holdout slice under the run's frozen `evalHoldoutFraction`, and
      * gates the rest through both validators (any failure aborts with exampleId pointers before a
@@ -1293,27 +1306,29 @@ class Stage4Service(
                     "Only a REVIEW_WAIT run can be exported (run is ${run.status})"
                 )
                 .left()
-        return exportService.exportStage4Run(run, actor, frozenHoldoutFraction(run)).map { result ->
-            val record = result.record
-            val now = Instant.now()
-            val done =
-                run.copy(
-                    status = Stage4RunStatus.DONE,
-                    exportRecordId = record.id,
-                    finishedAt = now,
-                    phaseSince = now,
+        return exportService
+            .exportStage4Run(run, actor, frozenHoldoutFraction(run), subjectTag(run.subjectId))
+            .map { result ->
+                val record = result.record
+                val now = Instant.now()
+                val done =
+                    run.copy(
+                        status = Stage4RunStatus.DONE,
+                        exportRecordId = record.id,
+                        finishedAt = now,
+                        phaseSince = now,
+                    )
+                runs.save(done)
+                log.info(
+                    "Run {}: REVIEW_WAIT → DONE (export {}, {} example(s) → {}; {} held out for eval)",
+                    run.id,
+                    record.id,
+                    record.count,
+                    record.gcsUri,
+                    result.heldOut,
                 )
-            runs.save(done)
-            log.info(
-                "Run {}: REVIEW_WAIT → DONE (export {}, {} example(s) → {}; {} held out for eval)",
-                run.id,
-                record.id,
-                record.count,
-                record.gcsUri,
-                result.heldOut,
-            )
-            Stage4ExportOutcome(done, record, result.heldOut)
-        }
+                Stage4ExportOutcome(done, record, result.heldOut)
+            }
     }
 
     /** The run's frozen `evalHoldoutFraction` (paramsSnapshot), live config as the fallback. */

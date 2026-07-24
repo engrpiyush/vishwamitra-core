@@ -30,6 +30,8 @@
 other OSS bases** (Gemma 3 27B, MedGemma, …) from the managed-tuning catalog. **Gemma 4 is NOT available**
 for managed tuning (not in the catalog; custom weights must match a supported architecture) — tuning Gemma 4
 would require self-managed off-GCP (TRL/Unsloth).
+> **[Corrected 2026-07-24]** Gemma 4 is now GA in the managed-tuning catalog
+> (`google/gemma4@gemma-4-{e2b,e4b,12b,26b-a4b,31b}-it`, both regions) — see `TUNING-operations.md` §1.
 
 **Dataset format (ground truth, accepted by the managed API).** `contents`/`parts`, roles `user`/`model`:
 `{"contents":[{"role":"user","parts":[{"text":"…"}]},{"role":"model","parts":[{"text":"…"}]}]}`.
