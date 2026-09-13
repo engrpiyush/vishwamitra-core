@@ -9,10 +9,13 @@ import ai.vishwakarma.labelling.domain.SessionKind
 import ai.vishwakarma.labelling.persistence.AdvocateMessageRepository
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.AdvocateSessionRepository
+import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.serving.ChatMessage
 import ai.vishwakarma.labelling.serving.ChatRequest
 import ai.vishwakarma.labelling.serving.ServingBackend
+import ai.vishwakarma.labelling.stage4.Stage4Generation
+import ai.vishwakarma.labelling.stage4.Stage4SystemPrompts
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
@@ -66,6 +69,8 @@ class AdvocateChatService(
     private val sessions: AdvocateSessionRepository,
     private val messages: AdvocateMessageRepository,
     private val prompts: ExtractionPromptService,
+    private val subjects: SubjectRepository,
+    private val personaService: PersonaService,
     backends: List<ServingBackend>,
     private val props: AppProperties,
 ) {
@@ -91,11 +96,7 @@ class AdvocateChatService(
         val text = if (truncated) userText.take(MAX_INPUT_CHARS) else userText
 
         val history = messages.listBySession(session.sessionId).takeLast(HISTORY_MESSAGES)
-        val system =
-            prompts
-                .resolveKey(ExtractionPromptService.ADVOCATE_SYSTEM_KEY)
-                .instructions
-                .replace("{{subject}}", ctx.displayName)
+        val system = systemPromptFor(ctx)
         val request =
             ChatRequest(
                 messages =
@@ -200,6 +201,37 @@ class AdvocateChatService(
     fun transcript(subjectId: String, sessionId: String): List<AdvocateMessage>? {
         val session = sessions.find(sessionId)?.takeIf { it.subjectId == subjectId } ?: return null
         return messages.listBySession(session.sessionId)
+    }
+
+    /**
+     * The serve-time system prompt. With `app.stage4.system-prompts` on, the advocate serves under
+     * the SAME composed static header its training conversations opened with (LLD §9.6 train/serve
+     * consistency — a tuned model must not meet a prompt it never saw); the per-conversation rules
+     * and claim-subset blocks stay train-only, since serving knows neither the template nor a
+     * subset (the tuned weights carry the facts). Flag off keeps the legacy `advocate_system` row
+     * byte-for-byte.
+     */
+    private fun systemPromptFor(ctx: SubjectCtx): String {
+        if (!props.stage4.systemPrompts) {
+            return prompts
+                .resolveKey(ExtractionPromptService.ADVOCATE_SYSTEM_KEY)
+                .instructions
+                .replace("{{subject}}", ctx.displayName)
+        }
+        val subject = subjects.findById(ctx.subjectId)
+        val advocateName =
+            runCatching { personaService.resolved(ctx.subjectId).advocateName }
+                .getOrDefault("the advocate")
+        return Stage4Generation.substituteContext(
+            Stage4SystemPrompts.resolveHeader(
+                prompts.resolveKey(ExtractionPromptService.STAGE4_SYSTEM_HEADER_KEY).instructions,
+                subject?.displayName ?: ctx.displayName,
+                subject?.contactEmail.orEmpty(),
+                advocateName,
+            ),
+            "",
+            "",
+        )
     }
 
     private fun backend(): ServingBackend? = backendsById[props.serving.backend]

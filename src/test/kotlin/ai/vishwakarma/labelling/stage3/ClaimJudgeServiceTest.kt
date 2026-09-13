@@ -251,6 +251,7 @@ class ClaimJudgeServiceTest {
             thinkingBudget: Int?,
             temperature: Double?,
             pin: String?,
+            systemInstruction: String?,
         ): String {
             prompts += prompt
             temperatures += temperature

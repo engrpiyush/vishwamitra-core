@@ -26,6 +26,11 @@ data class PlanningOutcome(
      * run planned template-less (the legacy trio).
      */
     val coverage: List<CategoryCoverage> = emptyList(),
+    /**
+     * The per-claim fan-out cap actually enforced (§9.6): the configured dial, or the deterministic
+     * raise a notebook-target demands. Equal to the dial on every legacy run.
+     */
+    val effectiveFanoutCap: Int = 0,
 )
 
 /**
@@ -53,6 +58,8 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         val claimIds: List<String>,
         /** The NotebookTemplate that shaped this unit (VA-88); null = trio/probe-bank unit. */
         val template: NotebookTemplate? = null,
+        /** The §9.6 claim subset riding this unit's system prompt; null outside SP mode. */
+        val subsetId: String? = null,
     )
 
     fun plan(
@@ -78,18 +85,50 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
          * carries a real FormatSpec (title/intent/persona lens/format constraints).
          */
         kbGeneration: Boolean = false,
+        /**
+         * System-prompt mode (§9.6): with spec mode on AND [subsets] present, template units become
+         * template × subset pairs (the mix-match volume engine) and every plan — probe banks
+         * included — carries a subsetId whose claim lines ride its composed system prompt. Off, or
+         * without subsets, planning is exactly the spec-mode/legacy behavior above.
+         */
+        systemPrompts: Boolean = false,
+        /** The §9.6 shared claim subsets ([Stage4SystemPrompts.subsets]), rotation order. */
+        subsets: List<Stage4SystemPrompts.ClaimSubset> = emptyList(),
+        /** Run-level conversation volume target (§9.6); 0 = per-template coverageTarget. */
+        notebookTarget: Int = 0,
     ): PlanningOutcome {
         val byId = eligible.associateBy { it.claim.id }
         // Spec mode is the template path with the flag on — the legacy trio has no FormatSpec to
         // draw a spec from, so it keeps phrasing questions even when the flag is set.
         val specMode = kbGeneration && templates.isNotEmpty()
+        // §9.6: system-prompt mode is spec mode plus subsets — it can never fire without both.
+        val spMode = specMode && systemPrompts && subsets.isNotEmpty()
         // VA-88: a non-empty template library replaces "blind" fact/claim-driven planning for the
         // fact-driven trio. The probe banks are exempt either way (QD-5): refusal/injection/
         // identity coverage is a fixed curriculum, not a template concern.
         val templateDriven = templates.isNotEmpty()
         val templateUnits =
-            if (templateDriven) templateCandidates(templates, facts, byId, specMode)
-            else emptyList()
+            when {
+                spMode -> subsetTemplateCandidates(templates, subsets, notebookTarget)
+                templateDriven -> templateCandidates(templates, facts, byId, specMode)
+                else -> emptyList()
+            }
+        // §9.6: probe banks draw subsets round-robin — the suffix moves every probe onto a new
+        // planId, so pre-system-prompt cached conversations can never satisfy these plans.
+        fun List<Candidate>.withProbeSubsets(): List<Candidate> =
+            if (!spMode) this
+            else
+                mapIndexed { i, c ->
+                    val unit = c.unit
+                    if (unit !is PlanUnit.QuestionUnit) c
+                    else {
+                        val subset = subsets[i % subsets.size]
+                        c.copy(
+                            unit = unit.copy(keySuffix = "|sp:${subset.id}"),
+                            subsetId = subset.id,
+                        )
+                    }
+                }
         val candidates =
             mapOf(
                 Stage4Category.QA to (if (templateDriven) emptyList() else qaCandidates(eligible)),
@@ -99,8 +138,9 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                 Stage4Category.MULTI_CLAIM to
                     (if (templateDriven) emptyList()
                     else multiClaimCandidates(subjectName, facts, byId)),
-                Stage4Category.NEGATIVE to negativeCandidates(subjectName, eligible),
-                Stage4Category.META to metaCandidates(subjectName),
+                Stage4Category.NEGATIVE to
+                    negativeCandidates(subjectName, eligible).withProbeSubsets(),
+                Stage4Category.META to metaCandidates(subjectName).withProbeSubsets(),
             )
 
         // Mix allocation (QA-3, amended QD-5 2026-07-13): the mix weights steer only the
@@ -162,12 +202,26 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
             }
         }
 
-        // Fan-out cap: ≤ maxConversationsPerClaim per claim ACROSS categories (§9.2).
+        // Fan-out cap: ≤ maxConversationsPerClaim per claim ACROSS categories (§9.2). In §9.6
+        // SP mode a notebook target may demand more focus slots than the dial allows
+        // (target × 4-claim focus over a small ledger) — the raise is deterministic from frozen
+        // inputs and surfaced on the outcome, never a silent override of a sufficient dial.
+        val effectiveCap =
+            if (spMode && notebookTarget > 0 && eligible.isNotEmpty()) {
+                maxOf(
+                    maxConversationsPerClaim,
+                    kotlin.math
+                        .ceil(notebookTarget.toDouble() * MAX_TEMPLATE_CLAIMS / eligible.size)
+                        .toInt(),
+                )
+            } else {
+                maxConversationsPerClaim
+            }
         val perClaim = mutableMapOf<String, Int>()
         var capped = 0
         val surviving = mutableListOf<Candidate>()
         for (candidate in kept) {
-            if (candidate.claimIds.any { (perClaim[it] ?: 0) >= maxConversationsPerClaim }) {
+            if (candidate.claimIds.any { (perClaim[it] ?: 0) >= effectiveCap }) {
                 capped++
                 continue
             }
@@ -178,7 +232,7 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
         val planned =
             surviving.map { candidate ->
                 val base = planner.plan(candidate.unit, persona, personaHash)
-                val plan =
+                val withTemplate =
                     candidate.template?.let { template ->
                         val stamped =
                             base.copy(
@@ -190,6 +244,10 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
                         // template (already in the unit key), so the spec never enters the planId.
                         if (specMode) stamped.withSpec(template) else stamped
                     } ?: base
+                // §9.6: the subset rides the plan explicitly (GENERATE resolves its claim lines);
+                // distinctness already entered the planId via the unit key.
+                val plan =
+                    candidate.subsetId?.let { withTemplate.copy(subsetId = it) } ?: withTemplate
                 PlannedConversation(candidate.question, plan)
             }
         // Coverage (VA-88): what survived dedupe + cap per template category, against the sum of
@@ -219,6 +277,105 @@ class Stage4Planning(private val planner: Stage4VoicingPlanner = Stage4VoicingPl
             deduped = deduped,
             capped = capped,
             coverage = coverage,
+            effectiveFanoutCap = effectiveCap,
+        )
+    }
+
+    // ---- §9.6: template × subset units (system-prompt mode) ----------------------------------
+
+    /**
+     * One unit per (template × slot), the slot drawing a claim SUBSET instead of a fact anchor —
+     * the mix-match volume engine: with a [notebookTarget], slots per firing template scale to
+     * `ceil(target / firing)` (never below the template's own coverageTarget, never above the
+     * subsets it may draw), so ~500 conversations come out of a 439-template × ~50-subset grid.
+     *
+     * Gates run against the subset's members exactly as the anchor path runs them against fact
+     * members ([drawableMembers] first — a declared BOUNDARY stays undrawable — then the coarse
+     * all-of and fine any-of projections). A gated template with no eligible subset plans zero
+     * units and reports `missed`. Focus claims are the subset's best members, rotated by template
+     * index so templates sharing a subset open on different evidence; the subset's full line-up
+     * still reaches the system prompt at GENERATE.
+     */
+    private fun subsetTemplateCandidates(
+        templates: List<NotebookTemplate>,
+        subsets: List<Stage4SystemPrompts.ClaimSubset>,
+        notebookTarget: Int,
+    ): List<Candidate> {
+        data class Firing(
+            val template: NotebookTemplate,
+            val index: Int,
+            val eligible: List<Pair<Stage4SystemPrompts.ClaimSubset, List<EvidencedClaim>>>,
+        )
+        val firing =
+            templates.mapIndexedNotNull { index, template ->
+                val eligible =
+                    subsets.mapNotNull { subset ->
+                        val drawable = drawableMembers(subset.claims, template)
+                        if (drawable.isEmpty()) return@mapNotNull null
+                        val coarseOk =
+                            template.requiredClaimTypes.all { req ->
+                                drawable.any { it.claim.claimType == req }
+                            }
+                        if (!coarseOk) return@mapNotNull null
+                        val fineOk =
+                            template.requiredDeclaredTypes.isEmpty() ||
+                                drawable.any { m ->
+                                    m.claim.declared &&
+                                        m.claim.declaredType in template.requiredDeclaredTypes
+                                }
+                        if (!fineOk) return@mapNotNull null
+                        subset to drawable
+                    }
+                if (eligible.isEmpty()) null else Firing(template, index, eligible)
+            }
+        if (firing.isEmpty()) return emptyList()
+        val slotsFromTarget =
+            if (notebookTarget > 0) {
+                kotlin.math.ceil(notebookTarget.toDouble() / firing.size).toInt()
+            } else {
+                0
+            }
+        return firing.flatMap { f ->
+            val slots =
+                maxOf(f.template.coverageTarget, slotsFromTarget)
+                    .coerceAtMost(f.eligible.size)
+                    .coerceAtLeast(1)
+            (0 until slots).map { slot ->
+                val (subset, drawable) = f.eligible[(f.index + slot) % f.eligible.size]
+                val ranked = focusRanked(drawable)
+                val start = f.index % ranked.size
+                val focus =
+                    (0 until minOf(MAX_TEMPLATE_CLAIMS, ranked.size)).map { k ->
+                        ranked[(start + k) % ranked.size]
+                    }
+                val unitKey = "tpl:sp:${f.template.id}:${subset.id}"
+                val unit =
+                    if (focus.size >= 2) {
+                        PlanUnit.FactGroupUnit(focus, unitKey = unitKey)
+                    } else {
+                        PlanUnit.ClaimUnit(focus.single(), unitKey = unitKey)
+                    }
+                Candidate(
+                    unit = unit,
+                    // SP mode phrases nothing — the drafter opens from the spec.
+                    question = "",
+                    claimIds = focus.map { it.claim.id },
+                    template = f.template,
+                    subsetId = subset.id,
+                )
+            }
+        }
+    }
+
+    /**
+     * Focus ranking within a subset: SFT-eligible-alone members first (the questionLabelOf
+     * restriction — the focus block is what the conversation asserts), best score first, claim id
+     * as the universal tie-break.
+     */
+    private fun focusRanked(members: List<EvidencedClaim>): List<EvidencedClaim> {
+        val eligible = members.filter { planner.sftEligibleAlone(it) }.ifEmpty { members }
+        return eligible.sortedWith(
+            compareByDescending<EvidencedClaim> { it.score }.thenBy { it.claim.id }
         )
     }
 

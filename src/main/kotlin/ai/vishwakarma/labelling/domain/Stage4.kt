@@ -152,6 +152,17 @@ data class Stage4Stamp(
     val templateId: String? = null,
     /** The template's evaluation-trait category slug — the VA-60 eval axis this example probes. */
     val templateCategory: String? = null,
+    /**
+     * Short hash of the exact composed system prompt the drafter ran under (LLD §9.6) — the
+     * generation cache's fourth key beside planId/generatorPromptHash/profileHash: a header, rules
+     * or subset change re-drafts exactly the affected conversations. Null = system-prompt- less
+     * generation.
+     */
+    val systemPromptHash: String? = null,
+    /** The claim subset behind the system prompt's factual pointers (§9.6); null = none. */
+    val subsetId: String? = null,
+    /** The subset's member claim ids, frozen for §1 traceability (which facts the SP exposed). */
+    val subsetClaimIds: List<String> = emptyList(),
 )
 
 /**
@@ -233,6 +244,13 @@ data class VoicingPlan(
     val specIntent: String? = null,
     val specPersonaLens: String? = null,
     val specFormatConstraints: List<String> = emptyList(),
+    /**
+     * The claim subset whose lines ride this plan's system prompt (LLD §9.6). Carried explicitly
+     * for GENERATE's subset resolution; distinctness is already in the planId via the unit key
+     * (`tpl:sp:<templateId>:<subsetId>` — and the probe banks' `|sp:<subsetId>` suffix), so like
+     * the template stamp it never enters the hash separately. Null on every legacy plan.
+     */
+    val subsetId: String? = null,
 ) {
     /**
      * A kb-generation spec plan: the planner froze a spec instead of a phrased question, so

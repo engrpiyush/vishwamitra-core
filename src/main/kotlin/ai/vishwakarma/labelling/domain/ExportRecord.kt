@@ -19,6 +19,13 @@ data class ExportRecord(
      * model's display name + weights path. Null on tag-filtered labelling exports.
      */
     val subjectTag: String? = null,
+    /** The JSONL family the blob was written in; null = pre-format record ([GENERATE_CONTENT]). */
+    val datasetFormat: DatasetFormat? = null,
+    /**
+     * How many exported lines carried a leading system message (LLD §9.6 provenance) — 0 on
+     * legacy/contents exports.
+     */
+    val systemPromptCount: Int = 0,
     val createdBy: String? = null,
     val createdAt: Instant? = null,
 )

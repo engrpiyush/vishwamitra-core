@@ -40,6 +40,8 @@ data class Stage4PromptRows(
     val dpo: List<ReservedPromptRow>,
     /** The §14 eval-grading rubric row (VA-60). */
     val eval: ReservedPromptRow,
+    /** The §9.6 system-prompt rows: header, sysgen instructions, template-less rules default. */
+    val systemPrompt: List<ReservedPromptRow>,
 )
 
 /** The instruction block an extraction run actually used, with its provenance stamp. */
@@ -132,7 +134,8 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
             id == STAGE4_PRESET_DEFAULT_KEY ||
             id.startsWith(STAGE4_PRESET_PREFIX) ||
             id in STAGE4_GENERATOR_KEYS ||
-            id in STAGE4_DPO_KEYS
+            id in STAGE4_DPO_KEYS ||
+            id in STAGE4_SYSTEM_PROMPT_KEYS
 
     /** The VA-66 admin-page slice: presets (+ default pointer), generator rows, judge rubric. */
     fun listStage4(): Stage4PromptRows {
@@ -148,6 +151,7 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
             judge = row(STAGE4_JUDGE_KEY),
             dpo = STAGE4_DPO_KEYS.map { row(it) },
             eval = row(STAGE4_EVAL_KEY),
+            systemPrompt = STAGE4_SYSTEM_PROMPT_KEYS.map { row(it) },
         )
     }
 
@@ -271,6 +275,26 @@ class ExtractionPromptService(private val prompts: ExtractionPromptRepository) {
 
         /** The reserved §14 eval-grading rubric row (VA-60) — resolved by the eval grader. */
         const val STAGE4_EVAL_KEY = "stage4:eval"
+
+        /**
+         * The §9.6 system-prompt profile header: the static block every composed system prompt
+         * opens with, carrying the `{{subject_name}}` / `{{subject_email}}` / `{{advocate_name}}`
+         * placeholders filled before generation.
+         */
+        const val STAGE4_SYSTEM_HEADER_KEY = "stage4:system-header"
+
+        /** The §9.6 sysgen instructions: how the pro pin writes a template's conversation rules. */
+        const val STAGE4_SYSGEN_KEY = "stage4:sysgen"
+
+        /**
+         * The §9.6 rules fallback for template-less plans (the NEGATIVE/META probe banks) — the
+         * research-doc "fallback policy" decided as an admin-editable row, never a silent default.
+         */
+        const val STAGE4_SYSTEM_RULES_DEFAULT_KEY = "stage4:system-rules-default"
+
+        /** The §9.6 rows, in admin-page order. */
+        val STAGE4_SYSTEM_PROMPT_KEYS =
+            listOf(STAGE4_SYSTEM_HEADER_KEY, STAGE4_SYSGEN_KEY, STAGE4_SYSTEM_RULES_DEFAULT_KEY)
 
         /** The reserved `stage4:dpo:*` violation rows (§12, VA-61) — one pinned row per class. */
         val STAGE4_DPO_KEYS = DpoViolationClass.entries.map { "stage4:dpo:${it.slug}" }

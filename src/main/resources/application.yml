@@ -225,6 +225,11 @@ app:
     # KB; stale phrased plans are skipped. Prod stays on the class default (false) until the
     # ⚠CAL gate passes.
     kb-generation: true
+    # LLD §9.6 trained-in system prompts — ON locally so the full walk (subset planning, sysgen
+    # double, composed systemInstruction, OPENAI_CHAT export) runs offline. Prod flips per run.
+    system-prompts: true
+    # §9.6 volume engine: ~500 conversations from template × subset pairing on the dev subject.
+    notebook-target: 500
   product:
     # Subject world on <handle>.localhost:8080 (Chrome/Firefox resolve *.localhost natively);
     # plain localhost:8080 stays the operator app.

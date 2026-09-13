@@ -119,6 +119,31 @@ class NotebookTemplateService(
 
     fun delete(id: String) = templates.delete(id)
 
+    /**
+     * Persist the sysgen-written conversation rules on a template row (LLD §9.6). Deliberately does
+     * NOT bump [NotebookTemplate.version]: the rules are *derived from* the version — bumping on
+     * save would mark them stale against themselves and regenerate forever. Freshness is
+     * `systemRulesSourceVersion == version && systemRulesPromptHash == <current sysgen row hash>`.
+     */
+    fun saveSystemRules(
+        id: String,
+        rules: String,
+        sourceVersion: Int,
+        promptHash: String,
+        model: String?,
+    ): NotebookTemplate? {
+        val existing = templates.findById(id) ?: return null
+        val updated =
+            existing.copy(
+                systemRules = rules.trim(),
+                systemRulesSourceVersion = sourceVersion,
+                systemRulesPromptHash = promptHash,
+                systemRulesModel = model,
+            )
+        templates.save(updated)
+        return updated
+    }
+
     private fun validate(
         category: String,
         title: String,

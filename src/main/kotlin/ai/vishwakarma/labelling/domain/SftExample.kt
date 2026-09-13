@@ -67,6 +67,12 @@ data class ReviewComment(
 data class SftExample(
     val id: String,
     val tags: ExampleTags = ExampleTags(),
+    /**
+     * The composed system prompt this conversation was drafted under (LLD §9.6): profile header +
+     * template conversation rules + claim-subset factual pointers. Frozen verbatim at GENERATE so
+     * the export emits exactly what the drafter saw; null on legacy / system-prompt-less examples.
+     */
+    val systemInstruction: String? = null,
     val turns: List<Turn> = emptyList(),
     val status: ExampleStatus = ExampleStatus.DRAFT,
     val source: ExampleSource = ExampleSource.MANUAL,

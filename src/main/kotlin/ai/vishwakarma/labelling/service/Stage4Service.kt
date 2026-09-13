@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.ExampleSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
@@ -43,6 +44,8 @@ import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
 import ai.vishwakarma.labelling.stage4.Stage4Judging
 import ai.vishwakarma.labelling.stage4.Stage4KnowledgeBase
 import ai.vishwakarma.labelling.stage4.Stage4Planning
+import ai.vishwakarma.labelling.stage4.Stage4RulesGenerator
+import ai.vishwakarma.labelling.stage4.Stage4SystemPrompts
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
@@ -137,6 +140,7 @@ class Stage4Service(
     private val personaService: PersonaService,
     private val prompts: ExtractionPromptService,
     private val drafter: Stage4ConversationDrafter,
+    private val rulesGenerator: Stage4RulesGenerator,
     private val judge: Stage4JudgeSampler,
     private val judgments: Stage4JudgmentRepository,
     private val exportService: ExportService,
@@ -216,6 +220,13 @@ class Stage4Service(
                 .left()
         }
         val effective = effectiveStage4(overrides)
+        if (effective.systemPrompts && !effective.kbGeneration) {
+            log.warn(
+                "app.stage4.system-prompts is on but kb-generation is off — system prompts " +
+                    "require spec-mode planning and will NOT fire for this run (subject {})",
+                subjectId,
+            )
+        }
         val profile = subjectProfiles.resolved(subjectId)
         val run =
             Stage4Run(
@@ -448,10 +459,31 @@ class Stage4Service(
                     "${persona.hash().take(12)}) — resubmit the run"
             }
             val params = frozenParams(run)
+            val eligible = eligibleClaims(run.subjectId, scoreRunId)
+            // §9.6: the shared claim subsets — a pure derivation over the frozen eligible set, so
+            // GENERATE re-derives the identical list from the same snapshot dials.
+            val subsets =
+                if (params.systemPrompts && params.kbGeneration) {
+                    Stage4SystemPrompts.subsets(eligible, params.subsetSize, params.subsetLaps)
+                } else {
+                    emptyList()
+                }
+            if (subsets.isNotEmpty()) {
+                log.info(
+                    "Run {}: PLAN system-prompt mode — {} subset(s) of ~{} claims × {} laps " +
+                        "over {} eligible, notebook target {}",
+                    run.id,
+                    subsets.size,
+                    params.subsetSize,
+                    params.subsetLaps,
+                    eligible.size,
+                    params.notebookTarget,
+                )
+            }
             val outcome =
                 planning.plan(
                     subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject",
-                    eligible = eligibleClaims(run.subjectId, scoreRunId),
+                    eligible = eligible,
                     facts =
                         subjectFacts.findBySubject(run.subjectId).filter {
                             it.scoreRunId == scoreRunId
@@ -465,7 +497,21 @@ class Stage4Service(
                     templates = notebookTemplates.list(),
                     // VA-164: with a library present, freeze specs instead of phrased questions.
                     kbGeneration = params.kbGeneration,
+                    // §9.6: template × subset pairing + probe subset assignment.
+                    systemPrompts = params.systemPrompts,
+                    subsets = subsets,
+                    notebookTarget = params.notebookTarget,
                 )
+            if (outcome.effectiveFanoutCap > params.maxConversationsPerClaim) {
+                log.info(
+                    "Run {}: PLAN raised the per-claim fan-out cap {} → {} to honor the {} " +
+                        "notebook target",
+                    run.id,
+                    params.maxConversationsPerClaim,
+                    outcome.effectiveFanoutCap,
+                    params.notebookTarget,
+                )
+            }
             val now = Instant.now()
             outcome.planned.forEach {
                 plans.save(
@@ -527,8 +573,10 @@ class Stage4Service(
                 checkNotNull(run.personaHash) { "run carries no frozen personaHash — SELECT first" }
             val persona = personaService.resolved(run.subjectId)
             val presetStyle = prompts.resolveStage4Preset(persona.presetId).instructions
-            val subjectName = subjects.findById(run.subjectId)?.displayName ?: "the subject"
+            val subjectRow = subjects.findById(run.subjectId)
+            val subjectName = subjectRow?.displayName ?: "the subject"
             val subjectTag = subjectTag(run.subjectId)
+            val frozen = frozenParams(run)
             val promptByCategory =
                 Stage4Category.entries
                     .filter { it != Stage4Category.META }
@@ -560,6 +608,110 @@ class Stage4Service(
                     .sortedBy { it.plan.planId }
             val evidenceById = eligibleClaims(run.subjectId, scoreRunId).associateBy { it.claim.id }
 
+            // ---- §9.6 system-prompt context (null machinery when the mode is off) ----------
+            val spMode = frozen.systemPrompts && frozen.kbGeneration
+            val subsetsById =
+                if (spMode) {
+                    Stage4SystemPrompts.subsets(
+                            evidenceById.values.toList(),
+                            frozen.subsetSize,
+                            frozen.subsetLaps,
+                        )
+                        .associateBy { it.id }
+                } else {
+                    emptyMap()
+                }
+            val header =
+                if (spMode) {
+                    Stage4Generation.substituteContext(
+                        Stage4SystemPrompts.resolveHeader(
+                            prompts
+                                .resolveKey(ExtractionPromptService.STAGE4_SYSTEM_HEADER_KEY)
+                                .instructions,
+                            subjectName,
+                            subjectRow?.contactEmail.orEmpty(),
+                            persona.advocateName,
+                        ),
+                        frozen.locale,
+                        frozen.knowledgeAsOf,
+                    )
+                } else {
+                    ""
+                }
+            val sysgenRow =
+                if (spMode) prompts.resolveKey(ExtractionPromptService.STAGE4_SYSGEN_KEY) else null
+            val defaultRules =
+                if (spMode) {
+                    prompts
+                        .resolveKey(ExtractionPromptService.STAGE4_SYSTEM_RULES_DEFAULT_KEY)
+                        .instructions
+                } else {
+                    ""
+                }
+            // Rules per template, cache-only (no LLM): null = stale/missing, sysgen owed. The
+            // mutable map also receives freshly generated rules from ensureRules below.
+            val rulesCache = mutableMapOf<String, String?>()
+            fun freshRulesOf(templateId: String?): String? {
+                if (templateId == null) return defaultRules
+                return rulesCache.getOrPut(templateId) {
+                    val t = templatesById[templateId] ?: return@getOrPut defaultRules
+                    t.systemRules.takeIf {
+                        it.isNotBlank() &&
+                            t.systemRulesSourceVersion == t.version &&
+                            t.systemRulesPromptHash == checkNotNull(sysgenRow).hash
+                    }
+                }
+            }
+            // The composed prompt for a plan, cache-only — null while the template's rules are
+            // stale (the plan is then simply unsatisfied and generateOne runs sysgen first).
+            fun composedOf(plan: VoicingPlan): ComposedSystemPrompt? {
+                if (!spMode) return null
+                val rules = freshRulesOf(plan.templateId) ?: return null
+                val subsetId =
+                    checkNotNull(plan.subsetId) { "SP-mode plan ${plan.planId} has no subsetId" }
+                val subset =
+                    checkNotNull(subsetsById[subsetId]) {
+                        "subset $subsetId not derivable from the frozen eligible set — " +
+                            "resubmit the run"
+                    }
+                val lines = kbRenderer.render(subset.claims, subset.claims.size)
+                val text =
+                    Stage4SystemPrompts.compose(
+                        header,
+                        rules,
+                        lines,
+                        Stage4KnowledgeBase.STANDING_RULES,
+                    )
+                return ComposedSystemPrompt(
+                    text = text,
+                    hash = Stage4Generation.shortHash(text),
+                    subsetId = subsetId,
+                    subsetClaimIds = subset.claimIds,
+                )
+            }
+            // Sysgen (the one LLM leg of §9.6 beside drafting): write + persist a template's
+            // rules when stale, then compose. Deleted templates ride the default rules.
+            fun ensureComposed(plan: VoicingPlan): ComposedSystemPrompt {
+                if (composedOf(plan) == null && plan.templateId != null) {
+                    val template = templatesById[plan.templateId]
+                    if (template != null) {
+                        val row = checkNotNull(sysgenRow)
+                        val rules = rulesGenerator.rules(template, row.instructions)
+                        notebookTemplates.saveSystemRules(
+                            template.id,
+                            rules,
+                            template.version,
+                            row.hash,
+                            rulesGenerator.model,
+                        )
+                        rulesCache[template.id] = rules.trim()
+                    }
+                }
+                return checkNotNull(composedOf(plan)) {
+                    "system prompt for plan ${plan.planId} did not compose"
+                }
+            }
+
             // QA-6 `fresh`: pre-run live matches are archived so every plan re-drafts. Bounded to
             // pre-run examples (createdAt < startedAt), so the sweep is idempotent across ticks.
             if (run.fresh) {
@@ -582,6 +734,30 @@ class Stage4Service(
                     }
             }
 
+            // §9.6: flipping into system-prompt mode is a drift event — live current-stamp
+            // examples that carry NO system prompt would otherwise ride into this run's export
+            // beside the system-prompt ones (their pre-SP planIds are distinct, so the per-plan
+            // archive in generateOne never reaches them). Idempotent: archived rows drop out.
+            if (spMode) {
+                sftExamples
+                    .findByStampSubject(run.subjectId)
+                    .filter {
+                        it.status != ExampleStatus.ARCHIVED &&
+                            it.stamp?.scoreRunId == scoreRunId &&
+                            it.stamp?.personaHash == personaHash &&
+                            it.stamp?.systemPromptHash == null
+                    }
+                    .forEach {
+                        sftExamples.save(
+                            it.copy(
+                                status = ExampleStatus.ARCHIVED,
+                                archivedReason = "superseded by system-prompt mode (run ${run.id})",
+                                updatedAt = Instant.now(),
+                            )
+                        )
+                    }
+            }
+
             val stamped = sftExamples.findByStampSubject(run.subjectId)
             val liveByPlan =
                 stamped
@@ -589,11 +765,16 @@ class Stage4Service(
                     .groupBy { it.stamp!!.planId!! }
             fun satisfied(p: Stage4Plan): Boolean =
                 liveByPlan[p.plan.planId].orEmpty().any {
-                    it.stamp?.generatorPromptHash == promptHashFor(p.plan)
+                    it.stamp?.generatorPromptHash == promptHashFor(p.plan) &&
+                        (!spMode || it.stamp?.systemPromptHash == composedOf(p.plan)?.hash)
                 }
 
-            val frozen = frozenParams(run)
-            val unsatisfied = subjectPlans.filterNot(::satisfied)
+            // §9.6: an SP-mode run drafts only subset-carrying plans — earlier (pre-SP) plans
+            // still match the frozen stamp pair but would compose no system prompt; the SP
+            // re-plan replaced every one of them with a suffixed/subset twin.
+            val considered =
+                if (spMode) subjectPlans.filter { it.plan.subsetId != null } else subjectPlans
+            val unsatisfied = considered.filterNot(::satisfied)
             // Spec-mode runs draft only spec-carrying trio plans (VA-164): stale pre-library
             // plans still match the subject's scoreRunId/personaHash but carry a phrased
             // question and no spec — drafting them would reintroduce the exact
@@ -639,6 +820,10 @@ class Stage4Service(
                 batch.size,
             )
             batch.forEach { p ->
+                // §9.6: composing here (not in generateOne) keeps sysgen — the one extra LLM leg —
+                // on the bounded batch path; a stale template pays one rules call, its later plans
+                // ride the cache.
+                val composed = if (spMode) ensureComposed(p.plan) else null
                 generateOne(
                     run,
                     p,
@@ -653,11 +838,21 @@ class Stage4Service(
                     frozen.kbGeneration,
                     knowledgeBase,
                     kbStandingRules,
+                    composed,
+                    frozen.minNotebookTokens,
                 )
             }
             run.copy(counters = run.counters + generateCounters(run), phaseSince = Instant.now())
                 .also { runs.save(it) }
         }
+
+    /** One §9.6 composed system prompt: the exact text, its hash, and the subset provenance. */
+    private data class ComposedSystemPrompt(
+        val text: String,
+        val hash: String,
+        val subsetId: String?,
+        val subsetClaimIds: List<String>,
+    )
 
     /** Produce the one example plan [p] is missing: cache copy, meta render, or LLM draft. */
     private fun generateOne(
@@ -678,6 +873,10 @@ class Stage4Service(
         kbGeneration: Boolean,
         knowledgeBase: List<String>,
         kbStandingRules: String,
+        /** §9.6: the composed system prompt this conversation trains under; null = mode off. */
+        composed: ComposedSystemPrompt? = null,
+        /** §9.6 token floor (probe banks draft at half — refusals are legitimately shorter). */
+        minNotebookTokens: Int = 0,
     ) {
         val category = p.plan.category
         val row = rowFor(p.plan)
@@ -685,13 +884,16 @@ class Stage4Service(
         val now = Instant.now()
 
         // A live example on this plan at a *different* prompt hash is stale-by-prompt-bump:
-        // archive it before the re-draft (drift sweeps only cover scoreRunId/personaHash).
+        // archive it before the re-draft (drift sweeps only cover scoreRunId/personaHash). In
+        // system-prompt mode a changed composed prompt (header/rules/subset edit) is the same
+        // kind of staleness.
         sftExamples
             .findByStampSubject(run.subjectId)
             .filter {
                 it.status != ExampleStatus.ARCHIVED &&
                     it.stamp?.planId == p.plan.planId &&
-                    it.stamp?.generatorPromptHash != promptHash
+                    (it.stamp?.generatorPromptHash != promptHash ||
+                        (composed != null && it.stamp?.systemPromptHash != composed.hash))
             }
             .forEach {
                 sftExamples.save(
@@ -718,6 +920,9 @@ class Stage4Service(
                             it.stamp?.planId == p.plan.planId &&
                             it.stamp?.generatorPromptHash == promptHash &&
                             it.stamp?.profileHash == run.profileHash &&
+                            // §9.6: the composed prompt is part of the cache key — turns drafted
+                            // under a different (or no) system prompt are not this conversation.
+                            it.stamp?.systemPromptHash == composed?.hash &&
                             it.turns.isNotEmpty()
                     }
                     .maxByOrNull { it.updatedAt ?: Instant.EPOCH }
@@ -734,17 +939,18 @@ class Stage4Service(
                 generatorPromptHash = promptHash,
                 templateId = p.plan.templateId,
                 templateCategory = p.plan.templateCategory,
-            )
-        val tags =
-            ExampleTags(
-                labels =
-                    listOfNotNull(
-                        "stage4:${category.name.lowercase()}",
-                        p.plan.templateCategory?.let { "tpl:$it" },
-                    )
+                systemPromptHash = composed?.hash,
+                subsetId = composed?.subsetId,
+                subsetClaimIds = composed?.subsetClaimIds ?: emptyList(),
             )
 
         val draftStarted = System.currentTimeMillis()
+        // §9.6: probe banks (NEGATIVE/META) floor at half — a held refusal line is legitimately
+        // shorter than a multi-fact walk-through, and padding refusals teaches padding.
+        val floor =
+            if (composed == null || category == Stage4Category.META) 0
+            else if (category == Stage4Category.NEGATIVE) minNotebookTokens / 2
+            else minNotebookTokens
         val (turns, llmModel, createdBy) =
             when {
                 cached != null -> Triple(cached.turns, cached.llmModel, "stage4-cache:${run.id}")
@@ -781,16 +987,33 @@ class Stage4Service(
                                 kbGeneration = kbGeneration,
                                 knowledgeBase = knowledgeBase,
                                 kbStandingRules = kbStandingRules,
+                                // §9.6: the composed prompt rides the call's native
+                                // systemInstruction and switches buildPrompt's third branch.
+                                systemInstruction = composed?.text,
+                                minTokens = floor,
                             )
                         ),
                         drafter.model,
                         "stage4:${run.id}",
                     )
             }
+        // §9.6 floor tag: a real draft still under the floor is reviewable, never silently short.
+        // Dry-run/meta/cached turns are exempt (no LLM behind them this run).
+        val short = llmModel != null && floor > 0 && Stage4Generation.estimateTokens(turns) < floor
+        val tags =
+            ExampleTags(
+                labels =
+                    listOfNotNull(
+                        "stage4:${category.name.lowercase()}",
+                        p.plan.templateCategory?.let { "tpl:$it" },
+                        "short-notebook".takeIf { short },
+                    )
+            )
         sftExamples.save(
             SftExample(
                 id = "$subjectTag-${sftExamples.newId()}",
                 tags = tags,
+                systemInstruction = composed?.text,
                 turns = turns,
                 status = ExampleStatus.DRAFT,
                 source = ExampleSource.LLM,
@@ -802,7 +1025,7 @@ class Stage4Service(
             )
         )
         log.info(
-            "Run {}: GENERATE plan {} ({}) — {} — {} turn(s), {} ms",
+            "Run {}: GENERATE plan {} ({}) — {} — {} turn(s){}, {} ms",
             run.id,
             p.plan.planId,
             category,
@@ -812,6 +1035,7 @@ class Stage4Service(
                 else -> "LLM draft via ${llmModel ?: "gemini"}"
             },
             turns.size,
+            if (short) " (SHORT — tagged)" else "",
             System.currentTimeMillis() - draftStarted,
         )
     }
@@ -993,6 +1217,8 @@ class Stage4Service(
                 kbGeneration = kbGeneration,
                 knowledgeBase = knowledgeBase,
                 kbStandingRules = kbStandingRules,
+                // §9.6 symmetry: the judge sees the exact system prompt the example trains under.
+                systemInstruction = example.systemInstruction,
             )
         val judgeStarted = System.currentTimeMillis()
         val samples =
@@ -1306,8 +1532,20 @@ class Stage4Service(
                     "Only a REVIEW_WAIT run can be exported (run is ${run.status})"
                 )
                 .left()
+        // §9.6: a system-prompt run exports the messages shape — the only shape that carries the
+        // leading system role; every other run keeps the legacy contents shape byte-for-byte.
+        val frozen = frozenParams(run)
+        val format =
+            if (frozen.systemPrompts && frozen.kbGeneration) DatasetFormat.OPENAI_CHAT
+            else DatasetFormat.GENERATE_CONTENT
         return exportService
-            .exportStage4Run(run, actor, frozenHoldoutFraction(run), subjectTag(run.subjectId))
+            .exportStage4Run(
+                run,
+                actor,
+                frozenHoldoutFraction(run),
+                subjectTag(run.subjectId),
+                format,
+            )
             .map { result ->
                 val record = result.record
                 val now = Instant.now()
@@ -1421,6 +1659,11 @@ class Stage4Service(
                 "judgeEnabled" to effective.judgeEnabled,
                 "kbGeneration" to effective.kbGeneration,
                 "kbMaxClaims" to effective.kbMaxClaims,
+                "systemPrompts" to effective.systemPrompts,
+                "subsetSize" to effective.subsetSize,
+                "subsetLaps" to effective.subsetLaps,
+                "notebookTarget" to effective.notebookTarget,
+                "minNotebookTokens" to effective.minNotebookTokens,
                 "reviewSampleRate" to effective.reviewSampleRate,
                 "dpoEnabled" to effective.dpoEnabled,
                 "evalHoldoutFraction" to effective.evalHoldoutFraction,
@@ -1443,6 +1686,12 @@ class Stage4Service(
         /** VA-164: KB + spec generation, and the per-conversation KB line cap. */
         val kbGeneration: Boolean,
         val kbMaxClaims: Int,
+        /** §9.6: trained-in system prompts + the subset/volume/floor dials. */
+        val systemPrompts: Boolean,
+        val subsetSize: Int,
+        val subsetLaps: Int,
+        val notebookTarget: Int,
+        val minNotebookTokens: Int,
         /** The profile scalars GENERATE injects; blank on pre-profile runs (§4.3). */
         val locale: String,
         val knowledgeAsOf: String,
@@ -1487,6 +1736,13 @@ class Stage4Service(
             judgeEnabled = (raw["judgeEnabled"] as? Boolean) ?: base.judgeEnabled,
             kbGeneration = (raw["kbGeneration"] as? Boolean) ?: base.kbGeneration,
             kbMaxClaims = (raw["kbMaxClaims"] as? Number)?.toInt() ?: base.kbMaxClaims,
+            // §9.6: pre-system-prompt snapshots read false/0 — never the live config — so an old
+            // run resumed after a config flip keeps generating exactly what it planned.
+            systemPrompts = (raw["systemPrompts"] as? Boolean) ?: false,
+            subsetSize = (raw["subsetSize"] as? Number)?.toInt() ?: 0,
+            subsetLaps = (raw["subsetLaps"] as? Number)?.toInt() ?: 0,
+            notebookTarget = (raw["notebookTarget"] as? Number)?.toInt() ?: 0,
+            minNotebookTokens = (raw["minNotebookTokens"] as? Number)?.toInt() ?: 0,
             // No live fallback: these two are run-frozen by definition, and a pre-profile run must
             // keep injecting nothing however the profile has changed since.
             locale = (raw["locale"] as? String).orEmpty(),

@@ -73,9 +73,8 @@ class AdminController(
             extractionPrompts.list().values.flatten().count { it.prompt != null } +
                 extractionPrompts.listStage3().count { it.prompt != null } +
                 extractionPrompts.listStage4().let { s4 ->
-                    (s4.presets + s4.generators + s4.judge + s4.dpo + s4.eval).count {
-                        it.prompt != null
-                    }
+                    (s4.presets + s4.generators + s4.judge + s4.dpo + s4.eval + s4.systemPrompt)
+                        .count { it.prompt != null }
                 }
         model.addAttribute("pageTitle", "Admin Console")
         model.addAttribute("section", "dashboard")

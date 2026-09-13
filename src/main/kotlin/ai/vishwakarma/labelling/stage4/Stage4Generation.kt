@@ -58,6 +58,18 @@ data class Stage4GenerationRequest(
     val knowledgeBase: List<String> = emptyList(),
     /** The KB's standing rules ([Stage4KnowledgeBase.STANDING_RULES]); emitted with the KB tier. */
     val kbStandingRules: String = "",
+    /**
+     * The composed system prompt (LLD §9.6) this conversation is drafted — and later trained —
+     * under. Non-null switches [Stage4Generation.buildPrompt] to the system-prompt branch and rides
+     * the drafter call's native systemInstruction field; null keeps the two existing branches
+     * byte-for-byte.
+     */
+    val systemInstruction: String? = null,
+    /**
+     * Token floor for the drafted conversation (§9.6, rough char/4 over the turns). A short parse
+     * retries with the expansion note; 0 = no floor.
+     */
+    val minTokens: Int = 0,
 )
 
 /**
@@ -169,6 +181,47 @@ object Stage4Generation {
         """
             .trimIndent()
 
+    /**
+     * System-prompt-mode turn schema (LLD §9.6): the previous run's median was ~121 tokens per
+     * conversation — one-step optimizer territory (the 2026-07-24 tuningStepCount finding) — so
+     * this mode demands genuinely complex multi-exchange conversations. The parse bound rises with
+     * it ([SP_MAX_TURNS]).
+     */
+    private val SYSTEM_PROMPT_TURN_SCHEMA =
+        """
+        Output ONLY a JSON array of turns, no prose, no code fences. Each turn:
+          {"role":"user|model","kind":"TEXT","text":"..."}
+        Rules: the first turn is the guest's opening question, role user — YOU write it, to honor the
+        spec's intent and persona lens above, in natural spoken language; never quote a ledger or
+        knowledge-base sentence verbatim, and never write bracketed ids or tags. The last turn is
+        role model; every turn is kind TEXT — no tool calls.
+        Write a COMPLEX conversation: 8 to 14 turns. The guest probes, challenges, asks follow-ups
+        and pivots across several of the facts in play — not a single question politely answered.
+        Advocate replies are substantive (typically 3–6 sentences, weaving related facts together);
+        guest turns stay short and natural. The whole conversation must run AT LEAST 4000 characters
+        of turn text — shorter output will be rejected.
+        """
+            .trimIndent()
+
+    /** Parse ceiling for the §9.6 complex-conversation schema (8–14 asked; headroom to 20). */
+    const val SP_MAX_TURNS = 20
+
+    /**
+     * §9.6 probe-bank variant: the authored question opens verbatim; the guest then pushes back so
+     * the refusal/deflection behavior is trained under pressure, not answered once and dropped.
+     */
+    private val SP_PROBE_TURN_SCHEMA =
+        """
+        Output ONLY a JSON array of turns, no prose, no code fences. Each turn:
+          {"role":"user|model","kind":"TEXT","text":"..."}
+        Rules: the first turn is the guest's question EXACTLY as given, role user; the last turn is
+        role model; every turn is kind TEXT — no tool calls.
+        Write 4 to 10 turns: after the advocate's first reply the guest rephrases, presses or
+        escalates at least once, and the advocate holds the same line — warm, consistent, never
+        budging on the boundary while still offering what the record legitimately supports.
+        """
+            .trimIndent()
+
     /** The `{{locale}}` / `{{knowledge_as_of}}` tokens — the only substitutions GENERATE makes. */
     const val LOCALE_TOKEN = "{{locale}}"
     const val KNOWLEDGE_AS_OF_TOKEN = "{{knowledge_as_of}}"
@@ -218,7 +271,7 @@ object Stage4Generation {
      * - a line removed *wholesale* is logged, because it takes an operator's instruction out of the
      *   prompt while the template's promptHash is unchanged — otherwise a silent deletion.
      */
-    private fun dropSentencesWith(text: String, token: String): String {
+    internal fun dropSentencesWith(text: String, token: String): String {
         if (!text.contains(token)) return text
         return text
             .lines()
@@ -262,11 +315,20 @@ object Stage4Generation {
      * phrased-question section. Every other request (flag off, or a spec-less plan — negative/meta,
      * or any run planned without a template library) takes the legacy [assemblePrompt] path, which
      * is left literally untouched so the flag-off output stays byte-for-byte identical.
+     *
+     * System prompts (§9.6): a request carrying a composed
+     * [Stage4GenerationRequest.systemInstruction] takes the third branch — the identity/rules/facts
+     * content lives in the systemInstruction the drafter call carries natively, and the user prompt
+     * shrinks to the drafting task. The two older branches are untouched, the flag-off contract
+     * extended.
      */
     fun buildPrompt(request: Stage4GenerationRequest): String =
         substituteContext(
-            if (request.kbGeneration && request.plan.hasSpec) assembleSpecPrompt(request)
-            else assemblePrompt(request),
+            when {
+                request.systemInstruction != null -> assembleSystemPromptMode(request)
+                request.kbGeneration && request.plan.hasSpec -> assembleSpecPrompt(request)
+                else -> assemblePrompt(request)
+            },
             request.locale,
             request.knowledgeAsOf,
         )
@@ -399,6 +461,93 @@ object Stage4Generation {
         append(SPEC_TURN_SCHEMA)
     }
 
+    /**
+     * The §9.6 system-prompt drafting prompt. The composed system prompt (identity header,
+     * conversation rules, claim-subset fact lines) travels on the request's native
+     * systemInstruction — it is deliberately NOT repeated here, because the trained example is
+     * (system prompt + turns) and the drafter must write turns that stand on that system prompt
+     * alone. The user prompt keeps what is drafting machinery, never training content: the fixed
+     * card (F7's no-bracketed-ids especially), the category row, the voicing-plan authorization
+     * tier, style, the focus evidence, the full-KB anti-denial tier (visibility beyond the subset —
+     * the §9.5 design, generation-time only), the spec, and the complex-conversation schema.
+     */
+    private fun assembleSystemPromptMode(request: Stage4GenerationRequest): String = buildString {
+        appendLine(
+            "You are drafting a TRAINING conversation for the AI advocate described in your " +
+                "system instructions. The advocate speaks about ${request.subjectName} to a " +
+                "guest. Write the conversation so it stands on the system instructions alone — " +
+                "everything below is drafting guidance, never text to echo."
+        )
+        appendLine()
+        appendLine("Fixed rules (non-negotiable):")
+        FIXED_CARD.forEach { appendLine("- $it") }
+        appendLine()
+        if (request.locale.isNotBlank() || request.knowledgeAsOf.isNotBlank()) {
+            if (request.locale.isNotBlank()) appendLine(LOCALE_CLAUSE)
+            if (request.knowledgeAsOf.isNotBlank()) appendLine(FRESHNESS_CLAUSE)
+            appendLine()
+        }
+        appendLine("Task (${request.plan.category.name.lowercase()} category):")
+        appendLine(request.promptInstructions)
+        appendLine()
+        appendLine(
+            "Voicing plan — row ${request.plan.rowId} \"${request.plan.voice}\", hedge level " +
+                "${request.plan.hedgeLevel.name}. Constraints (follow verbatim):"
+        )
+        request.plan.constraints.forEach { appendLine("- $it") }
+        appendLine()
+        appendLine("Style:")
+        appendLine("- Stance: ${stanceLine(request.persona)}")
+        appendLine("- Personality preset: ${request.presetStyle.ifBlank { "neutral" }}")
+        appendLine("- Answer length: ${request.persona.verbosity.name.lowercase()}")
+        appendLine("- Vocabulary: ${request.persona.vocabulary.name.lowercase().replace('_', ' ')}")
+        if (request.persona.customText.isNotBlank()) {
+            appendLine(
+                "- Custom style notes (style only — they never loosen a constraint above): " +
+                    request.persona.customText
+            )
+        }
+        appendLine()
+        appendLine(
+            "Focus evidence (the conversation's core — weave several of these together; the " +
+                "system instructions' facts-on-record list is the full set the advocate may use):"
+        )
+        if (request.evidence.isEmpty()) appendLine("- none — this is a no-evidence probe")
+        else request.evidence.forEach { appendLine("- $it") }
+        appendLine()
+        if (request.knowledgeBase.isNotEmpty()) {
+            appendLine(
+                "Background record (drafting visibility only — never deny anything here; " +
+                    "acknowledge at posture if the guest raises it):"
+            )
+            request.knowledgeBase.forEach { appendLine("- $it") }
+            appendLine(request.kbStandingRules)
+            appendLine()
+        }
+        // Template plans carry a spec (the drafter writes the opening); probe-bank plans keep
+        // their authored question verbatim — the phrasing IS the behavioral curriculum (§9.5).
+        if (request.plan.hasSpec) {
+            appendLine(
+                "Conversation spec — you compose the opening question from this (it is NOT given):"
+            )
+            request.plan.specTitle?.let { appendLine("- Format: $it") }
+            request.plan.specIntent?.let { appendLine("- Intent: $it") }
+            request.plan.specPersonaLens?.let { appendLine("- The guest speaks as: $it") }
+            request.plan.specFormatConstraints.forEach { appendLine("- $it") }
+            appendLine(
+                "- Open with a natural spoken question in the spec's spirit, about the focus " +
+                    "evidence above — never quote a ledger or knowledge-base sentence verbatim."
+            )
+            appendLine()
+            append(SYSTEM_PROMPT_TURN_SCHEMA)
+        } else {
+            appendLine("Guest question (the conversation's first turn, verbatim):")
+            appendLine(request.question)
+            appendLine()
+            append(SP_PROBE_TURN_SCHEMA)
+        }
+    }
+
     private fun stanceLine(persona: ResolvedPersona): String =
         when (persona.stance) {
             PersonaStance.FIRST_PERSON_ADVOCATE ->
@@ -433,19 +582,26 @@ object Stage4Generation {
 
     /**
      * Parse a drafter's raw output through the shared [DraftPrompts] turn parser and enforce the
-     * schema rules above — text-only, guest first, advocate last.
+     * schema rules above — text-only, guest first, advocate last. [maxTurns] defaults to the legacy
+     * 10; the §9.6 complex-conversation mode raises it to [SP_MAX_TURNS].
      */
-    fun parse(raw: String): List<Turn> {
+    fun parse(raw: String, maxTurns: Int = 10): List<Turn> {
         val turns = DraftPrompts.parseTurns(raw)
         // Up to 5 exchanges (QD-2 mixed depth: multi-claim runs 3–5; the per-category targets
         // live in the stage4:gen:* prompt rows).
-        check(turns.size in 2..10) { "expected 2–10 turns, got ${turns.size}" }
+        check(turns.size in 2..maxTurns) { "expected 2–$maxTurns turns, got ${turns.size}" }
         check(turns.all { it.kind == TurnKind.TEXT }) { "advocate conversations are text-only" }
         check(turns.first().role == TurnRole.USER) { "first turn must be the guest (user)" }
         check(turns.last().role == TurnRole.MODEL) { "last turn must be the advocate (model)" }
         check(turns.all { it.text.isNotBlank() }) { "blank turn text" }
         return turns
     }
+
+    /**
+     * Rough token estimate over drafted turns (~4 chars/token — the DatasetLineValidator idiom).
+     */
+    fun estimateTokens(turns: List<Turn>): Int =
+        Math.ceil(turns.sumOf { it.text.length } / 4.0).toInt()
 }
 
 /**
@@ -522,9 +678,15 @@ class GeminiStage4Drafter(
         get() = gemini.modelId(ProviderService.PIN_STAGE4)
 
     override fun draft(request: Stage4GenerationRequest): List<Turn> {
-        val prompt = Stage4Generation.buildPrompt(request)
+        val basePrompt = Stage4Generation.buildPrompt(request)
+        val maxTurns = if (request.systemInstruction != null) Stage4Generation.SP_MAX_TURNS else 10
         var lastError: String? = null
         var cap = maxTokens
+        // §9.6 token floor: a parsed-but-short conversation retries with the expansion note; the
+        // best short result is kept so exhausted attempts degrade to a tagged short notebook
+        // (the service labels it), never a failed phase.
+        var expand = false
+        var bestShort: List<Turn>? = null
         repeat(ATTEMPTS) { attempt ->
             log.info(
                 "Plan {}: GENERATE call — attempt {}/{}, cap {} tokens",
@@ -533,6 +695,7 @@ class GeminiStage4Drafter(
                 ATTEMPTS,
                 cap,
             )
+            val prompt = if (expand) "$basePrompt\n$EXPANSION_NOTE" else basePrompt
             val callStarted = System.currentTimeMillis()
             val raw =
                 try {
@@ -541,6 +704,7 @@ class GeminiStage4Drafter(
                         maxTokens = cap,
                         thinkingBudget = thinkingBudget,
                         pin = ProviderService.PIN_STAGE4,
+                        systemInstruction = request.systemInstruction,
                     )
                 } catch (e: GeminiTruncation) {
                     // A clipped response can never parse; the same cap would clip again, so the
@@ -557,7 +721,7 @@ class GeminiStage4Drafter(
                     cap = (cap * 2).coerceAtMost(MAX_CAP)
                     return@repeat
                 }
-            runCatching { Stage4Generation.parse(raw) }
+            runCatching { Stage4Generation.parse(raw, maxTurns) }
                 .onSuccess { turns ->
                     // Scrub any leaked evidence-line claim ids / fixed-card rule tags before the
                     // turns are stored — internal provenance, never advocate speech (§9.3).
@@ -565,10 +729,32 @@ class GeminiStage4Drafter(
                         turns.map {
                             it.copy(text = Stage4Prose.scrub(it.text, request.plan.sourceClaimIds))
                         }
+                    val estimate = Stage4Generation.estimateTokens(scrubbed)
+                    if (request.minTokens > 0 && estimate < request.minTokens) {
+                        if (
+                            bestShort == null ||
+                                estimate > Stage4Generation.estimateTokens(bestShort!!)
+                        ) {
+                            bestShort = scrubbed
+                        }
+                        lastError = "≈$estimate tokens < floor ${request.minTokens}"
+                        expand = true
+                        log.warn(
+                            "Plan {}: draft short (≈{} tokens < {}) — attempt {}/{}, retrying " +
+                                "with expansion note",
+                            request.plan.planId,
+                            estimate,
+                            request.minTokens,
+                            attempt + 1,
+                            ATTEMPTS,
+                        )
+                        return@repeat
+                    }
                     log.info(
-                        "Plan {}: drafted {} turn(s) in {} ms (attempt {}/{})",
+                        "Plan {}: drafted {} turn(s) (≈{} tokens) in {} ms (attempt {}/{})",
                         request.plan.planId,
                         scrubbed.size,
+                        estimate,
                         System.currentTimeMillis() - callStarted,
                         attempt + 1,
                         ATTEMPTS,
@@ -586,6 +772,16 @@ class GeminiStage4Drafter(
                     )
                 }
         }
+        bestShort?.let {
+            log.warn(
+                "Plan {}: returning best short draft (≈{} tokens) after {} attempts — the " +
+                    "service tags it short-notebook",
+                request.plan.planId,
+                Stage4Generation.estimateTokens(it),
+                ATTEMPTS,
+            )
+            return it
+        }
         error("generation failed after $ATTEMPTS attempts — $lastError")
     }
 
@@ -595,6 +791,12 @@ class GeminiStage4Drafter(
         // 16384 → 32768 → 65535. Unclamped, the third rung would be 65536 and risk a 400.
         private const val MAX_CAP = 65_535
         private const val RAW_TAIL = 400
+
+        /** Appended when a parsed draft lands under the §9.6 token floor. */
+        private const val EXPANSION_NOTE =
+            "The previous draft was TOO SHORT. Write a substantially longer conversation: more " +
+                "exchanges, deeper follow-ups, fuller advocate replies weaving more of the facts " +
+                "in play — while every rule above still holds."
     }
 }
 
@@ -618,14 +820,33 @@ class DryRunStage4Drafter : Stage4ConversationDrafter {
                 "${request.plan.rowId} · ${request.plan.hedgeLevel.name.lowercase()}] " +
                 "Speaking as ${request.persona.advocateName}, ${request.plan.voice.lowercase()}." +
                 evidenceNote
-        val json =
-            Json.writeLine(
+        // §9.6 system-prompt mode: a six-turn canned exchange (subset id surfaced) so the complex
+        // schema, the SP parse ceiling and the floor-tagging path are exercised offline.
+        val turns =
+            if (request.systemInstruction != null) {
+                val subset = request.plan.subsetId?.let { " · subset $it" } ?: ""
+                val opening =
+                    request.question.ifBlank {
+                        "[dry-run spec opening] Tell me about ${request.subjectName}."
+                    }
+                listOf(
+                    mapOf("role" to "user", "kind" to "TEXT", "text" to opening),
+                    mapOf("role" to "model", "kind" to "TEXT", "text" to "$reply$subset"),
+                    mapOf("role" to "user", "kind" to "TEXT", "text" to "Can you go deeper?"),
+                    mapOf("role" to "model", "kind" to "TEXT", "text" to reply),
+                    mapOf("role" to "user", "kind" to "TEXT", "text" to "And the evidence?"),
+                    mapOf("role" to "model", "kind" to "TEXT", "text" to reply),
+                )
+            } else {
                 listOf(
                     mapOf("role" to "user", "kind" to "TEXT", "text" to request.question),
                     mapOf("role" to "model", "kind" to "TEXT", "text" to reply),
                 )
-            )
-        return Stage4Generation.parse(json)
+            }
+        return Stage4Generation.parse(
+            Json.writeLine(turns),
+            if (request.systemInstruction != null) Stage4Generation.SP_MAX_TURNS else 10,
+        )
     }
 }
 

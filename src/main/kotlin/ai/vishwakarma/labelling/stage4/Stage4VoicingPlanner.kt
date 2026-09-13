@@ -116,6 +116,12 @@ sealed interface PlanUnit {
         val kind: QuestionClass,
         val question: String,
         val relatedClaimIds: List<String> = emptyList(),
+        /**
+         * §9.6 system-prompt mode appends `|sp:<subsetId>` here so a probe re-plans onto a NEW
+         * planId per subset assignment — a pre-system-prompt cached conversation must never satisfy
+         * a system-prompt plan. Empty keeps every legacy planId byte-for-byte.
+         */
+        val keySuffix: String = "",
     ) : PlanUnit {
         override val category: Stage4Category
             get() =
@@ -126,7 +132,7 @@ sealed interface PlanUnit {
                 }
 
         override val unitKey: String
-            get() = "${kind.name}|$question"
+            get() = "${kind.name}|$question$keySuffix"
     }
 }
 

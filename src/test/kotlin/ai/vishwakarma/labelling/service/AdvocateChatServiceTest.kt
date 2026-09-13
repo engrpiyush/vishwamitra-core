@@ -12,6 +12,7 @@ import ai.vishwakarma.labelling.persistence.AdvocateMessageRepository
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
 import ai.vishwakarma.labelling.persistence.AdvocateSessionRepository
 import ai.vishwakarma.labelling.persistence.ExtractionPromptRepository
+import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.security.SubjectCtx
 import ai.vishwakarma.labelling.serving.ChatRequest
 import ai.vishwakarma.labelling.serving.Deployment
@@ -105,7 +106,7 @@ class AdvocateChatServiceTest {
     private val promptRepo = ChatPromptRepo()
     private val backend = ScriptedChatBackend()
 
-    private fun props(dryRun: Boolean = false) =
+    private fun props(dryRun: Boolean = false, systemPrompts: Boolean = false) =
         AppProperties(
             product =
                 AppProperties.Product(
@@ -113,16 +114,19 @@ class AdvocateChatServiceTest {
                     chatMinInterval = Duration.ofSeconds(3),
                 ),
             serving = AppProperties.Serving(dryRun = dryRun, backend = "vertex"),
+            stage4 = AppProperties.Stage4(systemPrompts = systemPrompts),
         )
 
-    private fun service(dryRun: Boolean = false) =
+    private fun service(dryRun: Boolean = false, systemPrompts: Boolean = false) =
         AdvocateChatService(
             advocates,
             sessions,
             messages,
             ExtractionPromptService(promptRepo),
+            mock(SubjectRepository::class.java),
+            mock(PersonaService::class.java),
             listOf(backend),
-            props(dryRun),
+            props(dryRun, systemPrompts),
         )
 
     private fun liveAdvocate() {
@@ -196,6 +200,19 @@ class AdvocateChatServiceTest {
             "Custom rules for Asha.",
             assertNotNull(backend.lastRequest).messages.first().content,
         )
+    }
+
+    @Test
+    fun `system-prompts mode serves the composed §9_6 header, placeholders resolved`() {
+        liveAdvocate()
+        service(systemPrompts = true).chat(ctx, guestSession(), "hello")
+        val system = assertNotNull(backend.lastRequest).messages.first().content
+        // The trained-in header (train/serve consistency), not the legacy advocate_system row.
+        assertTrue(system.contains("Asha"))
+        assertFalse(system.contains("{{subject_name}}"))
+        assertFalse(system.contains("{{advocate_name}}"))
+        // No contact email on the subject ⇒ the email sentence dropped, token and all.
+        assertFalse(system.contains("{{subject_email}}"))
     }
 
     @Test

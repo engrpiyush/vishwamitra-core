@@ -46,6 +46,13 @@
         <span class="muted" th:text="${ex.archivedReason}">superseded by …</span>
     </p>
 
+    <!-- §9.6: the trained-in system prompt — the conversation must stand on exactly this text
+         (it exports as the leading system message), so reviewers see it above the turns. -->
+    <details th:if="${ex.systemInstruction != null}" class="panel" style="margin-bottom:0.8rem;">
+        <summary>System prompt (trained in — exported as the leading <code>system</code> message)</summary>
+        <pre style="white-space:pre-wrap; font-size:0.85em; margin:0.6rem 0 0;" th:text="${ex.systemInstruction}">…</pre>
+    </details>
+
     <!-- lifecycle actions -->
     <div class="actions-bar">
         <form method="post" th:action="@{'/sft/' + ${ex.id} + '/submit'}"

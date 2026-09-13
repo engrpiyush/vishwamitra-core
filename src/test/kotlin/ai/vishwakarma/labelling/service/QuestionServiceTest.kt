@@ -89,6 +89,7 @@ private open class F11Gemini : GeminiDrafting(AppProperties(), mock(ProviderServ
         thinkingBudget: Int?,
         temperature: Double?,
         pin: String?,
+        systemInstruction: String?,
     ): String = canned
 }
 
@@ -194,6 +195,7 @@ class QuestionServiceTest {
                     thinkingBudget: Int?,
                     temperature: Double?,
                     pin: String?,
+                    systemInstruction: String?,
                 ): String = error("vertex is down")
             }
         val props = AppProperties().run { copy(stage2 = stage2.copy(dryRun = false)) }

@@ -50,6 +50,12 @@ data class Stage4JudgeRequest(
     val knowledgeBase: List<String> = emptyList(),
     /** The KB's standing rules ([Stage4KnowledgeBase.STANDING_RULES]); emitted with the KB tier. */
     val kbStandingRules: String = "",
+    /**
+     * §9.6 symmetry: the exact composed system prompt the conversation was drafted — and will be
+     * trained — under. Non-null inserts it (plus its compliance guidance) before the transcript;
+     * null keeps both existing judge prompts byte-for-byte.
+     */
+    val systemInstruction: String? = null,
 )
 
 /** One ensemble member's take on one axis: the verdict plus its one-line why. */
@@ -219,6 +225,21 @@ object Stage4Judging {
                 "- FAIL an opening question that ignores the spec's intent or persona lens, or " +
                     "that quotes a ledger or knowledge-base sentence verbatim (voice compliance / " +
                     "persona consistency)."
+            )
+            appendLine()
+        }
+        // §9.6 symmetry: the trained-in system prompt is part of what is being judged — the
+        // conversation must stand on it (facts within their postures, header behaviours honored).
+        request.systemInstruction?.let { sp ->
+            appendLine(
+                "System prompt the advocate operated under (the conversation will be TRAINED " +
+                    "with exactly this system prompt — judge the turns as standing on it):"
+            )
+            appendLine(sp)
+            appendLine()
+            appendLine(
+                "- FAIL a conversation that contradicts the system prompt's header behaviours " +
+                    "or asserts a facts-on-record line above its posture (voice compliance)."
             )
             appendLine()
         }

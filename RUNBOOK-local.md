@@ -27,7 +27,7 @@ gcloud auth application-default login \
 posture technically runs credential-free — emulator + local Neo4j + stubbed LLM legs — but do
 the auth up front so flipping any live leg in §6 just works.)
 
-## 2. Start the stack (every session — three terminals)
+## 2. Start the stack (every session — three terminals) 
 
 ```bash
 # T1 — Neo4j (bolt 7687 · Browser http://localhost:7474 · auth neo4j/vishwamitra-dev)

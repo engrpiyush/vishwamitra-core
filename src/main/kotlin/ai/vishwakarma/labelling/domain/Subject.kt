@@ -24,6 +24,12 @@ data class Subject(
     val displayName: String,
     /** Optional human-friendly slug, e.g. for object paths / URLs. */
     val handle: String? = null,
+    /**
+     * Contact email the trained-in system prompt may quote (`{{subject_email}}`, LLD §9.6) —
+     * operator-entered on the admin subject form, deliberately NOT sourced from any login identity.
+     * Blank/null drops the email sentence from the composed header.
+     */
+    val contactEmail: String? = null,
     val notes: String = "",
     val status: SubjectStatus = SubjectStatus.ACTIVE,
     val createdBy: String? = null,

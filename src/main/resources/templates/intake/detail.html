@@ -343,6 +343,9 @@
                     <label>Handle
                         <input type="text" name="handle" th:value="${subject.handle}"/>
                     </label>
+                    <label>Contact email <span class="muted">(quoted by the advocate for follow-ups; blank = omitted)</span>
+                        <input type="email" name="contactEmail" th:value="${subject.contactEmail}"/>
+                    </label>
                     <label>Status
                         <select name="status">
                             <option value="ACTIVE" th:selected="${subject.status.name() == 'ACTIVE'}">ACTIVE</option>

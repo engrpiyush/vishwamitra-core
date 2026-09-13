@@ -33,6 +33,7 @@ class SubjectService(
         displayName: String,
         handle: String?,
         notes: String,
+        contactEmail: String? = null,
     ): Either<DomainError, Subject> {
         if (displayName.isBlank()) return DomainError.Invalid("Subject name is required").left()
         val normalized = normalizeHandle(handle)
@@ -41,12 +42,16 @@ class SubjectService(
                 return it.left()
             }
         }
+        val email = normalizeEmail(contactEmail)
+        if (email != null && !EMAIL_REGEX.matches(email))
+            return DomainError.Invalid("Contact email '$email' is not a valid address").left()
         val now = Instant.now()
         val subject =
             Subject(
                 id = subjects.newId(),
                 displayName = displayName.trim(),
                 handle = normalized,
+                contactEmail = email,
                 notes = notes.trim(),
                 status = SubjectStatus.ACTIVE,
                 createdBy = actor,
@@ -67,11 +72,16 @@ class SubjectService(
         handle: String?,
         notes: String?,
         status: SubjectStatus?,
+        /** Null = untouched; blank = cleared (the email line then drops from the §9.6 header). */
+        contactEmail: String? = null,
     ): Either<DomainError, Subject> {
         val current =
             subjects.findById(id) ?: return DomainError.NotFound("Subject $id not found").left()
         if (displayName != null && displayName.isBlank())
             return DomainError.Invalid("Subject name cannot be blank").left()
+        val email = contactEmail?.let { normalizeEmail(it) }
+        if (email != null && !EMAIL_REGEX.matches(email))
+            return DomainError.Invalid("Contact email '$email' is not a valid address").left()
         val requested = normalizeHandle(handle)
         if (requested != null && current.handle != null && requested != current.handle) {
             return DomainError.Invalid(
@@ -91,6 +101,7 @@ class SubjectService(
             current.copy(
                 displayName = displayName?.trim() ?: current.displayName,
                 handle = current.handle ?: requested,
+                contactEmail = if (contactEmail == null) current.contactEmail else email,
                 notes = notes?.trim() ?: current.notes,
                 status = status ?: current.status,
                 updatedAt = Instant.now(),
@@ -107,6 +118,8 @@ class SubjectService(
 
     private fun normalizeHandle(handle: String?): String? =
         handle?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+
+    private fun normalizeEmail(email: String?): String? = email?.trim()?.takeIf { it.isNotBlank() }
 
     private fun handleError(handle: String): DomainError? =
         when {
@@ -126,5 +139,8 @@ class SubjectService(
          * hyphens were dropped by the same decision.
          */
         val HANDLE_REGEX = Regex("^[a-z0-9]{6,32}$")
+
+        /** Shape check only (has a local part, an @, a dotted domain) — not RFC pedantry. */
+        val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
     }
 }

@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.web
 
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.ExportKind
 import ai.vishwakarma.labelling.domain.ToolEncoding
 import ai.vishwakarma.labelling.security.CurrentUser
@@ -34,6 +35,7 @@ class ExportController(
         model.addAttribute("kinds", ExportKind.entries)
         model.addAttribute("toolEncodings", ToolEncoding.entries)
         model.addAttribute("defaultEncoding", ToolEncoding.DEFAULT)
+        model.addAttribute("datasetFormats", DatasetFormat.entries)
         return "export/index"
     }
 
@@ -44,6 +46,7 @@ class ExportController(
         @RequestParam(required = false) authenticityTier: String?,
         @RequestParam(required = false) label: String?,
         @RequestParam(required = false) toolEncoding: String?,
+        @RequestParam(required = false) datasetFormat: String?,
         ra: RedirectAttributes,
     ): String {
         val parsed = runCatching { ExportKind.valueOf(kind.uppercase()) }.getOrNull()
@@ -54,6 +57,7 @@ class ExportController(
         val encoding =
             toolEncoding?.let { runCatching { ToolEncoding.valueOf(it) }.getOrNull() }
                 ?: ToolEncoding.DEFAULT
+        val format = DatasetFormat.fromOrNull(datasetFormat) ?: DatasetFormat.GENERATE_CONTENT
         exportService
             .export(
                 parsed,
@@ -62,6 +66,7 @@ class ExportController(
                 label,
                 CurrentUser.email(),
                 encoding,
+                format,
             )
             .fold(
                 { ra.addFlashAttribute("error", it.message) },

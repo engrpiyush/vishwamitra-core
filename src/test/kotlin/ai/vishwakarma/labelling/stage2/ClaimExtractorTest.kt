@@ -46,6 +46,7 @@ private open class StubGemini(private val canned: String) :
         thinkingBudget: Int?,
         temperature: Double?,
         pin: String?,
+        systemInstruction: String?,
     ): String {
         lastPrompt = prompt
         return canned

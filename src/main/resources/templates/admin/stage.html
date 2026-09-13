@@ -340,6 +340,38 @@
                 </form>
             </div>
 
+            <!-- §9.6 trained-in system prompts: the static profile header ({{subject_name}} /
+                 {{subject_email}} / {{advocate_name}} placeholders), the sysgen instructions
+                 behind the per-template conversation rules, and the probe-bank rules default.
+                 The header + rules-default ARE training data — edit with dataset care. -->
+            <div th:each="r : ${stage4.systemPrompt}" class="provider-card">
+                <form th:id="'reset-' + ${r.key}" method="post"
+                      th:action="@{'/admin/extraction-prompts/' + ${r.key} + '/reset'}"
+                      data-confirm="This deletes the saved override; the code default applies from the next run — system-prompt conversations re-draft under the new text."
+                      data-confirm-title="Reset to the code default?" data-confirm-ok="Reset" data-confirm-danger>
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                </form>
+                <form method="post" class="form form--wide" th:action="@{'/admin/extraction-prompts/' + ${r.key}}">
+                    <input type="hidden" name="returnTo" th:value="${returnTo}"/>
+                    <div class="form-row">
+                        <span class="provider-name" th:text="${r.key}">stage4:system-header</span>
+                        <span class="badge badge--warning" title="An edit changes every composed system prompt — affected conversations re-draft on the next run">re-drafts on edit</span>
+                        <span class="muted" th:if="${r.prompt == null}">code default</span>
+                        <span class="muted" th:if="${r.prompt != null}"
+                              th:text="'v' + ${r.prompt.version} + ' · ' + ${r.prompt.updatedBy}">v1 · admin</span>
+                    </div>
+                    <div class="prompt-editor">
+                        <textarea name="instructions" rows="6"
+                                  th:text="${r.prompt != null ? r.prompt.instructions : r.builtin}"></textarea>
+                        <div class="prompt-actions">
+                            <button type="submit">Save</button>
+                            <button type="submit" class="btn--danger"
+                                    th:attr="form='reset-' + ${r.key}">Reset to default</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
             <!-- §12 DPO violation rows (VA-61) — one pinned prompt per rejected-side class;
                  generation ships dark behind app.stage4.dpo-enabled. -->
             <div th:each="r : ${stage4.dpo}" class="provider-card">

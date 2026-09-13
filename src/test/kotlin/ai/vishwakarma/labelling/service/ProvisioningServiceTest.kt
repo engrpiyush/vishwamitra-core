@@ -106,9 +106,12 @@ private class ProvBackend(
     override val id: String = "fake",
     val failServe: Boolean = false,
     val hold: Boolean = false,
+    /** How many op-deploy advances report DEPLOYING before flipping LIVE (0 = LIVE at once). */
+    val deployHoldsFor: Int = 0,
 ) : ai.vishwakarma.labelling.serving.ServingBackend {
     var deployed: List<ai.vishwakarma.labelling.serving.Deployment> = emptyList()
     val tornDown = mutableListOf<String>()
+    private var deployAdvances = 0
 
     override fun target(): String = "ep-1"
 
@@ -131,8 +134,16 @@ private class ProvBackend(
             hold -> handle
             handle.state == ServingState.DEPLOYING && handle.operation == "op-upload" ->
                 handle.copy(modelResource = "model-1", operation = "op-deploy")
-            handle.state == ServingState.DEPLOYING && handle.operation == "op-deploy" ->
-                handle.copy(state = ServingState.LIVE, deployedModelId = "dm-1", operation = null)
+            handle.state == ServingState.DEPLOYING && handle.operation == "op-deploy" -> {
+                deployAdvances++
+                if (deployAdvances > deployHoldsFor)
+                    handle.copy(
+                        state = ServingState.LIVE,
+                        deployedModelId = "dm-1",
+                        operation = null,
+                    )
+                else handle
+            }
             handle.state == ServingState.TEARING_DOWN ->
                 ai.vishwakarma.labelling.serving.ServingHandle(ServingState.NONE)
             else -> handle
@@ -410,6 +421,50 @@ class ProvisioningServiceTest {
         assertTrue(adv.lastError!!.contains("gave up"))
         // VA-68: the timeout flip counts as a failed deploy too.
         assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_FAILED])
+    }
+
+    @Test
+    fun `a stalled upload does not eat the deploy budget - the clock restarts when deploy kicks`() {
+        seedSubject()
+        seedAdvocate(
+            state = AdvocateState.PROVISIONING,
+            provisioningStartedAt = Instant.now().minus(Duration.ofMinutes(90)),
+        )
+        // A long upload stall left a window-old clock; this poll is the one that fires deployModel
+        // (op-upload -> op-deploy). The healthy deploy must not be failed on that stale clock.
+        advocates.store["subj-1"] = advocates.store["subj-1"]!!.copy(servingOperation = "op-upload")
+
+        val adv = service().poll("subj-1").expectRight()
+
+        assertEquals(AdvocateState.PROVISIONING, adv.state)
+        assertEquals("model-1", adv.servingModelResource)
+        assertNotNull(adv.provisioningStartedAt)
+        assertTrue(adv.provisioningStartedAt!!.isAfter(Instant.now().minus(Duration.ofMinutes(1))))
+        assertNull(ops.counters[OpsCounters.DEPLOYS_FAILED])
+    }
+
+    @Test
+    fun `the timeout recheck adopts a deploy that lands right at the deadline`() {
+        seedSubject()
+        seedAdvocate(
+            state = AdvocateState.PROVISIONING,
+            provisioningStartedAt = Instant.now().minus(Duration.ofMinutes(90)),
+        )
+        // Deploy already kicked (uploaded, on the deploy op) but the clock is window-old. The first
+        // advance still reads DEPLOYING (entering the timeout branch); the recheck advance is LIVE.
+        advocates.store["subj-1"] =
+            advocates.store["subj-1"]!!.copy(
+                servingOperation = "op-deploy",
+                servingModelResource = "model-1",
+            )
+
+        val adv = service(ProvBackend(deployHoldsFor = 1)).poll("subj-1").expectRight()
+
+        assertEquals(AdvocateState.LIVE, adv.state)
+        assertEquals("dm-1", adv.servingDeployedModelId)
+        assertNull(adv.provisioningStartedAt)
+        assertNull(ops.counters[OpsCounters.DEPLOYS_FAILED])
+        assertEquals(1.0, ops.counters[OpsCounters.DEPLOYS_SUCCEEDED])
     }
 
     @Test

@@ -1,5 +1,6 @@
 package ai.vishwakarma.labelling.persistence
 
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.ExportKind
 import ai.vishwakarma.labelling.domain.ExportRecord
 import com.google.cloud.firestore.DocumentSnapshot
@@ -39,6 +40,8 @@ class ExportRepository(private val db: Firestore) {
             "exampleIds" to exampleIds,
             "count" to count,
             "subjectTag" to subjectTag,
+            "datasetFormat" to datasetFormat?.name,
+            "systemPromptCount" to systemPromptCount,
             "createdBy" to createdBy,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
@@ -54,6 +57,8 @@ class ExportRepository(private val db: Firestore) {
             exampleIds = (get("exampleIds") as? List<String>) ?: emptyList(),
             count = (getLong("count") ?: 0L).toInt(),
             subjectTag = getString("subjectTag"),
+            datasetFormat = DatasetFormat.fromOrNull(getString("datasetFormat")),
+            systemPromptCount = (getLong("systemPromptCount") ?: 0L).toInt(),
             createdBy = getString("createdBy"),
             createdAt = instant("createdAt"),
         )

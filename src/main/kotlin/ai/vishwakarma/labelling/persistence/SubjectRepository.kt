@@ -107,6 +107,7 @@ class SubjectRepository(private val db: Firestore) {
         mapOf(
             "displayName" to displayName,
             "handle" to handle,
+            "contactEmail" to contactEmail,
             "notes" to notes,
             "status" to status.name,
             "createdBy" to createdBy,
@@ -119,6 +120,7 @@ class SubjectRepository(private val db: Firestore) {
             id = id,
             displayName = getString("displayName") ?: "",
             handle = getString("handle"),
+            contactEmail = getString("contactEmail"),
             notes = getString("notes") ?: "",
             status = SubjectStatus.fromOrNull(getString("status")) ?: SubjectStatus.ACTIVE,
             createdBy = getString("createdBy"),

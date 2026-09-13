@@ -95,13 +95,15 @@ class GeminiDrafting(
         thinkingBudget: Int? = null,
         temperature: Double? = null,
         pin: String? = null,
+        systemInstruction: String? = null,
     ): String =
         generateContent(
             listOf(mapOf("text" to prompt)),
             maxTokens,
             thinkingBudget,
             temperature,
-            pin
+            pin,
+            systemInstruction,
         )
 
     /**
@@ -140,10 +142,16 @@ class GeminiDrafting(
         thinkingBudget: Int?,
         temperature: Double? = null,
         pin: String? = null,
+        systemInstruction: String? = null,
     ): String {
         val resolved = resolve(pin)
         val model = resolved.model.ifBlank { error("gemini model not set") }
         val body = buildMap {
+            // LLD §9.6: the composed system prompt rides the native systemInstruction field —
+            // system content never goes inside contents (the OSS dataset contract, mirrored here).
+            systemInstruction
+                ?.takeIf { it.isNotBlank() }
+                ?.let { put("systemInstruction", mapOf("parts" to listOf(mapOf("text" to it)))) }
             put("contents", listOf(mapOf("role" to "user", "parts" to parts)))
             val generationConfig = buildMap {
                 maxTokens?.let { put("maxOutputTokens", it) }

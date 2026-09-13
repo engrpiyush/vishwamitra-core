@@ -369,20 +369,41 @@ class ProvisioningService(
         val backend = backend() ?: return adv
         val handle = backend.advance(handleOf(adv, ServingState.DEPLOYING))
         var updated = apply(adv, handle)
+        // Clock fix (§7.4 / VA-177 probe-doc §4.3): the deploy-timeout budgets the DEPLOY leg, not
+        // the whole window. The upload -> deploy hand-off can idle for a long time when nothing
+        // drives the poll (no local provisioning driver), and a slow upload must not eat the deploy
+        // budget and false-fail a healthy replica. So restart the clock the instant the deploy
+        // actually kicks: the poll where the uploaded model first appears (advanceDeploy has just
+        // fired deployModel).
+        if (
+            updated.state == AdvocateState.PROVISIONING &&
+                adv.servingModelResource == null &&
+                updated.servingModelResource != null
+        ) {
+            updated = updated.copy(provisioningStartedAt = Instant.now())
+        }
         if (updated.state == AdvocateState.PROVISIONING) {
-            val started = adv.provisioningStartedAt
+            val started = updated.provisioningStartedAt
             if (
                 started != null && started.plus(props.serving.deployTimeout).isBefore(Instant.now())
             ) {
-                // Give up visibly; if the LRO completes later anyway, the sweep reconciles the
-                // orphan deployment (§7.4).
+                // Before giving up, re-poll the LRO once authoritatively: a poll can land in the
+                // seconds between the deployModel op completing and this check, and we must not
+                // orphan a deploy that just landed (probe-doc §4.3). Adopt LIVE if it did; else
+                // fail
+                // visibly (a still-later LRO completion is caught by the sweep's orphan reconcile).
+                val recheck =
+                    apply(updated, backend.advance(handleOf(updated, ServingState.DEPLOYING)))
                 updated =
-                    updated.copy(
-                        state = AdvocateState.DEPLOY_FAILED,
-                        lastError =
-                            "Deploy exceeded ${props.serving.deployTimeout.toMinutes()} min — gave up (operation ${adv.servingOperation})",
-                    )
-                log.warn("OPERATOR ATTENTION: advocate {} deploy timed out", adv.subjectId)
+                    if (recheck.state == AdvocateState.LIVE) recheck
+                    else
+                        updated.copy(
+                            state = AdvocateState.DEPLOY_FAILED,
+                            lastError =
+                                "Deploy exceeded ${props.serving.deployTimeout.toMinutes()} min — gave up (operation ${adv.servingOperation})",
+                        )
+                if (updated.state == AdvocateState.DEPLOY_FAILED)
+                    log.warn("OPERATOR ATTENTION: advocate {} deploy timed out", adv.subjectId)
             }
         }
         advocates.save(updated)

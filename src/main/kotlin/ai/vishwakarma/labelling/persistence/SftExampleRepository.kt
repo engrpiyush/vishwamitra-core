@@ -61,6 +61,7 @@ class SftExampleRepository(private val db: Firestore) {
     private fun SftExample.toMap(): Map<String, Any?> =
         mapOf(
             "tags" to tags.toTagMap(),
+            "systemInstruction" to systemInstruction,
             "turns" to
                 turns.map {
                     mapOf(
@@ -98,6 +99,7 @@ class SftExampleRepository(private val db: Firestore) {
         return SftExample(
             id = id,
             tags = tagsMap.toExampleTags(),
+            systemInstruction = getString("systemInstruction"),
             turns =
                 turnsList.map {
                     Turn(

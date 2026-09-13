@@ -639,6 +639,35 @@ data class AppProperties(
          */
         val kbMaxClaims: Int = 400,
         /**
+         * Trained-in system prompts (LLD §9.6): every generated conversation carries a composed
+         * system prompt — static profile header (placeholders filled) + per-template conversation
+         * rules (sysgen) + a rotating claim subset as factual pointers — passed as the drafter's
+         * native systemInstruction and exported as the leading `system` message. Requires
+         * [kbGeneration]; ignored (with a submit-time warning) when that flag is off. Default false
+         * is the hard flag-off guarantee, the [kbGeneration] idiom; frozen into the run
+         * paramsSnapshot.
+         */
+        val systemPrompts: Boolean = false,
+        /** Claims per system-prompt subset (§9.6) — the shared factual-pointer window. */
+        val subsetSize: Int = 12,
+        /**
+         * How many laps the subset rotation makes over the eligible ledger (§9.6): each claim lands
+         * in exactly this many distinct subsets (the "covered 2–4 times" dial).
+         */
+        val subsetLaps: Int = 3,
+        /**
+         * Run-level notebook volume target (§9.6). 0 keeps per-template [NotebookTemplate]
+         * coverageTarget semantics; >0 scales template × subset slots (and, deterministically, the
+         * per-claim fan-out cap) until roughly this many conversations are planned.
+         */
+        val notebookTarget: Int = 0,
+        /**
+         * Token floor per generated conversation (§9.6), rough char/4 estimate over the turns. A
+         * short draft retries with an expansion note; still-short conversations are tagged
+         * `short-notebook` for the review queue rather than dropped. 0 = off.
+         */
+        val minNotebookTokens: Int = 1000,
+        /**
          * Fraction of PASS-judged conversations routed to the human queue. v1 IGNORES this and
          * enforces 1.0 — 100% human review (QA-4); the dial exists for the designed v1.1
          * relaxation, gated on measured judge–human agreement.

@@ -112,6 +112,9 @@ class Stage4PlanningTest {
         threshold: Double = 0.85,
         templates: List<NotebookTemplate> = emptyList(),
         kbGeneration: Boolean = false,
+        systemPrompts: Boolean = false,
+        subsets: List<Stage4SystemPrompts.ClaimSubset> = emptyList(),
+        notebookTarget: Int = 0,
     ) =
         planning.plan(
             subjectName = "Asha",
@@ -124,6 +127,9 @@ class Stage4PlanningTest {
             dedupeJaccardThreshold = threshold,
             templates = templates,
             kbGeneration = kbGeneration,
+            systemPrompts = systemPrompts,
+            subsets = subsets,
+            notebookTarget = notebookTarget,
         )
 
     private fun template(
@@ -1034,5 +1040,135 @@ class Stage4PlanningTest {
         // The probe banks never carry specs and always draft.
         assertTrue(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.NEGATIVE)))
         assertTrue(Stage4Planning.draftsUnderSpecMode(plan(Stage4Category.META)))
+    }
+
+    // ---- §9.6 system-prompt mode: template × subset pairing --------------------------------
+
+    private fun spSubsets(eligible: List<EvidencedClaim>, size: Int = 4, laps: Int = 2) =
+        Stage4SystemPrompts.subsets(eligible, size, laps)
+
+    @Test
+    fun `SP mode pairs templates with subsets and scales slots to the notebook target`() {
+        val eligible = (1..12).map { claim("c%02d".format(it)) }
+        val subsets = spSubsets(eligible)
+        val templates = (1..4).map { template("t$it", category = "cat-a") }
+
+        val outcome =
+            plan(
+                eligible,
+                mix = mix(),
+                cap = 100,
+                templates = templates,
+                kbGeneration = true,
+                systemPrompts = true,
+                subsets = subsets,
+                notebookTarget = 12,
+            )
+
+        val templatePlans = outcome.planned.filter { it.plan.templateId != null }
+        // 4 firing templates × ceil(12/4)=3 slots each.
+        assertEquals(12, templatePlans.size)
+        // Every template plan carries a spec, a subset and the tpl:sp unit key shape (via planId
+        // distinctness): two slots of one template ride different subsets.
+        assertTrue(templatePlans.all { it.plan.hasSpec })
+        assertTrue(templatePlans.all { it.plan.subsetId != null })
+        val perTemplate = templatePlans.groupBy { it.plan.templateId }
+        perTemplate.values.forEach { plans ->
+            assertEquals(plans.size, plans.map { it.plan.subsetId }.distinct().size)
+        }
+        // Probe banks carry subsets too.
+        val probes = outcome.planned.filter { it.plan.templateId == null }
+        assertTrue(probes.isNotEmpty())
+        assertTrue(probes.all { it.plan.subsetId != null })
+    }
+
+    @Test
+    fun `SP-mode focus claims come from the subset and respect the evidence gates`() {
+        val eligible =
+            (1..8).map {
+                claim(
+                    "c$it",
+                    claimType = if (it % 2 == 0) ClaimType.SKILL else ClaimType.EPISODE,
+                )
+            }
+        val subsets = spSubsets(eligible, size = 4, laps = 1)
+        val gated =
+            template("gated", category = "cat-a", requiredClaimTypes = listOf(ClaimType.SKILL))
+
+        val outcome =
+            plan(
+                eligible,
+                cap = 100,
+                templates = listOf(gated),
+                kbGeneration = true,
+                systemPrompts = true,
+                subsets = subsets,
+                notebookTarget = 0,
+            )
+
+        val templatePlans = outcome.planned.filter { it.plan.templateId != null }
+        assertTrue(templatePlans.isNotEmpty())
+        templatePlans.forEach { p ->
+            val subset = subsets.first { it.id == p.plan.subsetId }
+            // Focus ⊆ subset — the conversation's asserted claims are in its system prompt.
+            assertTrue(subset.claimIds.containsAll(p.plan.sourceClaimIds))
+        }
+    }
+
+    @Test
+    fun `SP-mode probe plans take new planIds and template plans differ per subset`() {
+        val eligible = (1..8).map { claim("c$it") }
+        val subsets = spSubsets(eligible)
+        val templates = listOf(template("t1", category = "cat-a", coverageTarget = 2))
+
+        val legacy = plan(eligible, cap = 100, templates = templates, kbGeneration = true)
+        val sp =
+            plan(
+                eligible,
+                cap = 100,
+                templates = templates,
+                kbGeneration = true,
+                systemPrompts = true,
+                subsets = subsets,
+            )
+
+        val legacyIds = legacy.planned.map { it.plan.planId }.toSet()
+        val spIds = sp.planned.map { it.plan.planId }.toSet()
+        // No SP plan reuses a legacy planId — probe banks included — so no stale cached
+        // conversation can ever satisfy a system-prompt plan.
+        assertTrue(spIds.intersect(legacyIds).isEmpty())
+        // Determinism: a re-run reproduces the identical SP plan ids.
+        val rerun =
+            plan(
+                eligible,
+                cap = 100,
+                templates = templates,
+                kbGeneration = true,
+                systemPrompts = true,
+                subsets = subsets,
+            )
+        assertEquals(spIds, rerun.planned.map { it.plan.planId }.toSet())
+    }
+
+    @Test
+    fun `SP mode raises the fan-out cap deterministically when the target demands it`() {
+        val eligible = (1..4).map { claim("c$it") }
+        val subsets = spSubsets(eligible, size = 4, laps = 1)
+        val templates = (1..30).map { template("t$it", category = "cat-a") }
+
+        val outcome =
+            plan(
+                eligible,
+                cap = 6,
+                templates = templates,
+                kbGeneration = true,
+                systemPrompts = true,
+                subsets = subsets,
+                notebookTarget = 30,
+            )
+
+        // ceil(30 × 4 focus / 4 claims) = 30 > the 6 dial — the raise is reported.
+        assertEquals(30, outcome.effectiveFanoutCap)
+        assertTrue(outcome.planned.count { it.plan.templateId != null } > 6)
     }
 }

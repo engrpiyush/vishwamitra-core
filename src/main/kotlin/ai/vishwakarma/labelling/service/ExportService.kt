@@ -2,6 +2,7 @@ package ai.vishwakarma.labelling.service
 
 import ai.vishwakarma.labelling.domain.AuthenticityTier
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.ExampleStatus
 import ai.vishwakarma.labelling.domain.ExampleTags
 import ai.vishwakarma.labelling.domain.ExportKind
@@ -15,6 +16,7 @@ import ai.vishwakarma.labelling.persistence.SftExampleRepository
 import ai.vishwakarma.labelling.serialization.ContentsPartsSerializer
 import ai.vishwakarma.labelling.serialization.DatasetLineValidator
 import ai.vishwakarma.labelling.serialization.DpoSerializer
+import ai.vishwakarma.labelling.serialization.OpenAiChatSerializer
 import ai.vishwakarma.labelling.serialization.SftValidator
 import ai.vishwakarma.labelling.stage4.Stage4Judging
 import arrow.core.Either
@@ -38,6 +40,7 @@ class ExportService(
     private val dpo: DpoService,
     private val sftExamples: SftExampleRepository,
     private val sftSerializer: ContentsPartsSerializer,
+    private val openAiSerializer: OpenAiChatSerializer,
     private val dpoSerializer: DpoSerializer,
     private val sftValidator: SftValidator,
     private val lineValidator: DatasetLineValidator,
@@ -65,9 +68,14 @@ class ExportService(
         label: String?,
         actor: String?,
         toolEncoding: ToolEncoding = ToolEncoding.DEFAULT,
+        format: DatasetFormat = DatasetFormat.GENERATE_CONTENT,
     ): Either<DomainError, ExportRecord> {
         val labelFilter = label?.ifBlank { null }
+        // No messages-shaped preference format is documented — DPO stays on GenerateContent.
+        if (kind == ExportKind.DPO && format == DatasetFormat.OPENAI_CHAT)
+            return DomainError.Invalid("DPO exports support GENERATE_CONTENT only").left()
 
+        var systemLines = 0
         val (ids, lines) =
             when (kind) {
                 ExportKind.SFT -> {
@@ -75,7 +83,18 @@ class ExportService(
                         sft.list(ExampleStatus.APPROVED).filter {
                             it.tags.matches(claimType, authenticityTier, labelFilter)
                         }
-                    items.map { it.id } to items.map { sftSerializer.toJsonl(it, toolEncoding) }
+                    if (format == DatasetFormat.OPENAI_CHAT) {
+                        systemLines = items.count { !it.systemInstruction.isNullOrBlank() }
+                    }
+                    items.map { it.id } to
+                        items.map {
+                            when (format) {
+                                DatasetFormat.OPENAI_CHAT ->
+                                    openAiSerializer.toJsonl(it, toolEncoding)
+                                DatasetFormat.GENERATE_CONTENT ->
+                                    sftSerializer.toJsonl(it, toolEncoding)
+                            }
+                        }
                 }
                 ExportKind.DPO -> {
                     val items =
@@ -99,6 +118,8 @@ class ExportService(
                 gcsUri = uri,
                 exampleIds = ids,
                 count = ids.size,
+                datasetFormat = format,
+                systemPromptCount = systemLines,
                 createdBy = actor,
                 createdAt = Instant.now(),
             )
@@ -140,6 +161,8 @@ class ExportService(
         holdoutFraction: Double,
         /** Who's-who: subject handle/id-stem stamped into the filename + record (→ tune naming). */
         subjectTag: String? = null,
+        /** §9.6: OPENAI_CHAT on system-prompt runs (the caller reads the frozen snapshot). */
+        format: DatasetFormat = DatasetFormat.GENERATE_CONTENT,
     ): Either<DomainError, Stage4ExportResult> {
         val approved =
             sftExamples
@@ -177,9 +200,16 @@ class ExportService(
                 )
                 .left()
 
-        val lines = included.map { sftSerializer.toJsonl(it, ToolEncoding.DEFAULT) }
+        val lines =
+            included.map {
+                when (format) {
+                    DatasetFormat.OPENAI_CHAT -> openAiSerializer.toJsonl(it, ToolEncoding.DEFAULT)
+                    DatasetFormat.GENERATE_CONTENT ->
+                        sftSerializer.toJsonl(it, ToolEncoding.DEFAULT)
+                }
+            }
         val lineErrors =
-            lineValidator.validate(lines.joinToString("\n"), ExportKind.SFT).map { err ->
+            lineValidator.validate(lines.joinToString("\n"), ExportKind.SFT, format).map { err ->
                 val exampleId = included.getOrNull(err.line - 1)?.id ?: "line ${err.line}"
                 "$exampleId: ${err.message}"
             }
@@ -201,6 +231,8 @@ class ExportService(
                 exampleIds = included.map { it.id },
                 count = included.size,
                 subjectTag = subjectTag?.takeIf { it.isNotBlank() },
+                datasetFormat = format,
+                systemPromptCount = included.count { !it.systemInstruction.isNullOrBlank() },
                 createdBy = actor,
                 createdAt = Instant.now(),
             )

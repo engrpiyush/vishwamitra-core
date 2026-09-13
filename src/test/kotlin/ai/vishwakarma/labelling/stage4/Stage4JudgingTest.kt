@@ -345,6 +345,7 @@ class Stage4JudgingTest {
             thinkingBudget: Int?,
             temperature: Double?,
             pin: String?,
+            systemInstruction: String?,
         ): String =
             throw GeminiTruncation("output clipped at maxOutputTokens (finishReason=MAX_TOKENS)")
     }

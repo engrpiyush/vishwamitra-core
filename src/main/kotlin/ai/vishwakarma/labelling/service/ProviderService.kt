@@ -61,6 +61,8 @@ class ProviderService(private val providers: ProviderRepository) {
         const val PIN_STAGE2 = "stage2-extraction"
         const val PIN_STAGE3 = "stage3-judge"
         const val PIN_STAGE4 = "stage4-generate"
-        val STAGE_PINS = listOf(PIN_STAGE2, PIN_STAGE3, PIN_STAGE4)
+        /** LLD §9.6 sysgen lane: per-template conversation-rules writing (seeded pro-tier). */
+        const val PIN_STAGE4_SYSGEN = "stage4-sysgen"
+        val STAGE_PINS = listOf(PIN_STAGE2, PIN_STAGE3, PIN_STAGE4, PIN_STAGE4_SYSGEN)
     }
 }

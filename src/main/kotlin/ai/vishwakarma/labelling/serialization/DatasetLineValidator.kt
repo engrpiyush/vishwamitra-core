@@ -1,6 +1,7 @@
 package ai.vishwakarma.labelling.serialization
 
 import ai.vishwakarma.labelling.config.AppProperties
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.ExportKind
 import ai.vishwakarma.labelling.domain.ImportError
 import org.springframework.stereotype.Component
@@ -25,10 +26,18 @@ class DatasetLineValidator(private val props: AppProperties) {
 
     private val allowedPartKeys = setOf("text", "inline_data", "file_data")
 
-    fun validate(content: String, kind: ExportKind): List<ImportError> {
+    fun validate(
+        content: String,
+        kind: ExportKind,
+        format: DatasetFormat = DatasetFormat.GENERATE_CONTENT,
+    ): List<ImportError> {
         val lines = content.split("\n").dropLastWhile { it.isBlank() }
         if (lines.isEmpty() || lines.all { it.isBlank() }) {
             return listOf(ImportError(0, "File is empty — expected one JSON object per line"))
+        }
+        // DPO has no documented messages-shaped preference format — refuse rather than invent.
+        if (format == DatasetFormat.OPENAI_CHAT && kind == ExportKind.DPO) {
+            return listOf(ImportError(0, "DPO datasets are GENERATE_CONTENT only"))
         }
 
         val errors = mutableListOf<ImportError>()
@@ -53,9 +62,10 @@ class DatasetLineValidator(private val props: AppProperties) {
                         return@forEachIndexed
                     }
 
-            when (kind) {
-                ExportKind.SFT -> validateSft(n, obj, errors)
-                ExportKind.DPO -> validateDpo(n, obj, errors)
+            when {
+                format == DatasetFormat.OPENAI_CHAT -> validateMessages(n, obj, errors)
+                kind == ExportKind.SFT -> validateSft(n, obj, errors)
+                else -> validateDpo(n, obj, errors)
             }
 
             estimateTokens(raw).let { est ->
@@ -69,6 +79,68 @@ class DatasetLineValidator(private val props: AppProperties) {
             }
         }
         return errors
+    }
+
+    /**
+     * The OpenAI-style turn-based chat shape (LLD §9.6): at most one `system` message and only at
+     * index 0; the first non-system message is `user`, the last is `assistant`; user/assistant
+     * strictly alternate; content is a non-blank string (text-only datasets — no content arrays, no
+     * structured `tool_calls` keys).
+     */
+    private fun validateMessages(n: Int, obj: Map<*, *>, errors: MutableList<ImportError>) {
+        val messages = obj["messages"]
+        if (messages !is List<*> || messages.isEmpty()) {
+            errors += ImportError(n, "Missing or empty 'messages' array")
+            return
+        }
+        val parsed =
+            messages.mapIndexed { i, m ->
+                val msg = m as? Map<*, *>
+                if (msg == null) {
+                    errors += ImportError(n, "messages[${i + 1}] must be an object")
+                    return
+                }
+                if (msg.keys.map { it.toString() }.any { it == "tool_calls" }) {
+                    errors +=
+                        ImportError(
+                            n,
+                            "messages[${i + 1}] has structured tool_calls — encode tool calls " +
+                                "as text",
+                        )
+                }
+                val role = msg["role"] as? String
+                val content = msg["content"]
+                if (content !is String || content.isBlank()) {
+                    errors +=
+                        ImportError(n, "messages[${i + 1}] content must be a non-blank string")
+                }
+                role
+            }
+        parsed.forEachIndexed { i, role ->
+            if (role !in setOf("system", "user", "assistant")) {
+                errors +=
+                    ImportError(
+                        n,
+                        "messages[${i + 1}] role must be system, user or assistant (was '$role')",
+                    )
+            }
+            if (role == "system" && i != 0) {
+                errors += ImportError(n, "a system message is only allowed at messages[1]")
+            }
+        }
+        val turns = parsed.filterNot { it == "system" }
+        if (turns.firstOrNull() != "user") {
+            errors += ImportError(n, "First non-system message must be role user")
+        }
+        if (turns.lastOrNull() != "assistant") {
+            errors += ImportError(n, "Last message must be role assistant")
+        }
+        turns.zipWithNext().forEachIndexed { i, (a, b) ->
+            if (a == b) {
+                errors +=
+                    ImportError(n, "messages must alternate user/assistant (position ${i + 2})")
+            }
+        }
     }
 
     private fun validateSft(n: Int, obj: Map<*, *>, errors: MutableList<ImportError>) {

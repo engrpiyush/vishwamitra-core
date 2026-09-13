@@ -123,6 +123,22 @@ data class NotebookTemplate(
     val requiredDeclaredTypes: List<String> = emptyList(),
     /** The O1–O9 training outcomes this template targets; doubles as a VA-60 eval handle. */
     val outcomes: List<String> = emptyList(),
+    /**
+     * The sysgen-written "conversation rules" block of this template's system prompt (LLD §9.6) —
+     * subject-neutral, generated once per template by the `stage4-sysgen` pin and cached here.
+     * Blank = not generated yet (the next system-prompt run fills it).
+     */
+    val systemRules: String = "",
+    /**
+     * The [version] the rules were generated from — a template edit bumps [version] past this and
+     * the stale rules regenerate. Saving the rules themselves must NOT bump [version] (see
+     * `NotebookTemplateService.saveSystemRules`), or generation would loop forever.
+     */
+    val systemRulesSourceVersion: Int = 0,
+    /** Short hash of the `stage4:sysgen` row the rules were generated under (provenance/cache). */
+    val systemRulesPromptHash: String = "",
+    /** The model that wrote the rules; null = dry-run double or hand-authored. */
+    val systemRulesModel: String? = null,
     /** Incremented on every save (create = 1), the ExtractionPrompt idiom. */
     val version: Int = 1,
     /** Provenance when the row was migrated from a legacy `scenarios` row. */

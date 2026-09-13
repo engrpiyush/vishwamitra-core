@@ -5,16 +5,19 @@ import ai.vishwakarma.labelling.domain.AdvocateName
 import ai.vishwakarma.labelling.domain.AdvocateRegion
 import ai.vishwakarma.labelling.domain.AdvocateState
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.ProviderConfig
 import ai.vishwakarma.labelling.domain.Role
 import ai.vishwakarma.labelling.domain.Subject
 import ai.vishwakarma.labelling.domain.Taxonomy
 import ai.vishwakarma.labelling.persistence.AdvocateNameRepository
 import ai.vishwakarma.labelling.persistence.AdvocateRepository
+import ai.vishwakarma.labelling.persistence.ProviderRepository
 import ai.vishwakarma.labelling.persistence.SubjectRepository
 import ai.vishwakarma.labelling.persistence.TaxonomyRepository
 import ai.vishwakarma.labelling.security.DevAuthFilter
 import ai.vishwakarma.labelling.service.BaseModelService
 import ai.vishwakarma.labelling.service.NotebookTemplateService
+import ai.vishwakarma.labelling.service.ProviderService
 import ai.vishwakarma.labelling.service.ScenarioService
 import ai.vishwakarma.labelling.service.UserService
 import org.slf4j.LoggerFactory
@@ -43,6 +46,7 @@ class DataSeeder {
         notebookTemplates: NotebookTemplateService,
         subjects: SubjectRepository,
         advocates: AdvocateRepository,
+        providers: ProviderRepository,
     ): ApplicationRunner = ApplicationRunner {
         runCatching {
                 seedBootstrapAdmins(props, users)
@@ -54,8 +58,27 @@ class DataSeeder {
                 reconcileHandleSentinels(subjects)
                 seedDevSubject(props, subjects, users)
                 seedDevAdvocate(props, advocates)
+                seedSysgenPin(providers)
             }
             .onFailure { log.warn("Seeding skipped (datastore unavailable?): {}", it.message) }
+    }
+
+    /**
+     * The `stage4-sysgen` pin row (LLD §9.6) defaults to vertex/pro: rules writing is a
+     * once-per-template spend where quality beats volume. Seed-once — an admin repin is never
+     * overwritten (the pin rows are runtime calibration state, VA-76).
+     */
+    private fun seedSysgenPin(providers: ProviderRepository) {
+        if (providers.findById(ProviderService.PIN_STAGE4_SYSGEN) != null) return
+        providers.save(
+            ProviderConfig(
+                id = ProviderService.PIN_STAGE4_SYSGEN,
+                enabled = true,
+                model = "gemini-2.5-pro",
+                transport = "vertex",
+            )
+        )
+        log.info("Seeded {} pin → vertex/gemini-2.5-pro", ProviderService.PIN_STAGE4_SYSGEN)
     }
 
     private fun seedBootstrapAdmins(props: AppProperties, users: UserService) {

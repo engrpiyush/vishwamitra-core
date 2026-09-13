@@ -70,6 +70,9 @@ fun Stage4Stamp.toStampMap(): Map<String, Any?> =
         "generatorPromptHash" to generatorPromptHash,
         "templateId" to templateId,
         "templateCategory" to templateCategory,
+        "systemPromptHash" to systemPromptHash,
+        "subsetId" to subsetId,
+        "subsetClaimIds" to subsetClaimIds,
     )
 
 /** Read a [Stage4Stamp] from a Firestore map; null when there is no subjectId (legacy example). */
@@ -87,5 +90,8 @@ fun Map<String, Any?>.toStage4Stamp(): Stage4Stamp? {
         generatorPromptHash = this["generatorPromptHash"] as? String,
         templateId = this["templateId"] as? String,
         templateCategory = this["templateCategory"] as? String,
+        systemPromptHash = this["systemPromptHash"] as? String,
+        subsetId = this["subsetId"] as? String,
+        subsetClaimIds = (this["subsetClaimIds"] as? List<String>) ?: emptyList(),
     )
 }

@@ -59,7 +59,7 @@ class IntakeApiController(
     @PostMapping("/subjects")
     fun createSubject(@RequestBody body: SubjectRequest): ResponseEntity<Any> =
         subjectService
-            .create(actor(), body.displayName, body.handle, body.notes ?: "")
+            .create(actor(), body.displayName, body.handle, body.notes ?: "", body.contactEmail)
             .toResponse(HttpStatus.CREATED)
 
     @GetMapping("/subjects/{id}")
@@ -77,7 +77,8 @@ class IntakeApiController(
                 body.displayName,
                 body.handle,
                 body.notes,
-                SubjectStatus.fromOrNull(body.status)
+                SubjectStatus.fromOrNull(body.status),
+                body.contactEmail,
             )
             .toResponse()
 
@@ -350,6 +351,8 @@ class IntakeApiController(
         val handle: String? = null,
         val notes: String? = null,
         val status: String? = null,
+        /** §9.6 `{{subject_email}}`: null = untouched on PATCH; blank = cleared. */
+        val contactEmail: String? = null,
     )
 
     data class AssetRequest(

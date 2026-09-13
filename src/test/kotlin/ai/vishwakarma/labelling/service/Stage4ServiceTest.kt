@@ -5,6 +5,7 @@ import ai.vishwakarma.labelling.domain.AdvocateName
 import ai.vishwakarma.labelling.domain.Claim
 import ai.vishwakarma.labelling.domain.ClaimReview
 import ai.vishwakarma.labelling.domain.ClaimType
+import ai.vishwakarma.labelling.domain.DatasetFormat
 import ai.vishwakarma.labelling.domain.DpoPair
 import ai.vishwakarma.labelling.domain.DpoSource
 import ai.vishwakarma.labelling.domain.ExampleStatus
@@ -62,10 +63,12 @@ import ai.vishwakarma.labelling.serialization.DatasetLineValidator
 import ai.vishwakarma.labelling.serialization.DpoSerializer
 import ai.vishwakarma.labelling.serialization.DpoValidator
 import ai.vishwakarma.labelling.serialization.Json
+import ai.vishwakarma.labelling.serialization.OpenAiChatSerializer
 import ai.vishwakarma.labelling.serialization.SftValidator
 import ai.vishwakarma.labelling.serialization.ToolCallMapper
 import ai.vishwakarma.labelling.stage4.AxisVote
 import ai.vishwakarma.labelling.stage4.DryRunStage4RejectedDrafter
+import ai.vishwakarma.labelling.stage4.DryRunStage4RulesGenerator
 import ai.vishwakarma.labelling.stage4.HedgePhrase
 import ai.vishwakarma.labelling.stage4.Stage4ConversationDrafter
 import ai.vishwakarma.labelling.stage4.Stage4DpoGeneration
@@ -74,6 +77,7 @@ import ai.vishwakarma.labelling.stage4.Stage4GenerationRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeRequest
 import ai.vishwakarma.labelling.stage4.Stage4JudgeSampler
 import ai.vishwakarma.labelling.stage4.Stage4Judging
+import ai.vishwakarma.labelling.stage4.Stage4SystemPrompts
 import arrow.core.Either
 import com.google.cloud.firestore.Firestore
 import java.time.Duration
@@ -81,6 +85,7 @@ import java.time.Instant
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -417,6 +422,7 @@ class Stage4ServiceTest {
                 dpo = DpoService(dpos, DpoValidator(), dpoSerializer, sftService),
                 sftExamples = sfts,
                 sftSerializer = sftSerializer,
+                openAiSerializer = OpenAiChatSerializer(toolCallMapper),
                 dpoSerializer = dpoSerializer,
                 sftValidator = SftValidator(),
                 lineValidator = DatasetLineValidator(props),
@@ -448,6 +454,7 @@ class Stage4ServiceTest {
                 ),
             prompts = promptService,
             drafter = drafter,
+            rulesGenerator = DryRunStage4RulesGenerator(),
             judge = judge,
             judgments = judgments,
             exportService = exportService,
@@ -2059,5 +2066,112 @@ class Stage4ServiceTest {
         // …and the re-run re-drafts them under the new locale.
         pollUntil(svc, second.id, Stage4RunStatus.JUDGING)
         assertTrue(drafter.requests.last().locale.contains("(USD)"))
+    }
+
+    // ---- §9.6 trained-in system prompts: the end-to-end walk -------------------------------
+
+    private fun spProps(target: Int = 6) =
+        AppProperties(
+            stage4 =
+                AppProperties.Stage4(
+                    kbGeneration = true,
+                    systemPrompts = true,
+                    subsetSize = 2,
+                    subsetLaps = 2,
+                    notebookTarget = target,
+                    minNotebookTokens = 0,
+                )
+        )
+
+    private fun seedSpTemplate() {
+        templateRepo.save(
+            NotebookTemplate(
+                id = "tpl-ct",
+                category = "career-timeline",
+                title = "Career Timeline",
+                formatSpec =
+                    FormatSpec(intent = "trace the professional arc", personaLens = "a recruiter"),
+                coverageTarget = 1,
+            )
+        )
+    }
+
+    @Test
+    fun `a system-prompt run composes, stamps, judges symmetrically and exports messages`() {
+        seedPublished()
+        subjects.store["s1"] = Subject(id = "s1", displayName = "Asha", contactEmail = "asha@x.dev")
+        seedSpTemplate()
+        val svc = service(spProps())
+        val run = svc.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(svc, run.id, Stage4RunStatus.REVIEW_WAIT)
+
+        // Every generated example carries the composed system prompt and its provenance stamp.
+        val live =
+            sfts.store.values.filter { it.status != ExampleStatus.ARCHIVED && it.stamp != null }
+        assertTrue(live.isNotEmpty())
+        live.forEach { e ->
+            val sp = assertNotNull(e.systemInstruction, "example ${e.id} has no system prompt")
+            assertTrue(sp.contains("Asha"))
+            assertTrue(sp.contains("asha@x.dev"))
+            assertTrue(sp.contains(Stage4SystemPrompts.FACTS_LABEL))
+            assertFalse(sp.contains("{{"))
+            assertEquals(Stage4Generation.shortHash(sp), e.stamp?.systemPromptHash)
+            assertNotNull(e.stamp?.subsetId)
+            assertTrue(e.stamp!!.subsetClaimIds.isNotEmpty())
+        }
+        // Sysgen wrote + cached the template rules WITHOUT bumping the template version.
+        val tpl = templateRepo.store.getValue("tpl-ct")
+        assertTrue(tpl.systemRules.isNotBlank())
+        assertEquals(tpl.version, tpl.systemRulesSourceVersion)
+        // Judge symmetry: every judged conversation carried its exact system prompt.
+        assertTrue(judge.requests.isNotEmpty())
+        assertTrue(judge.requests.all { it.systemInstruction != null })
+
+        // Export: the messages shape with a leading system role on every line; provenance on
+        // the record (format + how many lines carried a system prompt).
+        approveQueue()
+        val outcome = svc.export(run.id, "op").expectRight()
+        assertEquals(DatasetFormat.OPENAI_CHAT, outcome.record.datasetFormat)
+        assertEquals(outcome.record.count, outcome.record.systemPromptCount)
+        val content = exporter.written.values.single()
+        content.split("\n").forEach { line ->
+            val obj = Json.parse(line) as Map<*, *>
+            val messages = assertNotNull(obj["messages"] as? List<*>)
+            assertEquals("system", (messages.first() as Map<*, *>)["role"])
+            assertEquals("assistant", (messages.last() as Map<*, *>)["role"])
+        }
+    }
+
+    @Test
+    fun `flipping into SP mode archives the pre-SP current-stamp examples`() {
+        seedPublished()
+        seedSpTemplate()
+        // Round 1: a plain kb-generation run (no system prompts) all the way to approval.
+        val legacy = service(AppProperties(stage4 = AppProperties.Stage4(kbGeneration = true)))
+        val first = legacy.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(legacy, first.id, Stage4RunStatus.REVIEW_WAIT)
+        val preSp =
+            sfts.store.values
+                .filter { it.status != ExampleStatus.ARCHIVED && it.stamp != null }
+                .map { it.id }
+        assertTrue(preSp.isNotEmpty())
+
+        // Round 2: same publish, same persona — the SP run must not let the system-prompt-less
+        // conversations ride into its dataset beside the new ones.
+        val sp = service(spProps())
+        val second = sp.submit("s1", Stage4SubmitRequest(), "op").expectRight()
+        pollUntil(sp, second.id, Stage4RunStatus.REVIEW_WAIT)
+
+        preSp.forEach { id ->
+            val row = sfts.store.getValue(id)
+            assertEquals(ExampleStatus.ARCHIVED, row.status, "pre-SP example $id must archive")
+            assertTrue(assertNotNull(row.archivedReason).contains("system-prompt mode"))
+        }
+        // And the SP run's own examples all carry system prompts.
+        assertTrue(
+            sfts.store.values
+                .filter { it.status != ExampleStatus.ARCHIVED && it.stamp != null }
+                .all { it.systemInstruction != null }
+        )
     }
 }

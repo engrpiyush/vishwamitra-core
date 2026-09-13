@@ -84,6 +84,7 @@ class IntakeController(
         @RequestParam displayName: String,
         @RequestParam(required = false) handle: String?,
         @RequestParam(required = false) email: String?,
+        @RequestParam(required = false) contactEmail: String?,
         @RequestParam(required = false) notes: String?,
         ra: RedirectAttributes,
     ): String {
@@ -95,7 +96,7 @@ class IntakeController(
                 return "redirect:/intake"
             }
         return subjectService
-            .create(actor(), displayName, handle, notes ?: "")
+            .create(actor(), displayName, handle, notes ?: "", contactEmail)
             .fold(
                 {
                     flashError(ra, it)
@@ -220,10 +221,11 @@ class IntakeController(
         @RequestParam(required = false) handle: String?,
         @RequestParam(required = false) notes: String?,
         @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) contactEmail: String?,
         ra: RedirectAttributes,
     ): String {
         subjectService
-            .update(id, displayName, handle, notes, SubjectStatus.fromOrNull(status))
+            .update(id, displayName, handle, notes, SubjectStatus.fromOrNull(status), contactEmail)
             .notify(ra)
         return "redirect:/intake/$id"
     }

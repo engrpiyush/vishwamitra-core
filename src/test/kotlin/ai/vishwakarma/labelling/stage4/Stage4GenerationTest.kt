@@ -187,6 +187,7 @@ class Stage4GenerationTest {
             thinkingBudget: Int?,
             temperature: Double?,
             pin: String?,
+            systemInstruction: String?,
         ): String {
             caps += maxTokens
             if (caps.size <= clips) throw GeminiTruncation("clipped")
@@ -509,6 +510,7 @@ class Stage4GenerationTest {
             thinkingBudget: Int?,
             temperature: Double?,
             pin: String?,
+            systemInstruction: String?,
         ): String = json
     }
 

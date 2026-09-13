@@ -19,6 +19,7 @@ import ai.vishwakarma.labelling.serialization.ContentsPartsSerializer
 import ai.vishwakarma.labelling.serialization.DatasetLineValidator
 import ai.vishwakarma.labelling.serialization.DpoSerializer
 import ai.vishwakarma.labelling.serialization.DpoValidator
+import ai.vishwakarma.labelling.serialization.OpenAiChatSerializer
 import ai.vishwakarma.labelling.serialization.SftValidator
 import ai.vishwakarma.labelling.serialization.ToolCallMapper
 import arrow.core.Either
@@ -97,6 +98,7 @@ class ExportServiceHoldoutTest {
             dpo = DpoService(HoldoutDpoRepo(), DpoValidator(), DpoSerializer(mapper), sftService),
             sftExamples = sfts,
             sftSerializer = sftSerializer,
+            openAiSerializer = OpenAiChatSerializer(mapper),
             dpoSerializer = DpoSerializer(mapper),
             sftValidator = SftValidator(),
             lineValidator = DatasetLineValidator(AppProperties()),

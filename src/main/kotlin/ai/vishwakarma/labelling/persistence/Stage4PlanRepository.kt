@@ -57,6 +57,7 @@ class Stage4PlanRepository(private val db: Firestore) {
             "specIntent" to plan.specIntent,
             "specPersonaLens" to plan.specPersonaLens,
             "specFormatConstraints" to plan.specFormatConstraints,
+            "subsetId" to plan.subsetId,
             "createdAt" to (createdAt ?: Instant.now()).toTimestamp(),
         )
 
@@ -85,6 +86,7 @@ class Stage4PlanRepository(private val db: Firestore) {
                     specPersonaLens = getString("specPersonaLens"),
                     specFormatConstraints =
                         (get("specFormatConstraints") as? List<String>) ?: emptyList(),
+                    subsetId = getString("subsetId"),
                 ),
             createdAt = instant("createdAt"),
         )
